@@ -224,33 +224,42 @@ function LatestTestSection({ latestTest }) {
             </div>
           </div>
         ) : (
-          /* Fallback: flat 2-column split */
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-            {[questions.slice(0, Math.ceil(questions.length / 2)), questions.slice(Math.ceil(questions.length / 2))].map((col, ci) => (
-              <table key={ci} style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
-                <thead>
-                  <tr style={{ background: '#f1f5ff' }}>
-                    <th style={thStyle}>Section - Q</th>
-                    <th style={thStyle}>Category</th>
-                    <th style={{ ...thStyle, textAlign: 'center' }}>Correct?</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {col.map((q, i) => (
-                    <tr key={i} style={{ borderBottom: '1px solid var(--border)', background: i % 2 === 0 ? '#fff' : '#fafbff' }}>
-                      <td style={tdStyle}>{`Q${q.question_number || i + 1}`}</td>
-                      <td style={tdStyle}>{q.category_name || '—'}</td>
-                      <td style={{ ...tdStyle, textAlign: 'center' }}>
-                        {q.correct
-                          ? <span style={{ color: '#15803d', fontWeight: 700, fontSize: '1rem' }}>Yes</span>
-                          : <span style={{ color: '#b91c1c', fontWeight: 700, fontSize: '1rem' }}>No</span>}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            ))}
-          </div>
+          /* Fallback: flat 2-column split — continue numbering across columns */
+          (() => {
+            const half = Math.ceil(questions.length / 2);
+            const cols = [
+              { items: questions.slice(0, half), startIdx: 0 },
+              { items: questions.slice(half), startIdx: half },
+            ];
+            return (
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                {cols.map((col, ci) => (
+                  <table key={ci} style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
+                    <thead>
+                      <tr style={{ background: '#f1f5ff' }}>
+                        <th style={thStyle}>Section - Q</th>
+                        <th style={thStyle}>Category</th>
+                        <th style={{ ...thStyle, textAlign: 'center' }}>Correct?</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {col.items.map((q, i) => (
+                        <tr key={i} style={{ borderBottom: '1px solid var(--border)', background: i % 2 === 0 ? '#fff' : '#fafbff' }}>
+                          <td style={tdStyle}>{`Q${q.question_number || col.startIdx + i + 1}`}</td>
+                          <td style={tdStyle}>{q.category_name || '—'}</td>
+                          <td style={{ ...tdStyle, textAlign: 'center' }}>
+                            {q.correct
+                              ? <span style={{ color: '#15803d', fontWeight: 700, fontSize: '1rem' }}>Yes</span>
+                              : <span style={{ color: '#b91c1c', fontWeight: 700, fontSize: '1rem' }}>No</span>}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                ))}
+              </div>
+            );
+          })()
         )
       ) : (
         <div style={{ fontSize: '0.82rem', color: 'var(--muted)', fontStyle: 'italic' }}>
