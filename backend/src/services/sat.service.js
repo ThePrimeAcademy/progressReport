@@ -84,9 +84,11 @@ async function getSatScoresForStudent(student) {
   const buckets = gradeRecordsByGroup(records).map(applyCurves);
   if (buckets.length === 0) return empty;
 
-  // Latest = most recently finished group that has BOTH curves uploaded.
-  const fullyGraded = buckets.filter((b) => b.total != null);
-  const latest = fullyGraded.sort((a, b) => b.latestFinished - a.latestFinished)[0] || null;
+  // Latest = most recently finished group with AT LEAST ONE section graded.
+  // Math/RW cards populate independently as soon as their respective curve
+  // is uploaded; the total score still requires both curves to be present.
+  const anyGraded = buckets.filter((b) => b.mathScaled != null || b.rwScaled != null);
+  const latest = anyGraded.sort((a, b) => b.latestFinished - a.latestFinished)[0] || null;
 
   // Super score = best RW ever + best Math ever (independent groups OK).
   const bestRw = buckets.reduce((m, b) => Math.max(m, b.rwScaled || 0), 0);
