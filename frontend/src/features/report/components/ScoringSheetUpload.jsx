@@ -5,7 +5,7 @@
 // Uploads an .xlsx scoring curve, then notifies the parent to refresh.
 
 import React, { useRef, useState } from 'react';
-import { uploadScoringSheet, deleteScoringSheet } from '../api/reportApi.js';
+import { uploadScoringSheet, deleteScoringSheet, setScoringSheetBound } from '../api/reportApi.js';
 
 const styles = {
   wrapper: {
@@ -33,6 +33,16 @@ const styles = {
     color: '#b91c1c', padding: '4px 10px', borderRadius: 6, cursor: 'pointer',
     fontSize: '0.7rem', fontWeight: 500,
   },
+  boundToggle: {
+    display: 'inline-flex', borderRadius: 6, overflow: 'hidden',
+    border: '1px solid var(--border)', marginLeft: 2,
+  },
+  boundBtn: {
+    appearance: 'none', border: 'none', background: '#fff', color: 'var(--muted)',
+    padding: '3px 8px', cursor: 'pointer', fontSize: '0.68rem', fontWeight: 600,
+    letterSpacing: '0.04em', textTransform: 'uppercase',
+  },
+  boundBtnActive: { background: 'var(--accent)', color: '#fff' },
   status: { fontSize: '0.72rem' },
   error: { color: '#b91c1c' },
   ok: { color: '#15803d' },
@@ -77,6 +87,20 @@ function SectionSlot({ groupId, section, existing, onChanged }) {
     }
   }
 
+  async function handleBound(nextBound) {
+    if (nextBound === (existing?.bound || 'upper')) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await setScoringSheetBound({ groupId, section, bound: nextBound });
+      onChanged?.();
+    } catch (err) {
+      setError(err.response?.data?.error || err.message || 'Failed to update bound');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const uploaded = Boolean(existing);
 
   function stop(e) { e.stopPropagation(); }
@@ -90,6 +114,26 @@ function SectionSlot({ groupId, section, existing, onChanged }) {
       {uploaded ? (
         <>
           <span style={styles.ok}>{existing.points} pts</span>
+          <span style={styles.boundToggle} role="group" aria-label="Score bound">
+            <button
+              type="button"
+              style={{ ...styles.boundBtn, ...((existing.bound || 'upper') === 'lower' ? styles.boundBtnActive : {}) }}
+              disabled={busy}
+              onClick={() => handleBound('lower')}
+              title="Use the lower end of the scaled range"
+            >
+              Lower
+            </button>
+            <button
+              type="button"
+              style={{ ...styles.boundBtn, ...((existing.bound || 'upper') === 'upper' ? styles.boundBtnActive : {}) }}
+              disabled={busy}
+              onClick={() => handleBound('upper')}
+              title="Use the upper end of the scaled range"
+            >
+              Upper
+            </button>
+          </span>
           <button type="button" style={styles.btnGhost} disabled={busy} onClick={() => inputRef.current?.click()}>
             Replace
           </button>

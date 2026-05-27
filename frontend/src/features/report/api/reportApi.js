@@ -54,3 +54,11 @@ export async function deleteScoringSheet({ groupId, section }) {
   const response = await apiClient.delete(`/scoring-sheets/${encodeURIComponent(groupId)}/${encodeURIComponent(section)}`);
   return response.data;
 }
+
+export async function setScoringSheetBound({ groupId, section, bound }) {
+  const response = await apiClient.patch(
+    `/scoring-sheets/${encodeURIComponent(groupId)}/${encodeURIComponent(section)}`,
+    { bound }
+  );
+  return response.data.data;
+}

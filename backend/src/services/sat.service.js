@@ -10,8 +10,8 @@
 // Total = RW_upper + Math_upper for the most recently attempted group.
 // Super = best RW ever + best Math ever, across every group the student took.
 
-const { getStudentResults } = require('./classmarker.service');
-const { getCurve, gradeUpper } = require('./scoring-sheet.service');
+const db = require('./db.service');
+const { getCurve, gradeScaled } = require('./scoring-sheet.service');
 
 // Only groups whose name contains "SAT" (case-insensitive) participate in SAT
 // score aggregation. Keeps non-SAT classes (e.g. ACT, subject tests, school
@@ -48,8 +48,8 @@ function deriveTestSection(testName, groupName, questions) {
 function gradeRecordsByGroup(records) {
   const buckets = {};
   for (const r of records) {
-    const gid = r.groupId ?? r.group?.groupId ?? r.group_id ?? null;
-    const gname = r.groupName ?? r.group?.groupName ?? r.group_name ?? null;
+    const gid = r.group?.groupId ?? r.group_id ?? null;
+    const gname = r.group?.groupName ?? r.group_name ?? null;
     if (!gid || !isSatGroupName(gname)) continue;
     if (!buckets[gid]) {
       buckets[gid] = {
@@ -65,7 +65,7 @@ function gradeRecordsByGroup(records) {
       bucket.latestFinished = r.timeFinished;
     }
 
-    const testName = r.testName ?? r.test?.testName ?? r.test_name ?? null;
+    const testName = r.test?.testName ?? r.testName ?? r.test_name ?? null;
     const questions = r.questions || [];
     const section = deriveTestSection(testName, gname, questions);
     if (section == null) continue;
@@ -86,8 +86,8 @@ function gradeRecordsByGroup(records) {
 function applyCurves(bucket) {
   const mathCurve = getCurve(bucket.groupId, 'math');
   const rwCurve = getCurve(bucket.groupId, 'rw');
-  const mathScaled = mathCurve ? gradeUpper(mathCurve, bucket.mathRaw) : null;
-  const rwScaled = rwCurve ? gradeUpper(rwCurve, bucket.rwRaw) : null;
+  const mathScaled = mathCurve ? gradeScaled(mathCurve, bucket.mathRaw) : null;
+  const rwScaled = rwCurve ? gradeScaled(rwCurve, bucket.rwRaw) : null;
   const total = mathScaled != null && rwScaled != null ? mathScaled + rwScaled : null;
   return { ...bucket, mathScaled, rwScaled, total };
 }
@@ -101,15 +101,12 @@ async function getSatScoresForStudent(student) {
     superScore: null,
     source: null,
   };
-  if (!student || !student.id) return empty;
-  // Sheets-derived student IDs (e.g. "sheets:email@example.com") have no
-  // ClassMarker records — bail out before hitting the API.
-  if (String(student.id).startsWith('sheets:')) return empty;
+  if (!student) return empty;
 
-  // Pull every ClassMarker REST API result for this student (wide date window —
-  // we want all-time data for super-score purposes).
-  const records = await getStudentResults(
-    student.id,
+  // Pull every webhook record for this student (wide date window — the SQL
+  // filter is timestamp-bounded but we want all-time for super-score purposes).
+  const records = await db.findMatchingRecords(
+    student,
     '1970-01-01',
     '2999-12-31',
     null

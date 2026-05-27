@@ -23,6 +23,7 @@ const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '../../data');
 const SHEETS_DIR = path.join(DATA_DIR, 'scoring-sheets');
 
 const VALID_SECTIONS = new Set(['math', 'rw']);
+const VALID_BOUNDS = new Set(['upper', 'lower']);
 
 function ensureDir() {
   if (!fs.existsSync(SHEETS_DIR)) fs.mkdirSync(SHEETS_DIR, { recursive: true });
@@ -51,10 +52,13 @@ async function parseXlsxBuffer(buffer) {
   }
 }
 
-async function saveCurveFromBase64(groupId, section, base64Data, originalFilename) {
+async function saveCurveFromBase64(groupId, section, base64Data, originalFilename, bound = 'upper') {
   if (!groupId) throw Object.assign(new Error('groupId is required'), { status: 400 });
   if (!VALID_SECTIONS.has(section)) {
     throw Object.assign(new Error(`section must be one of: ${[...VALID_SECTIONS].join(', ')}`), { status: 400 });
+  }
+  if (!VALID_BOUNDS.has(bound)) {
+    throw Object.assign(new Error(`bound must be one of: ${[...VALID_BOUNDS].join(', ')}`), { status: 400 });
   }
   if (!base64Data || typeof base64Data !== 'string') {
     throw Object.assign(new Error('file (base64) is required'), { status: 400 });
@@ -65,14 +69,36 @@ async function saveCurveFromBase64(groupId, section, base64Data, originalFilenam
 
   const curve = await parseXlsxBuffer(buffer);
 
+  // Preserve the existing bound if the user previously chose 'lower' for this
+  // (group, section) and is now re-uploading without specifying it again.
+  const existing = getCurve(groupId, section);
+  const finalBound = bound || existing?.bound || 'upper';
+
   ensureDir();
   const record = {
     groupId: String(groupId),
     section,
+    bound: finalBound,
     uploadedAt: new Date().toISOString(),
     originalFilename: originalFilename || null,
     curve,
   };
+  fs.writeFileSync(curvePath(groupId, section), JSON.stringify(record, null, 2));
+  return record;
+}
+
+function setBound(groupId, section, bound) {
+  if (!VALID_SECTIONS.has(section)) {
+    throw Object.assign(new Error(`section must be one of: ${[...VALID_SECTIONS].join(', ')}`), { status: 400 });
+  }
+  if (!VALID_BOUNDS.has(bound)) {
+    throw Object.assign(new Error(`bound must be one of: ${[...VALID_BOUNDS].join(', ')}`), { status: 400 });
+  }
+  const record = getCurve(groupId, section);
+  if (!record) {
+    throw Object.assign(new Error('No curve found for this group/section'), { status: 404 });
+  }
+  record.bound = bound;
   fs.writeFileSync(curvePath(groupId, section), JSON.stringify(record, null, 2));
   return record;
 }
@@ -101,6 +127,7 @@ function listCurves() {
       out[record.groupId][record.section] = {
         uploadedAt: record.uploadedAt,
         originalFilename: record.originalFilename,
+        bound: record.bound || 'upper',
         points: record.curve.length,
         rawMin: record.curve[0]?.raw ?? null,
         rawMax: record.curve[record.curve.length - 1]?.raw ?? null,
@@ -133,11 +160,28 @@ function gradeUpper(curveRecord, rawCorrect) {
   return hit ? hit.upper : null;
 }
 
+// Returns the scaled score honoring the record's `bound` setting ('upper'|'lower').
+// Falls back to 'upper' when bound is missing (older records).
+function gradeScaled(curveRecord, rawCorrect) {
+  if (!curveRecord || !curveRecord.curve || curveRecord.curve.length === 0) return null;
+  const points = curveRecord.curve;
+  const raw = Math.max(0, Math.round(Number(rawCorrect) || 0));
+  const min = points[0].raw;
+  const max = points[points.length - 1].raw;
+  const clamped = Math.max(min, Math.min(max, raw));
+  const hit = points.find((p) => p.raw === clamped);
+  if (!hit) return null;
+  return curveRecord.bound === 'lower' ? hit.lower : hit.upper;
+}
+
 module.exports = {
   saveCurveFromBase64,
+  setBound,
   getCurve,
   listCurves,
   deleteCurve,
   gradeUpper,
+  gradeScaled,
   VALID_SECTIONS,
+  VALID_BOUNDS,
 };

@@ -2,6 +2,7 @@
 const express = require('express');
 const {
   saveCurveFromBase64,
+  setBound,
   getCurve,
   listCurves,
   deleteCurve,
@@ -35,16 +36,42 @@ router.get('/:groupId/:section', (req, res, next) => {
 });
 
 // POST /api/scoring-sheets — upload a new curve.
-// Body: { groupId, section: 'math' | 'rw', filename, fileBase64 }
+// Body: { groupId, section: 'math' | 'rw', filename, fileBase64, bound? }
 router.post('/', async (req, res, next) => {
   try {
-    const { groupId, section, filename, fileBase64 } = req.body || {};
-    const record = await saveCurveFromBase64(groupId, section, fileBase64, filename);
+    const { groupId, section, filename, fileBase64, bound } = req.body || {};
+    const record = await saveCurveFromBase64(groupId, section, fileBase64, filename, bound || 'upper');
     res.json({
       success: true,
       data: {
         groupId: record.groupId,
         section: record.section,
+        bound: record.bound,
+        uploadedAt: record.uploadedAt,
+        originalFilename: record.originalFilename,
+        points: record.curve.length,
+        rawMin: record.curve[0]?.raw ?? null,
+        rawMax: record.curve[record.curve.length - 1]?.raw ?? null,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// PATCH /api/scoring-sheets/:groupId/:section — flip the bound without re-upload.
+// Body: { bound: 'upper' | 'lower' }
+router.patch('/:groupId/:section', (req, res, next) => {
+  try {
+    const { groupId, section } = req.params;
+    const { bound } = req.body || {};
+    const record = setBound(groupId, section, bound);
+    res.json({
+      success: true,
+      data: {
+        groupId: record.groupId,
+        section: record.section,
+        bound: record.bound,
         uploadedAt: record.uploadedAt,
         originalFilename: record.originalFilename,
         points: record.curve.length,
