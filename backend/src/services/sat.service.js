@@ -22,6 +22,29 @@ function isSatGroupName(name) {
   return SAT_GROUP_NAME.test(String(name || ''));
 }
 
+// Determine whether a single test result belongs to RW (sections 1-2) or
+// Math (sections 3-4). Source-of-truth order:
+//   1. Test name starts with "Section N:" → use N.
+//   2. Group name contains "math" (whole word) → Math.
+//   3. Group name contains an RW keyword (en/english/rw/reading/verbal/writing) → RW.
+//   4. Per-question sectionNumber, if populated.
+// Returns 1|2|3|4 or null if the section can't be determined.
+function deriveTestSection(testName, groupName, questions) {
+  const m = String(testName || '').match(/^\s*section\s*(\d+)/i);
+  if (m) {
+    const n = Number(m[1]);
+    if (n >= 1 && n <= 4) return n;
+  }
+  const gn = String(groupName || '');
+  if (/\bmath\b/i.test(gn)) return 3;
+  if (/\b(en|english|rw|reading|verbal|writing)\b/i.test(gn)) return 1;
+  for (const q of (questions || [])) {
+    const sec = Number(q.sectionNumber);
+    if (sec >= 1 && sec <= 4) return sec;
+  }
+  return null;
+}
+
 function gradeRecordsByGroup(records) {
   const buckets = {};
   for (const r of records) {
@@ -41,12 +64,21 @@ function gradeRecordsByGroup(records) {
     if (r.timeFinished && r.timeFinished > bucket.latestFinished) {
       bucket.latestFinished = r.timeFinished;
     }
-    for (const q of (r.questions || [])) {
-      if (!q.correct) continue;
-      const sec = Number(q.sectionNumber);
-      if (sec === 1 || sec === 2) bucket.rwRaw += 1;
-      else if (sec === 3 || sec === 4) bucket.mathRaw += 1;
-    }
+
+    const testName = r.test?.testName ?? r.testName ?? r.test_name ?? null;
+    const questions = r.questions || [];
+    const section = deriveTestSection(testName, gname, questions);
+    if (section == null) continue;
+
+    // Prefer counting correct questions when per-question detail is present;
+    // otherwise fall back to r.score (ClassMarker's points_scored = raw correct
+    // for DSAT, where every question is worth 1 point).
+    const correct = questions.length > 0
+      ? questions.filter((q) => q.correct).length
+      : Number(r.score) || 0;
+
+    if (section === 1 || section === 2) bucket.rwRaw += correct;
+    else if (section === 3 || section === 4) bucket.mathRaw += correct;
   }
   return Object.values(buckets);
 }
