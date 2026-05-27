@@ -5,6 +5,15 @@ const { letterGrade } = require('./stats.service');
 
 const TEMPLATE_PATH = path.join(__dirname, '../templates/report.template.html');
 
+// Cap the number of per-question rows shown in any single PDF block so the
+// "Latest Test Performance" panel doesn't push to a second page. Overflow is
+// summarised as "and N more (X correct)" — full per-question detail is still
+// available in the live web report.
+const MAX_QUESTIONS_PER_BLOCK = 15;
+
+const YES_CELL = '<span style="color:#15803d;font-weight:700;">Yes</span>';
+const NO_CELL = '<span style="color:#b91c1c;font-weight:700;">No</span>';
+
 function renderTemplate(replacements) {
   let html = fs.readFileSync(TEMPLATE_PATH, 'utf-8');
   for (const [key, value] of Object.entries(replacements)) {
@@ -32,15 +41,26 @@ function buildSectionTable(sectionNum, questions) {
   const correct = questions.filter((q) => q.correct).length;
   const pct = questions.length > 0 ? Math.round((correct / questions.length) * 100) : 0;
 
-  const rows = questions.map((q, i) => `
+  const shown = questions.slice(0, MAX_QUESTIONS_PER_BLOCK);
+  const hidden = questions.slice(MAX_QUESTIONS_PER_BLOCK);
+
+  const rows = shown.map((q, i) => `
     <tr>
       <td>${sectionNum} - ${q.question_number ?? i + 1}</td>
       <td>${q.category_name || '—'}</td>
-      <td style="text-align:center;">${q.correct
-      ? '<span style="color:#15803d;font-weight:700;">&#10004;</span>'
-      : '<span style="color:#b91c1c;font-weight:700;">&#10008;</span>'
-    }</td>
+      <td style="text-align:center;">${q.correct ? YES_CELL : NO_CELL}</td>
     </tr>`).join('');
+
+  let overflowRow = '';
+  if (hidden.length > 0) {
+    const hiddenCorrect = hidden.filter((q) => q.correct).length;
+    overflowRow = `
+      <tr>
+        <td colspan="3" style="text-align:center;color:#6b7280;font-style:italic;font-size:0.66rem;padding:6px 8px;">
+          …and ${hidden.length} more question${hidden.length === 1 ? '' : 's'} (${hiddenCorrect} correct)
+        </td>
+      </tr>`;
+  }
 
   return `
     <div style="margin-bottom:8px;">
@@ -50,7 +70,7 @@ function buildSectionTable(sectionNum, questions) {
       </div>
       <table class="q-table">
         <thead><tr><th>Section - Q</th><th>Question Category</th><th style="text-align:center;">Correct?</th></tr></thead>
-        <tbody>${rows}</tbody>
+        <tbody>${rows}${overflowRow}</tbody>
       </table>
     </div>`;
 }
@@ -81,22 +101,28 @@ function buildLatestTestSection(latestTest) {
       const maHtml = maSecs.map((s) => buildSectionTable(s, sectionMap[s])).join('');
       questionHtml = `<div class="q-grid"><div class="q-col">${enHtml}</div><div class="q-col">${maHtml}</div></div>`;
     } else {
-      // flat fallback — split into 2 columns
+      // flat fallback — split into 2 columns, each capped at MAX_QUESTIONS_PER_BLOCK
       const half = Math.ceil(questions.length / 2);
-      const makeCol = (col) => `
+      const makeCol = (col, startIdx) => {
+        const shown = col.slice(0, MAX_QUESTIONS_PER_BLOCK);
+        const hidden = col.slice(MAX_QUESTIONS_PER_BLOCK);
+        const hiddenCorrect = hidden.filter((q) => q.correct).length;
+        const overflowRow = hidden.length > 0
+          ? `<tr><td colspan="3" style="text-align:center;color:#6b7280;font-style:italic;font-size:0.66rem;padding:6px 8px;">…and ${hidden.length} more question${hidden.length === 1 ? '' : 's'} (${hiddenCorrect} correct)</td></tr>`
+          : '';
+        return `
         <table class="q-table" style="border:1px solid var(--border);">
           <thead><tr><th>Q</th><th>Question Category</th><th style="text-align:center;">Correct?</th></tr></thead>
-          <tbody>${col.map((q, i) => `
+          <tbody>${shown.map((q, i) => `
             <tr>
-              <td>Q${q.question_number ?? i + 1}</td>
+              <td>Q${q.question_number ?? startIdx + i + 1}</td>
               <td>${q.category_name || '—'}</td>
-              <td style="text-align:center;">${q.correct
-          ? '<span style="color:#15803d;font-weight:700;">&#10004;</span>'
-          : '<span style="color:#b91c1c;font-weight:700;">&#10008;</span>'}</td>
-            </tr>`).join('')}
+              <td style="text-align:center;">${q.correct ? YES_CELL : NO_CELL}</td>
+            </tr>`).join('')}${overflowRow}
           </tbody>
         </table>`;
-      questionHtml = `<div class="q-grid"><div>${makeCol(questions.slice(0, half))}</div><div>${makeCol(questions.slice(half))}</div></div>`;
+      };
+      questionHtml = `<div class="q-grid"><div>${makeCol(questions.slice(0, half), 0)}</div><div>${makeCol(questions.slice(half), half)}</div></div>`;
     }
   } else {
     questionHtml = `<p style="font-size:0.75rem;color:#6b7280;font-style:italic;padding:8px 0;">Question-level data not available. Enable "Questions / Responses / Category results" in ClassMarker webhook settings.</p>`;
