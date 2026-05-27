@@ -1,63 +1,63 @@
-const fs = require('fs');
-const path = require('path');
-const { execFile } = require('child_process');
-const { promisify } = require('util');
-const { getSatScoresFromSheets } = require('./sheets.service');
+// services/sat.service.js
+// Computes SAT section + total + super scores from webhook question data
+// and per-group scoring curves uploaded via /api/scoring-sheets.
+//
+// Section convention (matches webhook.service.js):
+//   Sections 1 & 2 → Reading & Writing (RW)
+//   Sections 3 & 4 → Math
+//
+// Display value is the UPPER bound of each curve at the student's raw correct count.
+// Total = RW_upper + Math_upper for the most recently attempted group.
+// Super = best RW ever + best Math ever, across every group the student took.
 
-const execFileAsync = promisify(execFile);
+const db = require('./db.service');
+const { getCurve, gradeUpper } = require('./scoring-sheet.service');
 
-const SCRIPT_PATH = path.join(__dirname, '../scripts/read_sat_scores.py');
-const CACHE_TTL = 10 * 60 * 1000;
-const DEFAULT_WORKBOOKS = [
-  process.env.SAT_SCORES_XLSX_PATH,
-  '/home/br0k3r/Downloads/2026 Summer SAT Scores API.xlsx',
-].filter(Boolean);
+// Only groups whose name contains "SAT" (case-insensitive) participate in SAT
+// score aggregation. Keeps non-SAT classes (e.g. ACT, subject tests, school
+// quizzes) from leaking into the super-score math.
+const SAT_GROUP_NAME = /sat/i;
 
-let satCache = {
-  workbookPath: null,
-  loadedAt: 0,
-  records: [],
-};
-
-function normalizeName(value) {
-  return String(value || '')
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '');
+function isSatGroupName(name) {
+  return SAT_GROUP_NAME.test(String(name || ''));
 }
 
-function normalizeEmail(value) {
-  return String(value || '').trim().toLowerCase();
-}
-
-function resolveWorkbookPath() {
-  return DEFAULT_WORKBOOKS.find((candidate) => candidate && fs.existsSync(candidate)) || null;
-}
-
-async function loadWorkbookRecords() {
-  const workbookPath = resolveWorkbookPath();
-  if (!workbookPath) return [];
-
-  const stillFresh =
-    satCache.workbookPath === workbookPath &&
-    Date.now() - satCache.loadedAt < CACHE_TTL;
-
-  if (stillFresh) {
-    return satCache.records;
+function gradeRecordsByGroup(records) {
+  const buckets = {};
+  for (const r of records) {
+    const gid = r.group?.groupId ?? r.group_id ?? null;
+    const gname = r.group?.groupName ?? r.group_name ?? null;
+    if (!gid || !isSatGroupName(gname)) continue;
+    if (!buckets[gid]) {
+      buckets[gid] = {
+        groupId: String(gid),
+        groupName: gname,
+        rwRaw: 0,
+        mathRaw: 0,
+        latestFinished: 0,
+      };
+    }
+    const bucket = buckets[gid];
+    if (r.timeFinished && r.timeFinished > bucket.latestFinished) {
+      bucket.latestFinished = r.timeFinished;
+    }
+    for (const q of (r.questions || [])) {
+      if (!q.correct) continue;
+      const sec = Number(q.sectionNumber);
+      if (sec === 1 || sec === 2) bucket.rwRaw += 1;
+      else if (sec === 3 || sec === 4) bucket.mathRaw += 1;
+    }
   }
+  return Object.values(buckets);
+}
 
-  const { stdout } = await execFileAsync('python3', [SCRIPT_PATH, workbookPath], {
-    cwd: path.join(__dirname, '../..'),
-  });
-
-  const parsed = JSON.parse(stdout);
-  satCache = {
-    workbookPath,
-    loadedAt: Date.now(),
-    records: Array.isArray(parsed.records) ? parsed.records : [],
-  };
-
-  return satCache.records;
+function applyCurves(bucket) {
+  const mathCurve = getCurve(bucket.groupId, 'math');
+  const rwCurve = getCurve(bucket.groupId, 'rw');
+  const mathScaled = mathCurve ? gradeUpper(mathCurve, bucket.mathRaw) : null;
+  const rwScaled = rwCurve ? gradeUpper(rwCurve, bucket.rwRaw) : null;
+  const total = mathScaled != null && rwScaled != null ? mathScaled + rwScaled : null;
+  return { ...bucket, mathScaled, rwScaled, total };
 }
 
 async function getSatScoresForStudent(student) {
@@ -69,48 +69,41 @@ async function getSatScoresForStudent(student) {
     superScore: null,
     source: null,
   };
-
   if (!student) return empty;
 
-  // Try Google Sheets first
-  if (process.env.GOOGLE_SHEETS_SPREADSHEET_ID && process.env.GOOGLE_SHEETS_API_KEY) {
-    try {
-      const sheetsResult = await getSatScoresFromSheets(student);
-      if (sheetsResult.source === 'sheets') return sheetsResult;
-    } catch (err) {
-      console.warn('[sat.service] Sheets lookup failed, falling back to Excel:', err.message);
-    }
-  }
+  // Pull every webhook record for this student (wide date window — the SQL
+  // filter is timestamp-bounded but we want all-time for super-score purposes).
+  const records = await db.findMatchingRecords(
+    student,
+    '1970-01-01',
+    '2999-12-31',
+    null
+  );
+  if (!records || records.length === 0) return empty;
 
-  // Fall back to local Excel
-  const records = await loadWorkbookRecords();
-  if (!records.length) return empty;
+  const buckets = gradeRecordsByGroup(records).map(applyCurves);
+  if (buckets.length === 0) return empty;
 
-  const email = normalizeEmail(student.email);
-  const name = normalizeName(student.name);
+  // Latest = most recently finished group that has BOTH curves uploaded.
+  const fullyGraded = buckets.filter((b) => b.total != null);
+  const latest = fullyGraded.sort((a, b) => b.latestFinished - a.latestFinished)[0] || null;
 
-  let match = null;
-  if (email) {
-    const emailMatches = records.filter(
-      (record) => normalizeEmail(record.normalized_email || record.email) === email
-    );
-    if (emailMatches.length === 1) match = emailMatches[0];
-  }
-  if (!match && name) {
-    match = records.find((record) => normalizeName(record.normalized_name || record.name) === name);
-  }
-  if (!match) return empty;
+  // Super score = best RW ever + best Math ever (independent groups OK).
+  const bestRw = buckets.reduce((m, b) => Math.max(m, b.rwScaled || 0), 0);
+  const bestMath = buckets.reduce((m, b) => Math.max(m, b.mathScaled || 0), 0);
+  const superScore = bestRw > 0 && bestMath > 0 ? bestRw + bestMath : null;
 
   return {
-    latestTestLabel: match.latest_test_label ?? null,
-    latestTestScore: match.latest_test_score ?? null,
-    latestEnglishScore: match.latest_english_score ?? null,
-    latestMathScore: match.latest_math_score ?? null,
-    superScore: match.super_score ?? null,
-    source: 'excel',
+    latestTestLabel: latest?.groupName ?? null,
+    latestTestScore: latest?.total ?? null,
+    latestEnglishScore: latest?.rwScaled ?? null,
+    latestMathScore: latest?.mathScaled ?? null,
+    superScore,
+    source: latest || superScore ? 'curve' : null,
   };
 }
 
 module.exports = {
   getSatScoresForStudent,
+  isSatGroupName,
 };

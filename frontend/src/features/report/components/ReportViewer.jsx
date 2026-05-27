@@ -1,6 +1,12 @@
 // features/report/components/ReportViewer.jsx
 import React, { useState } from 'react';
 import Button from '../../../components/ui/Button.jsx';
+import ScoringSheetUpload from './ScoringSheetUpload.jsx';
+
+const SAT_GROUP_NAME = /sat/i;
+function isSatGroupName(name) {
+  return SAT_GROUP_NAME.test(String(name || ''));
+}
 
 // ── Helpers ──────────────────────────────────────────────────
 function letterGrade(pct) {
@@ -370,12 +376,13 @@ function WeeklyPerformance({ categoryPerf, categoryPerfSplit }) {
 }
 
 // ── Group section (existing tests view) ──────────────────────
-function GroupSection({ group }) {
+function GroupSection({ group, sheets, onChanged }) {
   const [open, setOpen] = useState(true);
   const avg = group.results.length
     ? Math.round(group.results.reduce((s, r) => s + r.percentage, 0) / group.results.length * 10) / 10
     : 0;
   const gc = gradeColor(avg);
+  const showUpload = isSatGroupName(group.groupName);
 
   return (
     <div style={{ border: '1.5px solid var(--border)', borderRadius: 12, overflow: 'hidden', marginBottom: 14 }}>
@@ -402,6 +409,10 @@ function GroupSection({ group }) {
           <span style={{ color: 'var(--muted)', fontSize: '0.82rem', display: 'inline-block', transform: open ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}>▼</span>
         </div>
       </div>
+
+      {open && showUpload && (
+        <ScoringSheetUpload groupId={group.groupId} sheets={sheets} onChanged={onChanged} />
+      )}
 
       {open && (
         <div style={{ overflowX: 'auto' }}>
@@ -448,7 +459,7 @@ function GroupSection({ group }) {
 }
 
 // ── Main ReportViewer ─────────────────────────────────────────
-export default function ReportViewer({ data, onDownload, downloadLoading, downloadError, downloadSuccess }) {
+export default function ReportViewer({ data, onDownload, downloadLoading, downloadError, downloadSuccess, scoringSheets, onScoringSheetsChanged }) {
   const { student, groups, stats, satScores, startDate, endDate, latestTest, categoryPerf, categoryPerfSplit } = data;
   const totalTests = groups.reduce((s, g) => s + g.results.length, 0);
   const totalGroups = groups.length;
@@ -510,7 +521,14 @@ export default function ReportViewer({ data, onDownload, downloadLoading, downlo
         {groups.length === 0 ? (
           <div style={{ color: 'var(--muted)', fontSize: '0.88rem' }}>No results found in selected range.</div>
         ) : (
-          groups.map((g) => <GroupSection key={g.groupId} group={g} />)
+          groups.map((g) => (
+            <GroupSection
+              key={g.groupId}
+              group={g}
+              sheets={scoringSheets?.[g.groupId]}
+              onChanged={onScoringSheetsChanged}
+            />
+          ))
         )}
       </div>
 

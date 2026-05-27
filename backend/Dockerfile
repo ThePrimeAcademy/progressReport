@@ -5,6 +5,7 @@ ENV PUPPETEER_SKIP_DOWNLOAD=true
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     chromium \
+    python3 \
     ca-certificates \
     fonts-liberation \
     libasound2 \

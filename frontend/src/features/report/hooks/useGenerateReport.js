@@ -1,6 +1,6 @@
 // features/report/hooks/useGenerateReport.js
 import { useState, useEffect, useCallback } from 'react';
-import { fetchStudents, previewReport, downloadReport } from '../api/reportApi.js';
+import { fetchStudents, previewReport, downloadReport, listScoringSheets } from '../api/reportApi.js';
 import { downloadFile } from '../../../utils/downloadFile.js';
 
 export function useGenerateReport() {
@@ -21,6 +21,18 @@ export function useGenerateReport() {
   const [downloadError, setDownloadError] = useState(null);
   const [downloadSuccess, setDownloadSuccess] = useState(false);
 
+  const [scoringSheets, setScoringSheets] = useState({});
+
+  const refreshScoringSheets = useCallback(async () => {
+    try {
+      const data = await listScoringSheets();
+      setScoringSheets(data || {});
+    } catch (err) {
+      // Non-fatal; report still renders without scoring-sheet metadata.
+      console.warn('Failed to load scoring sheets', err.message);
+    }
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     async function load() {
@@ -36,8 +48,9 @@ export function useGenerateReport() {
       }
     }
     load();
+    refreshScoringSheets();
     return () => { cancelled = true; };
-  }, []);
+  }, [refreshScoringSheets]);
 
   useEffect(() => {
     setPreviewData(null);
@@ -100,6 +113,7 @@ export function useGenerateReport() {
     previewData, previewLoading, previewError,
     downloadLoading, downloadError, downloadSuccess,
     handlePreview, handleDownload,
+    scoringSheets, refreshScoringSheets,
     isValid,
   };
 }

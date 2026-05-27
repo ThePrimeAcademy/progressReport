@@ -9,6 +9,7 @@ const cors = require('cors');
 const studentRoutes = require('./routes/students.routes');
 const reportRoutes = require('./routes/report.routes');
 const webhookRoutes = require('./routes/webhook.routes');
+const scoringSheetsRoutes = require('./routes/scoring-sheets.routes');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -49,6 +50,7 @@ app.get('/routes', (req, res) => {
 // Routes
 app.use('/api/students', studentRoutes);
 app.use('/api/report', reportRoutes);
+app.use('/api/scoring-sheets', scoringSheetsRoutes);
 
 // 404 handler
 app.use((req, res) => {

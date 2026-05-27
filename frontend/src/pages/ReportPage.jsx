@@ -40,6 +40,7 @@ export default function ReportPage() {
     previewData, previewLoading, previewError,
     downloadLoading, downloadError, downloadSuccess,
     handlePreview, handleDownload,
+    scoringSheets, refreshScoringSheets,
     isValid,
   } = useGenerateReport();
 
@@ -105,6 +106,11 @@ export default function ReportPage() {
             downloadLoading={downloadLoading}
             downloadError={downloadError}
             downloadSuccess={downloadSuccess}
+            scoringSheets={scoringSheets}
+            onScoringSheetsChanged={async () => {
+              await refreshScoringSheets();
+              await handlePreview();
+            }}
           />
         )}
 
