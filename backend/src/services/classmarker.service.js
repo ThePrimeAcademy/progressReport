@@ -55,12 +55,24 @@ async function fetchCategoryMap() {
     const data = await res.json();
     console.log("[categories] Raw:", JSON.stringify(data).slice(0, 300));
     const newMap = {};
+    const addCat = (c) => {
+      if (c && c.category_id != null && c.category_name) {
+        newMap[String(c.category_id)] = c.category_name;
+      }
+    };
+    // Walk every shape ClassMarker may return:
+    //   - { parent_categories: [{ category_id, category_name, categories: [...] }] }
+    //   - { categories: [...] }                       (flat)
+    //   - { data: { parent_categories: [...] } }      (envelope)
+    //   - { data: { categories: [...] } }
     const parentCats = data.parent_categories || data.data?.parent_categories || [];
     for (const parent of parentCats) {
-      for (const cat of (parent.categories || [])) {
-        newMap[String(cat.category_id)] = cat.category_name;
-      }
+      addCat(parent); // include the parent category itself
+      for (const cat of (parent.categories || [])) addCat(cat);
     }
+    const flatCats = data.categories || data.data?.categories || [];
+    for (const cat of flatCats) addCat(cat);
+
     categoryMap = newMap;
     categoryFetchedAt = Date.now();
     console.log(`[categories] Loaded ${Object.keys(categoryMap).length} categories`);
