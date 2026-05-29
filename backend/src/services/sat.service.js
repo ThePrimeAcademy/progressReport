@@ -140,4 +140,5 @@ async function getSatScoresForStudent(student) {
 module.exports = {
   getSatScoresForStudent,
   isSatGroupName,
+  deriveTestSection,
 };

@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 const db = require('./db.service');
 const { getCategoryName, fetchCategoryMap } = require('./classmarker.service');
+const { deriveTestSection } = require('./sat.service');
 
 // Pre-fetch category map on startup
 fetchCategoryMap().catch(() => { });
@@ -126,20 +127,26 @@ async function getWebhookCategoryPerformanceSplit(student, startDate, endDate, d
   const maMap = {};
   let hasSectionData = false;
 
+  // Sections 1-2 → English, 3-4 → Math. Derive once per record from the test
+  // name / group name / per-question section. If the section can't be derived,
+  // skip the record entirely rather than misclassifying English categories as
+  // Math (which used to happen via a name-keyword fallback).
   for (const record of records) {
-    for (const q of record.questions || []) {
-      const section = Number(q.sectionNumber);
+    const testName = record.test?.testName ?? record.test_name ?? null;
+    const groupName = record.group?.groupName ?? record.group_name ?? null;
+    const questions = record.questions || [];
+    const recordSection = deriveTestSection(testName, groupName, questions);
+
+    for (const q of questions) {
       const name = (q.categoryName || '').trim();
       if (!name || name === 'Unknown') continue;
 
-      let map;
-      if (section >= 1 && section <= 4) {
-        hasSectionData = true;
-        map = section <= 2 ? enMap : maMap;
-      } else {
-        const isEnKw = /word|context|grammar|purpose|rhetoric|synthesis|reading|quotation|claim|transition|structure|function/i.test(name);
-        map = isEnKw ? enMap : maMap;
-      }
+      const qSec = Number(q.sectionNumber);
+      const section = (qSec >= 1 && qSec <= 4) ? qSec : recordSection;
+      if (!section) continue;
+
+      hasSectionData = true;
+      const map = section <= 2 ? enMap : maMap;
       if (!map[name]) map[name] = { name, correct: 0, total: 0 };
       map[name].total += 1;
       if (q.correct) map[name].correct += 1;
