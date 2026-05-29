@@ -321,7 +321,11 @@ function clearCache() {
   } catch (e) {
     console.warn('Could not delete cache file:', e.message);
   }
-  console.log('Cache cleared.');
+  // Also flush the in-memory category map so renamed categories show up on
+  // the next fetch instead of waiting for the 1h TTL.
+  categoryMap = {};
+  categoryFetchedAt = 0;
+  console.log('Cache cleared (results + category map).');
 }
 
 module.exports = {
