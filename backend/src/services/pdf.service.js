@@ -266,7 +266,8 @@ async function generateReportPDF(student, groups, stats, satScores, startDate, e
     satLatestEnglishScore: satScores?.latestEnglishScore ?? '—',
     satLatestMathScore: satScores?.latestMathScore ?? '—',
     satSuperScore: satScores?.superScore ?? '—',
-    latestTestSection: buildLatestTestSection(latestTest),
+    // latestTestSection: buildLatestTestSection(latestTest), // hidden from PDF — restore this line (and delete the '' line below) to bring back "Latest Test Performance"
+    latestTestSection: '',
     weeklySection: buildWeeklySection(categoryPerfSplit, categoryPerf),
   };
 
