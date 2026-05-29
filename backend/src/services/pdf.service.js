@@ -151,10 +151,9 @@ function buildCatRow(cat, i) {
   const color = scoreColor(cat.percentage);
   return `
     <tr>
-      <td>${cat.name}</td>
+      <td style="white-space:nowrap;">${cat.name}</td>
       <td style="font-weight:600;color:${color};">${cat.correct}/${cat.total}</td>
       <td style="font-weight:600;color:${color};">${cat.percentage}%</td>
-      <td><div class="score-bar-track"><div class="score-bar-fill" style="width:${Math.round(cat.percentage)}%;background:${color};"></div></div></td>
     </tr>`;
 }
 
@@ -168,7 +167,7 @@ function buildSubjectBox(subject, dotColor, headerBg, allCats, strengths, weakne
 
   const tableFor = (cats) => cats.length > 0
     ? `<table class="cat-table">
-        <thead><tr><th>Problem Category</th><th>Score</th><th>%</th><th>Performance</th></tr></thead>
+        <thead><tr><th>Problem Category</th><th>Score</th><th>%</th></tr></thead>
         <tbody>${cats.map((c, i) => buildCatRow(c, i)).join('')}</tbody>
        </table>`
     : `<div style="padding:10px 14px;font-size:0.85rem;color:#6b7280;font-style:italic;">No data available.</div>`;
@@ -226,7 +225,7 @@ function buildWeeklySection(categoryPerfSplit, categoryPerf) {
     <div style="margin-bottom:18px;">
       <div class="section-title">Weekly Performance</div>
       <div style="display:flex;flex-direction:column;gap:16px;">
-        ${buildSubjectBox('English', '#15803d', '#f0fdf4', enCats, topN(enCats), botN(enCats))}
+        ${buildSubjectBox('English', '#1a56db', '#eff6ff', enCats, topN(enCats), botN(enCats))}
         ${buildSubjectBox('Math', '#1a56db', '#eff6ff', maCats, topN(maCats), botN(maCats))}
       </div>
     </div>`;
