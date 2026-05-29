@@ -158,31 +158,42 @@ function buildCatRow(cat, i) {
     </tr>`;
 }
 
-function buildCatBox(title, dotColor, headerBg, categories) {
-  const avg = categories.length > 0
-    ? Math.round(categories.reduce((s, c) => s + c.percentage, 0) / categories.length)
+function buildSubjectBox(subject, dotColor, headerBg, allCats, strengths, weaknesses) {
+  const avg = allCats.length > 0
+    ? Math.round(allCats.reduce((s, c) => s + c.percentage, 0) / allCats.length)
     : 0;
   const grade = letterGrade(avg);
   const gc = scoreColor(avg);
   const gcBg = scoreBg(avg);
 
-  const body = categories.length > 0
+  const tableFor = (cats) => cats.length > 0
     ? `<table class="cat-table">
         <thead><tr><th>Problem Category</th><th>Score</th><th>%</th><th>Performance</th></tr></thead>
-        <tbody>${categories.map((c, i) => buildCatRow(c, i)).join('')}</tbody>
+        <tbody>${cats.map((c, i) => buildCatRow(c, i)).join('')}</tbody>
        </table>`
-    : `<div style="padding:10px 12px;font-size:0.72rem;color:#6b7280;">No data available.</div>`;
+    : `<div style="padding:10px 14px;font-size:0.85rem;color:#6b7280;font-style:italic;">No data available.</div>`;
+
+  const stripAvg = (cats) => cats.length > 0
+    ? Math.round(cats.reduce((s, c) => s + c.percentage, 0) / cats.length)
+    : 0;
 
   return `
     <div class="cat-box">
       <div class="cat-box-header" style="background:${headerBg};">
         <div class="cat-box-title">
           <span class="cat-dot" style="background:${dotColor};"></span>
-          ${title}
+          ${subject}
         </div>
         <span class="grade-badge" style="background:${gcBg};color:${gc};">Avg ${avg}% · ${grade}</span>
       </div>
-      ${body}
+      <div class="subject-strip" style="background:#f0fdf4;color:#15803d;">
+        <span>▲ Strengths</span><span>Avg ${stripAvg(strengths)}%</span>
+      </div>
+      ${tableFor(strengths)}
+      <div class="subject-strip" style="background:#fef2f2;color:#b91c1c;">
+        <span>▼ Weaknesses</span><span>Avg ${stripAvg(weaknesses)}%</span>
+      </div>
+      ${tableFor(weaknesses)}
     </div>`;
 }
 
@@ -202,21 +213,15 @@ function buildWeeklySection(categoryPerfSplit, categoryPerf) {
   if (!enCats.length && !maCats.length) return '';
 
   const TOP = 3;
-  const enStr = [...enCats].sort((a, b) => b.percentage - a.percentage).slice(0, TOP);
-  const enWeak = [...enCats].sort((a, b) => a.percentage - b.percentage).slice(0, TOP);
-  const maStr = [...maCats].sort((a, b) => b.percentage - a.percentage).slice(0, TOP);
-  const maWeak = [...maCats].sort((a, b) => a.percentage - b.percentage).slice(0, TOP);
+  const topN = (cats) => [...cats].sort((a, b) => b.percentage - a.percentage).slice(0, TOP);
+  const botN = (cats) => [...cats].sort((a, b) => a.percentage - b.percentage).slice(0, TOP);
 
   return `
     <div style="margin-bottom:18px;">
       <div class="section-title">Weekly Performance</div>
       <div class="cat-grid">
-        ${buildCatBox('English - Strengths', '#15803d', '#f0fdf4', enStr)}
-        ${buildCatBox('Math - Strengths', '#1a56db', '#eff6ff', maStr)}
-      </div>
-      <div class="cat-grid">
-        ${buildCatBox('English - Weaknesses', '#b91c1c', '#fff1f2', enWeak)}
-        ${buildCatBox('Math - Weaknesses', '#b45309', '#fffbeb', maWeak)}
+        ${buildSubjectBox('English', '#15803d', '#f0fdf4', enCats, topN(enCats), botN(enCats))}
+        ${buildSubjectBox('Math', '#1a56db', '#eff6ff', maCats, topN(maCats), botN(maCats))}
       </div>
     </div>`;
 }
