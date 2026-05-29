@@ -221,71 +221,6 @@ function buildWeeklySection(categoryPerfSplit, categoryPerf) {
     </div>`;
 }
 
-// ── All Tests by Group ────────────────────────────────────────
-function buildTestsByGroupSection(groups) {
-  if (!groups || groups.length === 0) return '';
-
-  const groupBlocks = groups.map((g) => {
-    const results = [...(g.results || [])].sort((a, b) => new Date(a.date) - new Date(b.date));
-    if (results.length === 0) return '';
-
-    const avg = Math.round(results.reduce((s, r) => s + (r.percentage || 0), 0) / results.length);
-    const ac = scoreColor(avg);
-    const acBg = scoreBg(avg);
-
-    const rows = results.map((r) => {
-      const grade = letterGrade(r.percentage);
-      const color = scoreColor(r.percentage);
-      const statusCell = r.passed
-        ? '<span style="color:#15803d;font-weight:600;">✓ Passed</span>'
-        : '<span style="color:#b91c1c;font-weight:600;">✗ Failed</span>';
-      return `
-        <tr>
-          <td style="font-weight:500;">${r.testName}</td>
-          <td style="color:#6b7280;white-space:nowrap;">${r.date}</td>
-          <td><span style="font-weight:600;color:${color};">${r.score}/${r.maxScore}</span></td>
-          <td style="font-weight:600;color:${color};">${r.percentage}%</td>
-          <td><span class="grade-badge grade-${grade}">${grade}</span></td>
-          <td><div class="score-bar-track"><div class="score-bar-fill" style="width:${Math.round(r.percentage)}%;background:${color};"></div></div></td>
-          <td style="font-size:0.7rem;">${statusCell}</td>
-        </tr>`;
-    }).join('');
-
-    return `
-      <div class="cat-box" style="margin-bottom:10px;">
-        <div class="cat-box-header" style="background:${acBg};">
-          <div class="cat-box-title">
-            <span class="cat-dot" style="background:${ac};"></span>
-            ${g.groupName || 'Group'}
-          </div>
-          <span class="grade-badge" style="background:#fff;color:${ac};border:1px solid ${ac}40;">${results.length} test${results.length === 1 ? '' : 's'} · Avg ${avg}% · ${letterGrade(avg)}</span>
-        </div>
-        <table class="cat-table">
-          <thead>
-            <tr>
-              <th>Test Name</th>
-              <th>Date</th>
-              <th>Score</th>
-              <th>%</th>
-              <th>Grade</th>
-              <th>Performance</th>
-              <th>Status</th>
-            </tr>
-          </thead>
-          <tbody>${rows}</tbody>
-        </table>
-      </div>`;
-  }).filter(Boolean).join('');
-
-  if (!groupBlocks) return '';
-
-  return `
-    <div style="margin-bottom:18px;">
-      <div class="section-title">All Tests by Group</div>
-      ${groupBlocks}
-    </div>`;
-}
-
 // ── Test rows ─────────────────────────────────────────────────
 function buildTestRows(groups) {
   const allTests = groups.flatMap((g) => g.results);
@@ -334,7 +269,6 @@ async function generateReportPDF(student, groups, stats, satScores, startDate, e
     // latestTestSection: buildLatestTestSection(latestTest), // hidden from PDF — restore this line (and delete the '' line below) to bring back "Latest Test Performance"
     latestTestSection: '',
     weeklySection: buildWeeklySection(categoryPerfSplit, categoryPerf),
-    testsByGroupSection: buildTestsByGroupSection(groups),
   };
 
   const html = renderTemplate(replacements);

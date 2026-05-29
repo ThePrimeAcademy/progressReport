@@ -76,22 +76,22 @@
     .student-banner {
       display: flex;
       align-items: center;
-      gap: 14px;
+      gap: 18px;
       background: #e8f0fe;
-      border-left: 4px solid var(--accent);
-      border-radius: 0 8px 8px 0;
-      padding: 12px 18px;
-      margin-bottom: 16px;
+      border-left: 5px solid var(--accent);
+      border-radius: 0 10px 10px 0;
+      padding: 18px 24px;
+      margin-bottom: 24px;
     }
 
     .avatar {
-      width: 40px;
-      height: 40px;
+      width: 56px;
+      height: 56px;
       border-radius: 50%;
       background: var(--accent);
       color: #fff;
       font-family: 'DM Serif Display', serif;
-      font-size: 1.1rem;
+      font-size: 1.5rem;
       display: flex;
       align-items: center;
       justify-content: center;
@@ -99,42 +99,42 @@
     }
 
     .student-name {
-      font-size: 1rem;
+      font-size: 1.25rem;
       font-weight: 600;
     }
 
     .student-meta {
-      font-size: 0.72rem;
+      font-size: 0.85rem;
       color: var(--muted);
-      margin-top: 2px;
+      margin-top: 4px;
     }
 
     /* SAT Score cards */
     .sat-grid {
       display: grid;
       grid-template-columns: repeat(4, 1fr);
-      gap: 10px;
-      margin-bottom: 20px;
+      gap: 14px;
+      margin-bottom: 30px;
     }
 
     .sat-card {
       border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 11px 14px;
+      border-radius: 10px;
+      padding: 20px 22px;
       background: #fafbff;
     }
 
     .sat-label {
-      font-size: 0.62rem;
+      font-size: 0.78rem;
       font-weight: 600;
       text-transform: uppercase;
       letter-spacing: 0.08em;
       color: var(--muted);
-      margin-bottom: 5px;
+      margin-bottom: 10px;
     }
 
     .sat-value {
-      font-size: 1.8rem;
+      font-size: 2.6rem;
       font-weight: 700;
       line-height: 1;
     }
@@ -142,11 +142,11 @@
     /* Section headers */
     .section-title {
       font-family: 'DM Serif Display', Georgia, serif;
-      font-size: 1rem;
+      font-size: 1.35rem;
       font-weight: 600;
       color: var(--ink);
-      margin-bottom: 10px;
-      padding-bottom: 6px;
+      margin-bottom: 14px;
+      padding-bottom: 8px;
       border-bottom: 2px solid #e8f0fe;
     }
 
@@ -187,9 +187,9 @@
 
     .grade-badge {
       display: inline-block;
-      padding: 2px 8px;
-      border-radius: 4px;
-      font-size: 0.68rem;
+      padding: 4px 10px;
+      border-radius: 5px;
+      font-size: 0.85rem;
       font-weight: 700;
     }
 
@@ -288,13 +288,13 @@
     .cat-grid {
       display: grid;
       grid-template-columns: 1fr 1fr;
-      gap: 12px;
-      margin-bottom: 12px;
+      gap: 16px;
+      margin-bottom: 18px;
     }
 
     .cat-box {
       border: 1px solid var(--border);
-      border-radius: 8px;
+      border-radius: 10px;
       overflow: hidden;
     }
 
@@ -302,21 +302,21 @@
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 7px 12px;
+      padding: 12px 16px;
       border-bottom: 1px solid var(--border);
     }
 
     .cat-box-title {
       font-weight: 700;
-      font-size: 0.78rem;
+      font-size: 1rem;
       display: flex;
       align-items: center;
-      gap: 6px;
+      gap: 8px;
     }
 
     .cat-dot {
-      width: 7px;
-      height: 7px;
+      width: 10px;
+      height: 10px;
       border-radius: 50%;
       display: inline-block;
     }
@@ -324,13 +324,13 @@
     .cat-table {
       width: 100%;
       border-collapse: collapse;
-      font-size: 0.72rem;
+      font-size: 0.92rem;
     }
 
     .cat-table th {
-      padding: 5px 10px;
+      padding: 9px 12px;
       text-align: left;
-      font-size: 0.6rem;
+      font-size: 0.72rem;
       font-weight: 600;
       text-transform: uppercase;
       letter-spacing: 0.05em;
@@ -340,7 +340,7 @@
     }
 
     .cat-table td {
-      padding: 6px 10px;
+      padding: 10px 12px;
       border-bottom: 1px solid #f0f4ff;
     }
 
@@ -355,8 +355,8 @@
     .score-bar-track {
       background: #e5e7eb;
       border-radius: 99px;
-      height: 5px;
-      width: 80px;
+      height: 8px;
+      width: 120px;
       overflow: hidden;
       display: inline-block;
       vertical-align: middle;
@@ -482,9 +482,6 @@
 
   <!-- Weekly Performance -->
   {{weeklySection}}
-
-  <!-- All Tests by Group -->
-  {{testsByGroupSection}}
 
   <!-- Footer -->
   <div class="footer">
