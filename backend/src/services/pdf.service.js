@@ -165,10 +165,6 @@ function buildSubjectBox(subject, dotColor, headerBg, strengths, weaknesses) {
        </table>`
     : `<div style="padding:10px 14px;font-size:0.85rem;color:#6b7280;font-style:italic;">No data available.</div>`;
 
-  const stripAvg = (cats) => cats.length > 0
-    ? Math.round(cats.reduce((s, c) => s + c.percentage, 0) / cats.length)
-    : 0;
-
   return `
     <div class="cat-box">
       <div class="cat-box-header" style="background:${headerBg};">
@@ -180,13 +176,13 @@ function buildSubjectBox(subject, dotColor, headerBg, strengths, weaknesses) {
       <div style="display:grid;grid-template-columns:1fr 1fr;">
         <div style="border-right:1px solid var(--border);">
           <div class="subject-strip" style="background:#f0fdf4;color:#15803d;">
-            <span>▲ Strengths</span><span>Avg ${stripAvg(strengths)}%</span>
+            <span>▲ Strengths</span>
           </div>
           ${tableFor(strengths)}
         </div>
         <div>
           <div class="subject-strip" style="background:#fef2f2;color:#b91c1c;">
-            <span>▼ Weaknesses</span><span>Avg ${stripAvg(weaknesses)}%</span>
+            <span>▼ Weaknesses</span>
           </div>
           ${tableFor(weaknesses)}
         </div>
