@@ -104,12 +104,38 @@ async function findMatchingRecords(student, startDate, endDate, dayOfWeek) {
   return db.findMatchingRecords(student, startDate, endDate, dayOfWeek);
 }
 
+// Narrow to records that belong to the LATEST single SAT exam attempt:
+//   1. SAT group (matches /sat/i)
+//   2. Test name starts with "Section 1-4:" (real SAT exam section, not concept practice)
+//   3. Same groupId as the latest such record, within a 24h window of its timeFinished
+// Returns [] if no qualifying records exist.
+const SAT_SECTION_TEST_RE = /^\s*section\s*[1-4]\s*:/i;
+function selectLatestSatExamRecords(records) {
+  const candidates = records.filter((r) => {
+    const gn = r.group?.groupName ?? r.group_name ?? null;
+    const tn = r.test?.testName ?? r.test_name ?? '';
+    return isSatGroupName(gn) && SAT_SECTION_TEST_RE.test(String(tn));
+  });
+  if (candidates.length === 0) return [];
+
+  candidates.sort((a, b) => (b.timeFinished || 0) - (a.timeFinished || 0));
+  const latest = candidates[0];
+  const latestGroupId = String(latest.group?.groupId ?? latest.group_id ?? '');
+  const latestTs = latest.timeFinished || 0;
+  const WINDOW = 24 * 3600;
+
+  return candidates.filter((r) => {
+    const gid = String(r.group?.groupId ?? r.group_id ?? '');
+    const ts = r.timeFinished || 0;
+    return gid === latestGroupId && (latestTs - ts) <= WINDOW && ts <= latestTs;
+  });
+}
+
 async function getWebhookCategoryPerformance(student, startDate, endDate, dayOfWeek) {
-  const records = await findMatchingRecords(student, startDate, endDate, dayOfWeek);
+  const allRecords = await findMatchingRecords(student, startDate, endDate, dayOfWeek);
+  const records = selectLatestSatExamRecords(allRecords);
   const categoryMap = {};
   for (const record of records) {
-    const gname = record.group?.groupName ?? record.group_name ?? null;
-    if (!isSatGroupName(gname)) continue; // Weekly Performance is SAT-only
     for (const category of record.categoryResults || []) {
       const name = category.name || 'Unknown';
       if (!categoryMap[name]) categoryMap[name] = { name, correct: 0, total: 0 };
@@ -124,7 +150,8 @@ async function getWebhookCategoryPerformance(student, startDate, endDate, dayOfW
 }
 
 async function getWebhookCategoryPerformanceSplit(student, startDate, endDate, dayOfWeek) {
-  const records = await findMatchingRecords(student, startDate, endDate, dayOfWeek);
+  const allRecords = await findMatchingRecords(student, startDate, endDate, dayOfWeek);
+  const records = selectLatestSatExamRecords(allRecords);
   const enMap = {};
   const maMap = {};
   let hasSectionData = false;
@@ -136,7 +163,6 @@ async function getWebhookCategoryPerformanceSplit(student, startDate, endDate, d
   for (const record of records) {
     const testName = record.test?.testName ?? record.test_name ?? null;
     const groupName = record.group?.groupName ?? record.group_name ?? null;
-    if (!isSatGroupName(groupName)) continue; // Weekly Performance is SAT-only
     const questions = record.questions || [];
     const recordSection = deriveTestSection(testName, groupName, questions);
 
