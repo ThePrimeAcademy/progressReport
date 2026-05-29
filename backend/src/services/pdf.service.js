@@ -157,14 +157,7 @@ function buildCatRow(cat, i) {
     </tr>`;
 }
 
-function buildSubjectBox(subject, dotColor, headerBg, allCats, strengths, weaknesses) {
-  const avg = allCats.length > 0
-    ? Math.round(allCats.reduce((s, c) => s + c.percentage, 0) / allCats.length)
-    : 0;
-  const grade = letterGrade(avg);
-  const gc = scoreColor(avg);
-  const gcBg = scoreBg(avg);
-
+function buildSubjectBox(subject, dotColor, headerBg, strengths, weaknesses) {
   const tableFor = (cats) => cats.length > 0
     ? `<table class="cat-table">
         <thead><tr><th>Problem Category</th><th>Score</th><th>%</th></tr></thead>
@@ -183,7 +176,6 @@ function buildSubjectBox(subject, dotColor, headerBg, allCats, strengths, weakne
           <span class="cat-dot" style="background:${dotColor};"></span>
           ${subject}
         </div>
-        <span class="grade-badge" style="background:${gcBg};color:${gc};">Avg ${avg}% · ${grade}</span>
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;">
         <div style="border-right:1px solid var(--border);">
@@ -225,8 +217,8 @@ function buildWeeklySection(categoryPerfSplit, categoryPerf) {
     <div style="margin-bottom:18px;">
       <div class="section-title">Weekly Performance</div>
       <div style="display:flex;flex-direction:column;gap:16px;">
-        ${buildSubjectBox('English', '#1a56db', '#eff6ff', enCats, topN(enCats), botN(enCats))}
-        ${buildSubjectBox('Math', '#1a56db', '#eff6ff', maCats, topN(maCats), botN(maCats))}
+        ${buildSubjectBox('English', '#1a56db', '#eff6ff', topN(enCats), botN(enCats))}
+        ${buildSubjectBox('Math', '#1a56db', '#eff6ff', topN(maCats), botN(maCats))}
       </div>
     </div>`;
 }
