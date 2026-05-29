@@ -207,7 +207,12 @@ function buildWeeklySection(categoryPerfSplit, categoryPerf) {
   const TOP = 3;
   // Tiebreak by total question count (desc) so a 4/4 outranks a 2/2 and a 0/4 outranks a 0/1.
   const topN = (cats) => [...cats].sort((a, b) => b.percentage - a.percentage || b.total - a.total).slice(0, TOP);
-  const botN = (cats) => [...cats].sort((a, b) => a.percentage - b.percentage || b.total - a.total).slice(0, TOP);
+  // Weaknesses must actually be weaknesses — exclude perfect-score categories
+  // even if that means fewer than 3 entries.
+  const botN = (cats) => [...cats]
+    .filter((c) => c.percentage < 100)
+    .sort((a, b) => a.percentage - b.percentage || b.total - a.total)
+    .slice(0, TOP);
 
   return `
     <div style="margin-bottom:18px;">
