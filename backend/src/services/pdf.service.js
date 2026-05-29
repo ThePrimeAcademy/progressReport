@@ -186,14 +186,20 @@ function buildSubjectBox(subject, dotColor, headerBg, allCats, strengths, weakne
         </div>
         <span class="grade-badge" style="background:${gcBg};color:${gc};">Avg ${avg}% · ${grade}</span>
       </div>
-      <div class="subject-strip" style="background:#f0fdf4;color:#15803d;">
-        <span>▲ Strengths</span><span>Avg ${stripAvg(strengths)}%</span>
+      <div style="display:grid;grid-template-columns:1fr 1fr;">
+        <div style="border-right:1px solid var(--border);">
+          <div class="subject-strip" style="background:#f0fdf4;color:#15803d;">
+            <span>▲ Strengths</span><span>Avg ${stripAvg(strengths)}%</span>
+          </div>
+          ${tableFor(strengths)}
+        </div>
+        <div>
+          <div class="subject-strip" style="background:#fef2f2;color:#b91c1c;">
+            <span>▼ Weaknesses</span><span>Avg ${stripAvg(weaknesses)}%</span>
+          </div>
+          ${tableFor(weaknesses)}
+        </div>
       </div>
-      ${tableFor(strengths)}
-      <div class="subject-strip" style="background:#fef2f2;color:#b91c1c;">
-        <span>▼ Weaknesses</span><span>Avg ${stripAvg(weaknesses)}%</span>
-      </div>
-      ${tableFor(weaknesses)}
     </div>`;
 }
 
