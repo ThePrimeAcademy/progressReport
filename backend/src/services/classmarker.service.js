@@ -182,7 +182,7 @@ async function getStudentResults(studentId, startDate, endDate, dayOfWeek) {
   const { results, groupMap, testMap } = await fetchAllResults();
 
   const startTs = Math.floor(new Date(startDate).getTime() / 1000);
-  const endTs = Math.floor(new Date(endDate).getTime() / 1000);
+  const endTs = Math.floor(new Date(endDate).getTime() / 1000) + 86399; // include the entire end day
 
   let filtered = results.filter((r) =>
     String(r.user_id) === studentId &&
@@ -212,7 +212,7 @@ async function getStudentResultsGrouped(studentId, startDate, endDate, dayOfWeek
   const { results, groupMap, testMap } = await fetchAllResults();
 
   const startTs = Math.floor(new Date(startDate).getTime() / 1000);
-  const endTs = Math.floor(new Date(endDate).getTime() / 1000);
+  const endTs = Math.floor(new Date(endDate).getTime() / 1000) + 86399; // include the entire end day
 
   let filtered = results.filter((r) =>
     String(r.user_id) === studentId &&
@@ -260,7 +260,7 @@ async function getLatestTestResult(studentId, startDate, endDate, dayOfWeek) {
   const { results, groupMap, testMap } = await fetchAllResults();
 
   const startTs = Math.floor(new Date(startDate).getTime() / 1000);
-  const endTs = Math.floor(new Date(endDate).getTime() / 1000);
+  const endTs = Math.floor(new Date(endDate).getTime() / 1000) + 86399; // include the entire end day
 
   let filtered = results.filter((r) =>
     String(r.user_id) === studentId &&

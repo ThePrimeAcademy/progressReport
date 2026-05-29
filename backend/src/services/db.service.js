@@ -146,7 +146,7 @@ async function upsertRecord(record) {
 async function findMatchingRecords(student, startDate, endDate, dayOfWeek) {
     const db = await getDb();
     const startTs = Math.floor(new Date(startDate).getTime() / 1000);
-    const endTs = Math.floor(new Date(endDate).getTime() / 1000);
+    const endTs = Math.floor(new Date(endDate).getTime() / 1000) + 86399; // include the entire end day
 
     const result = db.exec(
         'SELECT * FROM webhook_results WHERE time_finished >= ? AND time_finished <= ?',
