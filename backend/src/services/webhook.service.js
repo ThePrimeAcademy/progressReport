@@ -134,10 +134,17 @@ function selectLatestSatExamRecords(records) {
 async function getWebhookCategoryPerformance(student, startDate, endDate, dayOfWeek) {
   const allRecords = await findMatchingRecords(student, startDate, endDate, dayOfWeek);
   const records = selectLatestSatExamRecords(allRecords);
+  // Resolve names from the live ClassMarker category map so renames are
+  // reflected without requiring students to retake tests.
+  await fetchCategoryMap();
+  const resolveName = (id, stored) => {
+    const current = id ? getCategoryName(id) : null;
+    return current || stored || 'Unknown';
+  };
   const categoryMap = {};
   for (const record of records) {
     for (const category of record.categoryResults || []) {
-      const name = category.name || 'Unknown';
+      const name = resolveName(category.categoryId, category.name);
       if (!categoryMap[name]) categoryMap[name] = { name, correct: 0, total: 0 };
       categoryMap[name].correct += Number(category.correct || 0);
       categoryMap[name].total += Number(category.total || 0);
@@ -152,6 +159,13 @@ async function getWebhookCategoryPerformance(student, startDate, endDate, dayOfW
 async function getWebhookCategoryPerformanceSplit(student, startDate, endDate, dayOfWeek) {
   const allRecords = await findMatchingRecords(student, startDate, endDate, dayOfWeek);
   const records = selectLatestSatExamRecords(allRecords);
+  // Resolve names from the live ClassMarker category map so renames are
+  // reflected without requiring students to retake tests.
+  await fetchCategoryMap();
+  const resolveName = (id, stored) => {
+    const current = id ? getCategoryName(id) : null;
+    return (current || stored || '').trim();
+  };
   const enMap = {};
   const maMap = {};
   let hasSectionData = false;
@@ -167,7 +181,7 @@ async function getWebhookCategoryPerformanceSplit(student, startDate, endDate, d
     const recordSection = deriveTestSection(testName, groupName, questions);
 
     for (const q of questions) {
-      const name = (q.categoryName || '').trim();
+      const name = resolveName(q.categoryId, q.categoryName);
       if (!name || name === 'Unknown') continue;
 
       const qSec = Number(q.sectionNumber);
