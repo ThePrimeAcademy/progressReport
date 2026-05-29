@@ -219,7 +219,7 @@ function buildWeeklySection(categoryPerfSplit, categoryPerf) {
   return `
     <div style="margin-bottom:18px;">
       <div class="section-title">Weekly Performance</div>
-      <div class="cat-grid">
+      <div style="display:flex;flex-direction:column;gap:16px;">
         ${buildSubjectBox('English', '#15803d', '#f0fdf4', enCats, topN(enCats), botN(enCats))}
         ${buildSubjectBox('Math', '#1a56db', '#eff6ff', maCats, topN(maCats), botN(maCats))}
       </div>
