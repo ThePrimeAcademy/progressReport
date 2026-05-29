@@ -1,6 +1,6 @@
 // routes/students.routes.js
 const express = require('express');
-const { getAllStudents, clearCache } = require('../services/classmarker.service');
+const { getAllStudents, clearCache, fetchCategoryMap } = require('../services/classmarker.service');
 
 const router = express.Router();
 
@@ -24,8 +24,14 @@ router.get('/', async (req, res, next) => {
 router.post('/refresh', async (req, res, next) => {
   try {
     clearCache();
-    const students = await getAllStudents();
-    res.json({ success: true, message: `Cache refreshed — ${students.length} students loaded`, data: students });
+    const [students, categoryMap] = await Promise.all([getAllStudents(), fetchCategoryMap()]);
+    const categoriesLoaded = Object.keys(categoryMap || {}).length;
+    res.json({
+      success: true,
+      message: `Cache refreshed — ${students.length} students, ${categoriesLoaded} categories loaded`,
+      categoriesLoaded,
+      data: students,
+    });
   } catch (err) {
     next(err);
   }
