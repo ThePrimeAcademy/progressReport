@@ -1,7 +1,7 @@
 const crypto = require('crypto');
 const db = require('./db.service');
 const { getCategoryName, fetchCategoryMap } = require('./classmarker.service');
-const { deriveTestSection } = require('./sat.service');
+const { deriveTestSection, isSatGroupName } = require('./sat.service');
 
 // Pre-fetch category map on startup
 fetchCategoryMap().catch(() => { });
@@ -108,6 +108,8 @@ async function getWebhookCategoryPerformance(student, startDate, endDate, dayOfW
   const records = await findMatchingRecords(student, startDate, endDate, dayOfWeek);
   const categoryMap = {};
   for (const record of records) {
+    const gname = record.group?.groupName ?? record.group_name ?? null;
+    if (!isSatGroupName(gname)) continue; // Weekly Performance is SAT-only
     for (const category of record.categoryResults || []) {
       const name = category.name || 'Unknown';
       if (!categoryMap[name]) categoryMap[name] = { name, correct: 0, total: 0 };
@@ -134,6 +136,7 @@ async function getWebhookCategoryPerformanceSplit(student, startDate, endDate, d
   for (const record of records) {
     const testName = record.test?.testName ?? record.test_name ?? null;
     const groupName = record.group?.groupName ?? record.group_name ?? null;
+    if (!isSatGroupName(groupName)) continue; // Weekly Performance is SAT-only
     const questions = record.questions || [];
     const recordSection = deriveTestSection(testName, groupName, questions);
 
