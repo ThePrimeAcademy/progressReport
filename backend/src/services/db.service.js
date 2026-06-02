@@ -99,6 +99,21 @@ async function getContacts(studentId) {
     return { studentEmail: studentEmail || '', parentEmail: parentEmail || '' };
 }
 
+async function getAllContacts() {
+    const db = await getDb();
+    const result = db.exec('SELECT student_id, student_email, parent_email FROM student_contacts');
+    if (!result.length) return {};
+    const out = {};
+    for (const row of result[0].values) {
+        const [studentId, studentEmail, parentEmail] = row;
+        out[String(studentId)] = {
+            studentEmail: studentEmail || '',
+            parentEmail: parentEmail || '',
+        };
+    }
+    return out;
+}
+
 async function setContacts(studentId, { studentEmail, parentEmail }) {
     const db = await getDb();
     db.run(
@@ -284,4 +299,5 @@ module.exports = {
     getLatestUpdatedAt,
     getContacts,
     setContacts,
+    getAllContacts,
 };

@@ -112,6 +112,23 @@ router.get('/debug/categories', async (req, res) => {
 });
 
 /**
+ * GET /api/students/contacts
+ * Returns every saved student_contacts row as a
+ *   { studentId: { studentEmail, parentEmail } }
+ * map. Used by the bulk-send picker to show who already has recipients on
+ * file. Note: this MUST be declared before /:id/contacts so it isn't matched
+ * as a student id called "contacts".
+ */
+router.get('/contacts', async (req, res, next) => {
+  try {
+    const all = await db.getAllContacts();
+    res.json({ success: true, data: all });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
  * GET /api/students/:id/contacts
  * Returns saved student + parent email contacts for a student.
  * If no contacts have been saved yet, pre-fills student_email from ClassMarker.

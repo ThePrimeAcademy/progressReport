@@ -1,10 +1,11 @@
 // pages/ReportPage.jsx
-import React from 'react';
+import React, { useState } from 'react';
 import { useGenerateReport } from '../features/report/hooks/useGenerateReport.js';
 import StudentSelector from '../features/report/components/StudentSelector.jsx';
 import DateRangePicker from '../features/report/components/DateRangePicker.jsx';
 import DayPicker from '../features/report/components/DayPicker.jsx';
 import ReportViewer from '../features/report/components/ReportViewer.jsx';
+import BulkSendPanel from '../features/report/components/BulkSendPanel.jsx';
 import Button from '../components/ui/Button.jsx';
 
 const s = {
@@ -48,13 +49,24 @@ export default function ReportPage() {
     isValid,
   } = useGenerateReport();
 
+  const [bulkMode, setBulkMode] = useState(false);
+
   return (
     <div style={s.page}>
       <div style={s.inner}>
 
         <nav style={s.nav}>
           <span style={s.brand}>ProgressReport</span>
-          <span style={s.badge}>Academic Tool</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <Button
+              onClick={() => setBulkMode((m) => !m)}
+              variant={bulkMode ? 'primary' : 'secondary'}
+              size="sm"
+            >
+              {bulkMode ? '← Single Student' : '⇉ Bulk Send'}
+            </Button>
+            <span style={s.badge}>Academic Tool</span>
+          </div>
         </nav>
 
         <header style={s.hero}>
@@ -63,6 +75,17 @@ export default function ReportPage() {
           <p style={s.sub}>Select a student, date range, and optionally filter by day to generate a detailed report.</p>
         </header>
 
+        {bulkMode ? (
+          <BulkSendPanel
+            students={students}
+            startDate={startDate}
+            endDate={endDate}
+            dayOfWeek={dayOfWeek}
+            onStartDate={setStartDate}
+            onEndDate={setEndDate}
+            onDayOfWeek={setDayOfWeek}
+          />
+        ) : (<>
         <div style={s.card}>
           <div style={s.cardHead}>
             <div style={s.cardDot} />
@@ -127,6 +150,7 @@ export default function ReportPage() {
             onEmailSubjectChange={setEmailSubject}
           />
         )}
+        </>)}
 
       </div>
     </div>

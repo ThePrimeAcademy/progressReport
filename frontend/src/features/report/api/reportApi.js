@@ -85,6 +85,11 @@ export async function saveStudentContacts(studentId, contacts) {
   return response.data.data;
 }
 
+export async function fetchAllContacts() {
+  const response = await apiClient.get('/students/contacts');
+  return response.data.data || {};
+}
+
 export async function fetchEmailStatus() {
   const response = await apiClient.get('/report/email/status');
   return response.data.data;
