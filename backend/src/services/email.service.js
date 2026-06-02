@@ -151,8 +151,10 @@ async function sendReportEmail({ studentName, recipients, pdfBuffer, filename, s
   }
 }
 
-// verifyConnection — confirms the refresh token + scopes are valid by calling
-// gmail.users.getProfile. Returns the authenticated email address on success.
+// verifyConnection — confirms the OAuth refresh token + client credentials
+// are valid by exchanging the refresh token for a fresh access token. This
+// works regardless of which Gmail scope was granted (we only request
+// gmail.send, which is insufficient for users.getProfile).
 async function verifyConnection() {
   if (!isConfigured()) {
     const err = new Error('Gmail API not configured (set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REFRESH_TOKEN)');
@@ -160,14 +162,15 @@ async function verifyConnection() {
     throw err;
   }
   try {
-    const profile = await getGmail().users.getProfile({ userId: 'me' });
+    const { token } = await getOAuth2Client().getAccessToken();
+    if (!token) throw new Error('No access token returned');
     return {
       ok: true,
-      email: profile?.data?.emailAddress || null,
-      messagesTotal: profile?.data?.messagesTotal ?? null,
+      scope: 'gmail.send',
+      tokenPreview: token.slice(0, 12) + '…',
     };
   } catch (e) {
-    const upstream = e?.errors?.[0]?.message || e.message;
+    const upstream = e?.errors?.[0]?.message || e.response?.data?.error_description || e.message;
     const err = new Error(`Gmail API verify failed: ${upstream}`);
     err.status = 502;
     throw err;
