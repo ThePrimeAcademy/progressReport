@@ -68,6 +68,7 @@ export default function ReportPage() {
     handlePreview, handleDownload,
     scoringSheets, refreshScoringSheets,
     contacts, updateContacts, saveContacts,
+    allContacts, allContactsLoading, noteContactsSaved,
     emailConfigured, emailLoading, emailError, emailSuccess,
     emailSubject, setEmailSubject,
     handleEmail,
@@ -119,6 +120,9 @@ export default function ReportPage() {
             onStartDate={setStartDate}
             onEndDate={setEndDate}
             onDayOfWeek={setDayOfWeek}
+            allContacts={allContacts}
+            allContactsLoading={allContactsLoading}
+            onContactsPersisted={noteContactsSaved}
           />
         ) : (<>
         <div style={s.card}>

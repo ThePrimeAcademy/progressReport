@@ -8,6 +8,7 @@ import {
   listScoringSheets,
   fetchStudentContacts,
   saveStudentContacts,
+  fetchAllContacts,
   fetchEmailStatus,
   emailReport,
   fetchEmailJobStatus,
@@ -36,6 +37,8 @@ export function useGenerateReport() {
 
   const [contacts, setContacts] = useState({ studentEmail: '', parentEmail: '' });
   const [contactsLoading, setContactsLoading] = useState(false);
+  const [allContacts, setAllContacts] = useState({});
+  const [allContactsLoading, setAllContactsLoading] = useState(true);
   const [emailConfigured, setEmailConfigured] = useState(false);
   const [emailLoading, setEmailLoading] = useState(false);
   const [emailError, setEmailError] = useState(null);
@@ -71,6 +74,11 @@ export function useGenerateReport() {
     fetchEmailStatus()
       .then((s) => setEmailConfigured(Boolean(s?.configured)))
       .catch(() => setEmailConfigured(false));
+    setAllContactsLoading(true);
+    fetchAllContacts()
+      .then((c) => { if (!cancelled) setAllContacts(c || {}); })
+      .catch(() => { if (!cancelled) setAllContacts({}); })
+      .finally(() => { if (!cancelled) setAllContactsLoading(false); });
     return () => { cancelled = true; };
   }, [refreshScoringSheets]);
 
@@ -167,7 +175,28 @@ export function useGenerateReport() {
   const saveContacts = useCallback(async () => {
     if (!selectedStudentId) return;
     await saveStudentContacts(selectedStudentId, contacts);
+    // Keep the cached bulk-mode map in sync without a refetch.
+    setAllContacts((prev) => ({
+      ...prev,
+      [selectedStudentId]: {
+        studentEmail: contacts.studentEmail || '',
+        parentEmail: contacts.parentEmail || '',
+      },
+    }));
   }, [selectedStudentId, contacts]);
+
+  // Called by the bulk panel after a successful per-student send so the
+  // pill state reflects whatever was just persisted on the backend.
+  const noteContactsSaved = useCallback((studentId, c) => {
+    if (!studentId) return;
+    setAllContacts((prev) => ({
+      ...prev,
+      [studentId]: {
+        studentEmail: c?.studentEmail || '',
+        parentEmail: c?.parentEmail || '',
+      },
+    }));
+  }, []);
 
   const handleEmail = useCallback(async () => {
     setEmailError(null);
@@ -246,6 +275,7 @@ export function useGenerateReport() {
     handlePreview, handleDownload,
     scoringSheets, refreshScoringSheets,
     contacts, updateContacts, saveContacts, contactsLoading,
+    allContacts, allContactsLoading, noteContactsSaved,
     emailConfigured, emailLoading, emailError, emailSuccess,
     emailSubject, setEmailSubject,
     handleEmail,

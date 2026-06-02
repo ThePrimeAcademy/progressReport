@@ -1,9 +1,9 @@
 // features/report/components/BulkSendPanel.jsx
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import Button from '../../../components/ui/Button.jsx';
 import DateRangePicker from './DateRangePicker.jsx';
 import DayPicker from './DayPicker.jsx';
-import { fetchAllContacts, emailReport, fetchEmailJobStatus } from '../api/reportApi.js';
+import { emailReport, fetchEmailJobStatus } from '../api/reportApi.js';
 
 const MAX_CONCURRENCY = 3;
 const POLL_INTERVAL_MS = 2000;
@@ -174,9 +174,14 @@ async function pollJobUntilTerminal(jobId) {
   throw new Error('Job did not complete in time.');
 }
 
-export default function BulkSendPanel({ students, startDate, endDate, dayOfWeek, onStartDate, onEndDate, onDayOfWeek }) {
-  const [allContacts, setAllContacts] = useState({});
-  const [contactsLoading, setContactsLoading] = useState(true);
+export default function BulkSendPanel({
+  students,
+  startDate, endDate, dayOfWeek,
+  onStartDate, onEndDate, onDayOfWeek,
+  allContacts = {},
+  allContactsLoading = false,
+  onContactsPersisted,
+}) {
   const [selectedIds, setSelectedIds] = useState(() => new Set());
   const [subject, setSubject] = useState('Prime Academy Weekly Report');
   const [running, setRunning] = useState(false);
@@ -187,16 +192,7 @@ export default function BulkSendPanel({ students, startDate, endDate, dayOfWeek,
   // (for the student field). Edits are persisted by the backend's
   // /email handler as a side effect of a successful send.
   const [rowEdits, setRowEdits] = useState({});
-
-  useEffect(() => {
-    let cancelled = false;
-    setContactsLoading(true);
-    fetchAllContacts()
-      .then((c) => { if (!cancelled) setAllContacts(c || {}); })
-      .catch(() => { if (!cancelled) setAllContacts({}); })
-      .finally(() => { if (!cancelled) setContactsLoading(false); });
-    return () => { cancelled = true; };
-  }, []);
+  const contactsLoading = allContactsLoading;
 
   const sortedStudents = useMemo(
     () => [...(students || [])].sort((a, b) => a.name.localeCompare(b.name)),
@@ -298,6 +294,15 @@ export default function BulkSendPanel({ students, startDate, endDate, dayOfWeek,
           if (job.status === 'failed') {
             setResults((prev) => ({ ...prev, [stu.id]: { status: 'failed', error: job.error || 'Send failed.' } }));
           } else {
+            // Successful send — the backend just persisted these recipients
+            // as the student_contacts row. Mirror that into the hook-level
+            // cache so the pill shows the right state without a refetch.
+            if (onContactsPersisted) {
+              onContactsPersisted(stu.id, {
+                studentEmail: effectiveEmail(stu.id, 'studentEmail'),
+                parentEmail: effectiveEmail(stu.id, 'parentEmail'),
+              });
+            }
             setResults((prev) => ({
               ...prev,
               [stu.id]: {
