@@ -16,8 +16,64 @@ const { computeStats } = require('../services/stats.service');
 const { generateReportPDF } = require('../services/pdf.service');
 const { sendReportEmail, isConfigured: isEmailConfigured, verifyConnection: verifyEmailConnection } = require('../services/email.service');
 const db = require('../services/db.service');
+const crypto = require('crypto');
 
 const router = express.Router();
+
+// ── Idempotency for /api/report/email ──────────────────────────────────────
+// Problem: Railway's edge proxy closes connections at ~30s, but a PDF render
+// + Gmail send commonly takes 30-45s. The email lands in the inbox, but the
+// browser sees a "network error" — and users instinctively click Send again.
+// Each retry triggers another full send, dropping duplicate emails on
+// students/parents.
+//
+// Fix: dedupe identical sends server-side. Compute a key from
+// (studentId, range, recipients, subject). Within a 5-minute window any
+// duplicate POST returns the cached result instead of re-sending. Concurrent
+// duplicates wait on the in-flight promise so we never double-send.
+const SEND_DEDUPE_TTL_MS = 5 * 60 * 1000;
+const sendInFlight = new Map();
+const sendCompleted = new Map();
+
+function dedupeKey({ studentId, startDate, endDate, recipients, subject }) {
+  const normalized = [
+    String(studentId || ''),
+    String(startDate || ''),
+    String(endDate || ''),
+    (recipients || []).map((e) => e.toLowerCase()).sort().join(','),
+    String(subject || ''),
+  ].join('|');
+  return crypto.createHash('sha256').update(normalized).digest('hex').slice(0, 24);
+}
+
+function pruneCompleted() {
+  const cutoff = Date.now() - SEND_DEDUPE_TTL_MS;
+  for (const [k, v] of sendCompleted.entries()) {
+    if (v.timestamp < cutoff) sendCompleted.delete(k);
+  }
+}
+
+async function dedupedSend(key, doSend) {
+  const cached = sendCompleted.get(key);
+  if (cached && Date.now() - cached.timestamp < SEND_DEDUPE_TTL_MS) {
+    return { ...cached.result, deduplicated: true };
+  }
+  const flight = sendInFlight.get(key);
+  if (flight) return flight.then((r) => ({ ...r, deduplicated: true }));
+
+  const promise = (async () => {
+    try {
+      const result = await doSend();
+      sendCompleted.set(key, { timestamp: Date.now(), result });
+      if (sendCompleted.size > 200) pruneCompleted();
+      return result;
+    } finally {
+      sendInFlight.delete(key);
+    }
+  })();
+  sendInFlight.set(key, promise);
+  return promise;
+}
 
 function validate(req, res, next) {
   const { studentId, startDate, endDate } = req.body;
@@ -155,45 +211,53 @@ router.post('/email', validate, async (req, res, next) => {
       return res.status(400).json({ error: 'Provide at least one recipient (student or parent email).' });
     }
 
-    console.log(`[email] start studentId=${studentId} recipients=${recipients.length} range=${startDate}..${endDate}`);
-    const student = await resolveStudent(studentId);
-    const [groups, apiLatestTest, satScores, webhookLatestTest, webhookCategoryPerf, webhookCategorySplit] = await Promise.all([
-      studentId.startsWith("sheets:") ? Promise.resolve([]) : getStudentResultsGrouped(studentId, startDate, endDate, dayOfWeek),
-      studentId.startsWith("sheets:") ? Promise.resolve(null) : getLatestTestResult(studentId, startDate, endDate, dayOfWeek),
-      getSatScoresForStudent(student),
-      getLatestWebhookTestResult(student, startDate, endDate, dayOfWeek),
-      getWebhookCategoryPerformance(student, startDate, endDate, dayOfWeek),
-      getWebhookCategoryPerformanceSplit(student, startDate, endDate, dayOfWeek),
-    ]);
+    const key = dedupeKey({ studentId, startDate, endDate, recipients, subject });
+    console.log(`[email] start studentId=${studentId} recipients=${recipients.length} range=${startDate}..${endDate} key=${key}`);
 
-    const allResults = groups.flatMap((g) => g.results);
-    const stats = computeStats(allResults);
-    const categoryPerf = webhookCategoryPerf.length
-      ? webhookCategoryPerf
-      : computeCategoryPerformance(groups);
-    const latestTest = webhookLatestTest || apiLatestTest;
+    const result = await dedupedSend(key, async () => {
+      const student = await resolveStudent(studentId);
+      const [groups, apiLatestTest, satScores, webhookLatestTest, webhookCategoryPerf, webhookCategorySplit] = await Promise.all([
+        studentId.startsWith("sheets:") ? Promise.resolve([]) : getStudentResultsGrouped(studentId, startDate, endDate, dayOfWeek),
+        studentId.startsWith("sheets:") ? Promise.resolve(null) : getLatestTestResult(studentId, startDate, endDate, dayOfWeek),
+        getSatScoresForStudent(student),
+        getLatestWebhookTestResult(student, startDate, endDate, dayOfWeek),
+        getWebhookCategoryPerformance(student, startDate, endDate, dayOfWeek),
+        getWebhookCategoryPerformanceSplit(student, startDate, endDate, dayOfWeek),
+      ]);
 
-    console.log(`[email] data gathered in ${Date.now() - t0}ms, rendering PDF…`);
-    const pdfBuffer = await generateReportPDF(student, groups, stats, satScores, startDate, endDate, latestTest, categoryPerf, webhookCategorySplit);
-    const filename = `progress-report-${student.name.replace(/\s+/g, '-').toLowerCase()}-${startDate}-to-${endDate}.pdf`;
-    console.log(`[email] PDF rendered (${pdfBuffer.length} bytes) at ${Date.now() - t0}ms, sending SMTP…`);
+      const allResults = groups.flatMap((g) => g.results);
+      const stats = computeStats(allResults);
+      const categoryPerf = webhookCategoryPerf.length
+        ? webhookCategoryPerf
+        : computeCategoryPerformance(groups);
+      const latestTest = webhookLatestTest || apiLatestTest;
 
-    const result = await sendReportEmail({
-      studentName: student.name,
-      recipients,
-      pdfBuffer,
-      filename,
-      startDate,
-      endDate,
-      subject,
+      console.log(`[email] data gathered in ${Date.now() - t0}ms, rendering PDF…`);
+      const pdfBuffer = await generateReportPDF(student, groups, stats, satScores, startDate, endDate, latestTest, categoryPerf, webhookCategorySplit);
+      const filename = `progress-report-${student.name.replace(/\s+/g, '-').toLowerCase()}-${startDate}-to-${endDate}.pdf`;
+      console.log(`[email] PDF rendered (${pdfBuffer.length} bytes) at ${Date.now() - t0}ms, sending via Gmail API…`);
+
+      const sendResult = await sendReportEmail({
+        studentName: student.name,
+        recipients,
+        pdfBuffer,
+        filename,
+        startDate,
+        endDate,
+        subject,
+      });
+      console.log(`[email] sent in total ${Date.now() - t0}ms id=${sendResult.id || '?'}`);
+
+      await db.setContacts(studentId, {
+        studentEmail: studentEmail || '',
+        parentEmail: parentEmail || '',
+      });
+      return sendResult;
     });
-    console.log(`[email] sent in total ${Date.now() - t0}ms id=${result.id || '?'}`);
 
-    await db.setContacts(studentId, {
-      studentEmail: studentEmail || '',
-      parentEmail: parentEmail || '',
-    });
-
+    if (result.deduplicated) {
+      console.log(`[email] DEDUPED — returning cached send within 5-min window`);
+    }
     res.json({ success: true, data: result });
   } catch (err) {
     console.error(`[email] FAILED after ${Date.now() - t0}ms:`, err.message);

@@ -162,11 +162,16 @@ export function useGenerateReport() {
         parentEmail: contacts.parentEmail || '',
         subject: emailSubject || undefined,
       });
-      setEmailSuccess(
-        result?.to?.length
-          ? `Sent to ${result.to.join(', ')}`
-          : 'Email sent.'
-      );
+      const recipients = result?.to?.length ? result.to.join(', ') : '';
+      if (result?.deduplicated) {
+        setEmailSuccess(
+          recipients
+            ? `Already sent to ${recipients} in the last few minutes — no duplicate sent.`
+            : 'Already sent recently — no duplicate sent.'
+        );
+      } else {
+        setEmailSuccess(recipients ? `Sent to ${recipients}` : 'Email sent.');
+      }
     } catch (err) {
       setEmailError(err.message);
     } finally {
