@@ -519,7 +519,7 @@ export default function ReportViewer({
 
       {/* All tests grouped by class */}
       <div style={{ background: 'var(--bg)', border: '1.5px solid var(--border)', borderRadius: 14, padding: '20px 24px', boxShadow: 'var(--shadow)' }}>
-        <SectionTitle>All Tests by Group</SectionTitle>
+        <SectionTitle>All Tests</SectionTitle>
         {groups.length === 0 ? (
           <div style={{ color: 'var(--muted)', fontSize: '0.88rem' }}>No results found in selected range.</div>
         ) : (
