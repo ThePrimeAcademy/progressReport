@@ -40,3 +40,6 @@ backend/data/*.db
 .codex
 frontend/package
 frontend/package.json2
+
+# ── Local tooling (Claude Code) ──────────────────
+.claude/
