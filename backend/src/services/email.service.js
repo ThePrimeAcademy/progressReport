@@ -1,26 +1,29 @@
 // services/email.service.js
-// Sends progress-report emails via SMTP (nodemailer). Works with any SMTP
-// provider — Gmail, iCloud, Outlook, Resend's SMTP gateway, etc.
+// Sends progress-report emails via the Gmail API (HTTPS, not SMTP) using a
+// long-lived OAuth refresh token. Works from any cloud host because it never
+// opens an SMTP port — Gmail's REST endpoint is on standard HTTPS.
 //
-// Required env vars:
-//   SMTP_USER   — your account, e.g. you@gmail.com
-//   SMTP_PASS   — app password (Gmail/iCloud) or SMTP password
+// Required env vars (set on Railway):
+//   GOOGLE_CLIENT_ID       — from Google Cloud Console > Credentials
+//   GOOGLE_CLIENT_SECRET   — same place
+//   GOOGLE_REFRESH_TOKEN   — generated locally via scripts/get-gmail-refresh-token.js
 //
-// Optional env vars:
-//   SMTP_HOST   — default smtp.gmail.com
-//   SMTP_PORT   — default 465
-//   SMTP_SECURE — default "true" (true for 465, false for 587/STARTTLS)
-//   EMAIL_FROM  — default falls back to SMTP_USER
+// Optional env var:
+//   EMAIL_FROM   — display name + address used in the From: header. Must
+//                  match the authenticated Gmail account or one of its
+//                  Send-As aliases, otherwise Gmail rejects the send.
+//                  If unset, Gmail uses the authenticated account directly.
 //
-// Gmail setup (most common path):
-//   1. Turn on 2-Step Verification on your Google account.
-//   2. Generate an App Password at https://myaccount.google.com/apppasswords.
-//   3. Set SMTP_USER=your.address@gmail.com, SMTP_PASS=<16-char app password>.
+// Local first-time setup is documented in scripts/get-gmail-refresh-token.js.
 
-const nodemailer = require('nodemailer');
+const { google } = require('googleapis');
 
 function isConfigured() {
-  return Boolean(process.env.SMTP_USER && process.env.SMTP_PASS);
+  return Boolean(
+    process.env.GOOGLE_CLIENT_ID &&
+    process.env.GOOGLE_CLIENT_SECRET &&
+    process.env.GOOGLE_REFRESH_TOKEN
+  );
 }
 
 function buildDefaultSubject(studentName) {
@@ -41,35 +44,72 @@ function buildHtmlBody(studentName, startDate, endDate) {
   `;
 }
 
-let _transporter = null;
-function getTransporter() {
-  if (_transporter) return _transporter;
-  // Default to STARTTLS on port 587 — cloud providers (Railway, Render,
-  // Fly.io, GCP) commonly block implicit-TLS port 465. Gmail accepts both.
-  const port = Number(process.env.SMTP_PORT) || 587;
-  const secureEnv = process.env.SMTP_SECURE;
-  const secure = secureEnv != null ? secureEnv !== 'false' : port === 465;
-  _transporter = nodemailer.createTransport({
-    host: process.env.SMTP_HOST || 'smtp.gmail.com',
-    port,
-    secure,
-    auth: {
-      user: process.env.SMTP_USER,
-      pass: process.env.SMTP_PASS,
-    },
-    // Fast-fail instead of hanging the request when the SMTP host is
-    // unreachable. 20s is plenty for any healthy SMTP handshake.
-    connectionTimeout: 20000,
-    greetingTimeout: 20000,
-    socketTimeout: 25000,
-  });
-  return _transporter;
+let _oauth2Client = null;
+function getOAuth2Client() {
+  if (_oauth2Client) return _oauth2Client;
+  _oauth2Client = new google.auth.OAuth2(
+    process.env.GOOGLE_CLIENT_ID,
+    process.env.GOOGLE_CLIENT_SECRET
+  );
+  _oauth2Client.setCredentials({ refresh_token: process.env.GOOGLE_REFRESH_TOKEN });
+  return _oauth2Client;
+}
+
+function getGmail() {
+  return google.gmail({ version: 'v1', auth: getOAuth2Client() });
+}
+
+// RFC 2047 encoding for non-ASCII in headers (subject, names) — wraps in
+// =?UTF-8?B?...?= so Gmail and other clients render unicode correctly.
+function encodeHeader(value) {
+  // eslint-disable-next-line no-control-regex
+  if (/^[\x00-\x7F]*$/.test(value)) return value;
+  return `=?UTF-8?B?${Buffer.from(value, 'utf-8').toString('base64')}?=`;
+}
+
+function buildRfc822Message({ from, to, subject, html, attachment }) {
+  const boundary = `----=_PrimeReport_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+  const pdfBase64 = Buffer.from(attachment.content).toString('base64');
+  // RFC 5322: lines must be <= 998 chars; base64 typically wraps at 76.
+  const pdfWrapped = pdfBase64.match(/.{1,76}/g).join('\r\n');
+
+  const lines = [];
+  if (from) lines.push(`From: ${encodeHeader(from)}`);
+  lines.push(`To: ${to.join(', ')}`);
+  lines.push(`Subject: ${encodeHeader(subject)}`);
+  lines.push('MIME-Version: 1.0');
+  lines.push(`Content-Type: multipart/mixed; boundary="${boundary}"`);
+  lines.push('');
+  lines.push(`--${boundary}`);
+  lines.push('Content-Type: text/html; charset="UTF-8"');
+  lines.push('Content-Transfer-Encoding: 7bit');
+  lines.push('');
+  lines.push(html);
+  lines.push('');
+  lines.push(`--${boundary}`);
+  lines.push(`Content-Type: application/pdf; name="${attachment.filename}"`);
+  lines.push(`Content-Disposition: attachment; filename="${attachment.filename}"`);
+  lines.push('Content-Transfer-Encoding: base64');
+  lines.push('');
+  lines.push(pdfWrapped);
+  lines.push('');
+  lines.push(`--${boundary}--`);
+  return lines.join('\r\n');
+}
+
+// Gmail expects URL-safe base64 with no padding.
+function toBase64Url(input) {
+  return Buffer.from(input, 'utf-8')
+    .toString('base64')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '');
 }
 
 async function sendReportEmail({ studentName, recipients, pdfBuffer, filename, startDate, endDate, subject }) {
   if (!isConfigured()) {
     const err = new Error(
-      'Email service not configured. Set SMTP_USER and SMTP_PASS in backend/.env (or on Railway Variables).'
+      'Email service not configured. Set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, and GOOGLE_REFRESH_TOKEN on the backend.'
     );
     err.status = 503;
     throw err;
@@ -84,48 +124,51 @@ async function sendReportEmail({ studentName, recipients, pdfBuffer, filename, s
 
   const finalSubject = (subject && String(subject).trim()) || buildDefaultSubject(studentName);
   const html = buildHtmlBody(studentName, startDate, endDate);
-  const from = process.env.EMAIL_FROM || process.env.SMTP_USER;
+  const from = process.env.EMAIL_FROM || '';
+
+  const rfc822 = buildRfc822Message({
+    from,
+    to,
+    subject: finalSubject,
+    html,
+    attachment: {
+      filename: filename || 'progress-report.pdf',
+      content: pdfBuffer,
+    },
+  });
 
   try {
-    const info = await getTransporter().sendMail({
-      from,
-      to,
-      subject: finalSubject,
-      html,
-      attachments: [
-        {
-          filename: filename || 'progress-report.pdf',
-          content: Buffer.from(pdfBuffer),
-        },
-      ],
+    const res = await getGmail().users.messages.send({
+      userId: 'me',
+      requestBody: { raw: toBase64Url(rfc822) },
     });
-
-    return { id: info?.messageId || null, to, subject: finalSubject };
+    return { id: res?.data?.id || null, to, subject: finalSubject };
   } catch (e) {
-    const err = new Error(`Failed to send email: ${e.message}`);
+    const upstream = e?.errors?.[0]?.message || e.message;
+    const err = new Error(`Gmail API send failed: ${upstream}`);
     err.status = 502;
     throw err;
   }
 }
 
-// verifyConnection — tests SMTP auth/connectivity in seconds without sending.
-// Returns { ok: true } or throws with the underlying error message.
+// verifyConnection — confirms the refresh token + scopes are valid by calling
+// gmail.users.getProfile. Returns the authenticated email address on success.
 async function verifyConnection() {
   if (!isConfigured()) {
-    const err = new Error('SMTP_USER / SMTP_PASS not set');
+    const err = new Error('Gmail API not configured (set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REFRESH_TOKEN)');
     err.status = 503;
     throw err;
   }
   try {
-    await getTransporter().verify();
+    const profile = await getGmail().users.getProfile({ userId: 'me' });
     return {
       ok: true,
-      host: process.env.SMTP_HOST || 'smtp.gmail.com',
-      port: Number(process.env.SMTP_PORT) || 465,
-      user: process.env.SMTP_USER,
+      email: profile?.data?.emailAddress || null,
+      messagesTotal: profile?.data?.messagesTotal ?? null,
     };
   } catch (e) {
-    const err = new Error(`SMTP verify failed: ${e.message}`);
+    const upstream = e?.errors?.[0]?.message || e.message;
+    const err = new Error(`Gmail API verify failed: ${upstream}`);
     err.status = 502;
     throw err;
   }

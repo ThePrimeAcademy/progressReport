@@ -188,7 +188,7 @@ export default function EmailReportPanel({
 
       {!configured && (
         <div style={s.warn}>
-          Email sending isn't configured. Set <code>SMTP_USER</code> and <code>SMTP_PASS</code> on the backend (e.g. a Gmail App Password) to enable.
+          Email sending isn't configured. Set <code>GOOGLE_CLIENT_ID</code>, <code>GOOGLE_CLIENT_SECRET</code>, and <code>GOOGLE_REFRESH_TOKEN</code> on the backend (see <code>backend/.env.example</code>).
         </div>
       )}
       {error && <div style={s.error}>{error}</div>}
