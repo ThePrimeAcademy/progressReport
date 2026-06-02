@@ -101,8 +101,32 @@ async function sendReportEmail({ studentName, recipients, pdfBuffer, filename, s
   }
 }
 
+// verifyConnection — tests SMTP auth/connectivity in seconds without sending.
+// Returns { ok: true } or throws with the underlying error message.
+async function verifyConnection() {
+  if (!isConfigured()) {
+    const err = new Error('SMTP_USER / SMTP_PASS not set');
+    err.status = 503;
+    throw err;
+  }
+  try {
+    await getTransporter().verify();
+    return {
+      ok: true,
+      host: process.env.SMTP_HOST || 'smtp.gmail.com',
+      port: Number(process.env.SMTP_PORT) || 465,
+      user: process.env.SMTP_USER,
+    };
+  } catch (e) {
+    const err = new Error(`SMTP verify failed: ${e.message}`);
+    err.status = 502;
+    throw err;
+  }
+}
+
 module.exports = {
   isConfigured,
   sendReportEmail,
   buildDefaultSubject,
+  verifyConnection,
 };
