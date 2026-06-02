@@ -38,6 +38,7 @@ export function useGenerateReport() {
   const [emailLoading, setEmailLoading] = useState(false);
   const [emailError, setEmailError] = useState(null);
   const [emailSuccess, setEmailSuccess] = useState(null);
+  const [emailSubject, setEmailSubject] = useState('');
 
   const refreshScoringSheets = useCallback(async () => {
     try {
@@ -75,6 +76,7 @@ export function useGenerateReport() {
     let cancelled = false;
     setEmailError(null);
     setEmailSuccess(null);
+    setEmailSubject('');
     if (!selectedStudentId) {
       setContacts({ studentEmail: '', parentEmail: '' });
       return;
@@ -156,6 +158,7 @@ export function useGenerateReport() {
         dayOfWeek: dayOfWeek || undefined,
         studentEmail: contacts.studentEmail || '',
         parentEmail: contacts.parentEmail || '',
+        subject: emailSubject || undefined,
       });
       setEmailSuccess(
         result?.to?.length
@@ -167,7 +170,7 @@ export function useGenerateReport() {
     } finally {
       setEmailLoading(false);
     }
-  }, [selectedStudentId, startDate, endDate, dayOfWeek, contacts]);
+  }, [selectedStudentId, startDate, endDate, dayOfWeek, contacts, emailSubject]);
 
   const isValid =
     selectedStudentId !== '' &&
@@ -187,6 +190,7 @@ export function useGenerateReport() {
     scoringSheets, refreshScoringSheets,
     contacts, updateContacts, saveContacts, contactsLoading,
     emailConfigured, emailLoading, emailError, emailSuccess,
+    emailSubject, setEmailSubject,
     handleEmail,
     isValid,
   };

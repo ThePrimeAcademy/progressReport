@@ -43,6 +43,7 @@ export default function ReportPage() {
     scoringSheets, refreshScoringSheets,
     contacts, updateContacts, saveContacts,
     emailConfigured, emailLoading, emailError, emailSuccess,
+    emailSubject, setEmailSubject,
     handleEmail,
     isValid,
   } = useGenerateReport();
@@ -122,6 +123,8 @@ export default function ReportPage() {
             emailLoading={emailLoading}
             emailError={emailError}
             emailSuccess={emailSuccess}
+            emailSubject={emailSubject}
+            onEmailSubjectChange={setEmailSubject}
           />
         )}
 

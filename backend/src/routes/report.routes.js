@@ -124,7 +124,7 @@ router.get('/email/status', (req, res) => {
 // are provided. Falls back to saved contacts if the request omits them.
 router.post('/email', validate, async (req, res, next) => {
   try {
-    const { studentId, startDate, endDate, dayOfWeek } = req.body;
+    const { studentId, startDate, endDate, dayOfWeek, subject } = req.body;
     let { studentEmail, parentEmail } = req.body;
 
     if (studentEmail === undefined && parentEmail === undefined) {
@@ -168,6 +168,7 @@ router.post('/email', validate, async (req, res, next) => {
       filename,
       startDate,
       endDate,
+      subject,
     });
 
     // Persist whatever we just sent to, so next time the inputs are pre-filled

@@ -1,5 +1,5 @@
 // features/report/components/EmailReportPanel.jsx
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import Button from '../../../components/ui/Button.jsx';
 
 const s = {
@@ -19,7 +19,6 @@ const s = {
     flexWrap: 'wrap',
   },
   title: { fontSize: '0.85rem', fontWeight: 700, color: 'var(--ink)' },
-  hint: { fontSize: '0.72rem', color: 'var(--muted)' },
   grid: {
     display: 'grid',
     gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
@@ -27,6 +26,7 @@ const s = {
     marginBottom: 12,
   },
   field: { display: 'flex', flexDirection: 'column', gap: 4 },
+  fullField: { display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 12 },
   label: {
     fontSize: '0.7rem',
     fontWeight: 600,
@@ -50,11 +50,7 @@ const s = {
     gap: 10,
     flexWrap: 'wrap',
   },
-  subject: {
-    fontSize: '0.72rem',
-    color: 'var(--muted)',
-    fontStyle: 'italic',
-  },
+  saved: { fontSize: '0.78rem', color: '#15803d', fontWeight: 500 },
   warn: {
     marginTop: 10,
     padding: '8px 12px',
@@ -95,20 +91,40 @@ export default function EmailReportPanel({
   loading,
   error,
   success,
+  subject,
+  onSubjectChange,
 }) {
-  const subject = `Prime Academy Report Card: ${studentName || '{Student Name}'}`;
+  const defaultSubject = `Prime Academy Report Card: ${studentName || ''}`.trim();
+  const effectiveSubject = subject != null ? subject : defaultSubject;
+
+  const [saveState, setSaveState] = useState('idle'); // 'idle' | 'saving' | 'saved'
+
+  useEffect(() => {
+    if (saveState !== 'saved') return;
+    const t = setTimeout(() => setSaveState('idle'), 1800);
+    return () => clearTimeout(t);
+  }, [saveState]);
+
   const hasRecipient = Boolean(
     (contacts?.studentEmail && contacts.studentEmail.trim()) ||
     (contacts?.parentEmail && contacts.parentEmail.trim())
   );
 
+  async function handleSave() {
+    if (!onSave) return;
+    setSaveState('saving');
+    try {
+      await onSave();
+      setSaveState('saved');
+    } catch (_) {
+      setSaveState('idle');
+    }
+  }
+
   return (
     <div style={s.wrap}>
       <div style={s.head}>
-        <div>
-          <div style={s.title}>Email this report</div>
-          <div style={s.hint}>Subject: <span style={s.subject}>{subject}</span></div>
-        </div>
+        <div style={s.title}>Email this report</div>
       </div>
 
       <div style={s.grid}>
@@ -138,8 +154,28 @@ export default function EmailReportPanel({
         </div>
       </div>
 
+      <div style={s.fullField}>
+        <label style={s.label} htmlFor="email-subject">Subject</label>
+        <input
+          id="email-subject"
+          type="text"
+          value={effectiveSubject}
+          onChange={(e) => onSubjectChange && onSubjectChange(e.target.value)}
+          style={s.input}
+          autoComplete="off"
+        />
+      </div>
+
       <div style={s.actions}>
-        <Button onClick={onSave} variant="ghost" size="sm">Save contacts</Button>
+        <Button
+          onClick={handleSave}
+          variant="secondary"
+          size="sm"
+          loading={saveState === 'saving'}
+        >
+          Save contacts
+        </Button>
+        {saveState === 'saved' && <span style={s.saved}>✓ Saved</span>}
         <Button
           onClick={onSend}
           loading={loading}
@@ -152,7 +188,7 @@ export default function EmailReportPanel({
 
       {!configured && (
         <div style={s.warn}>
-          Email sending isn't configured. Set <code>RESEND_API_KEY</code> and <code>EMAIL_FROM</code> in <code>backend/.env</code> to enable.
+          Email sending isn't configured. Set <code>SMTP_USER</code> and <code>SMTP_PASS</code> on the backend (e.g. a Gmail App Password) to enable.
         </div>
       )}
       {error && <div style={s.error}>{error}</div>}

@@ -444,6 +444,7 @@ export default function ReportViewer({
   scoringSheets, onScoringSheetsChanged,
   contacts, onContactsChange, onSaveContacts, onSendEmail,
   emailConfigured, emailLoading, emailError, emailSuccess,
+  emailSubject, onEmailSubjectChange,
 }) {
   const { student, groups, stats, satScores, startDate, endDate, latestTest, categoryPerf, categoryPerfSplit } = data;
   const totalTests = groups.reduce((s, g) => s + g.results.length, 0);
@@ -504,6 +505,8 @@ export default function ReportViewer({
             loading={emailLoading}
             error={emailError}
             success={emailSuccess}
+            subject={emailSubject}
+            onSubjectChange={onEmailSubjectChange}
           />
         )}
       </div>

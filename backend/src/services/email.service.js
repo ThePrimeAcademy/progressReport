@@ -1,14 +1,29 @@
 // services/email.service.js
-// Sends progress-report emails via Resend.
+// Sends progress-report emails via SMTP (nodemailer). Works with any SMTP
+// provider — Gmail, iCloud, Outlook, Resend's SMTP gateway, etc.
+//
 // Required env vars:
-//   RESEND_API_KEY   — API key from https://resend.com
-//   EMAIL_FROM       — verified sender, e.g. "Prime Academy <reports@yourdomain.com>"
+//   SMTP_USER   — your account, e.g. you@gmail.com
+//   SMTP_PASS   — app password (Gmail/iCloud) or SMTP password
+//
+// Optional env vars:
+//   SMTP_HOST   — default smtp.gmail.com
+//   SMTP_PORT   — default 465
+//   SMTP_SECURE — default "true" (true for 465, false for 587/STARTTLS)
+//   EMAIL_FROM  — default falls back to SMTP_USER
+//
+// Gmail setup (most common path):
+//   1. Turn on 2-Step Verification on your Google account.
+//   2. Generate an App Password at https://myaccount.google.com/apppasswords.
+//   3. Set SMTP_USER=your.address@gmail.com, SMTP_PASS=<16-char app password>.
+
+const nodemailer = require('nodemailer');
 
 function isConfigured() {
-  return Boolean(process.env.RESEND_API_KEY && process.env.EMAIL_FROM);
+  return Boolean(process.env.SMTP_USER && process.env.SMTP_PASS);
 }
 
-function buildSubject(studentName) {
+function buildDefaultSubject(studentName) {
   return `Prime Academy Report Card: ${studentName}`;
 }
 
@@ -26,10 +41,28 @@ function buildHtmlBody(studentName, startDate, endDate) {
   `;
 }
 
-async function sendReportEmail({ studentName, recipients, pdfBuffer, filename, startDate, endDate }) {
+let _transporter = null;
+function getTransporter() {
+  if (_transporter) return _transporter;
+  const port = Number(process.env.SMTP_PORT) || 465;
+  const secureEnv = process.env.SMTP_SECURE;
+  const secure = secureEnv != null ? secureEnv !== 'false' : port === 465;
+  _transporter = nodemailer.createTransport({
+    host: process.env.SMTP_HOST || 'smtp.gmail.com',
+    port,
+    secure,
+    auth: {
+      user: process.env.SMTP_USER,
+      pass: process.env.SMTP_PASS,
+    },
+  });
+  return _transporter;
+}
+
+async function sendReportEmail({ studentName, recipients, pdfBuffer, filename, startDate, endDate, subject }) {
   if (!isConfigured()) {
     const err = new Error(
-      'Email service not configured. Set RESEND_API_KEY and EMAIL_FROM in backend/.env.'
+      'Email service not configured. Set SMTP_USER and SMTP_PASS in backend/.env (or on Railway Variables).'
     );
     err.status = 503;
     throw err;
@@ -42,44 +75,34 @@ async function sendReportEmail({ studentName, recipients, pdfBuffer, filename, s
     throw err;
   }
 
-  const subject = buildSubject(studentName);
+  const finalSubject = (subject && String(subject).trim()) || buildDefaultSubject(studentName);
   const html = buildHtmlBody(studentName, startDate, endDate);
+  const from = process.env.EMAIL_FROM || process.env.SMTP_USER;
 
-  const payload = {
-    from: process.env.EMAIL_FROM,
-    to,
-    subject,
-    html,
-    attachments: [
-      {
-        filename: filename || 'progress-report.pdf',
-        content: Buffer.from(pdfBuffer).toString('base64'),
-      },
-    ],
-  };
+  try {
+    const info = await getTransporter().sendMail({
+      from,
+      to,
+      subject: finalSubject,
+      html,
+      attachments: [
+        {
+          filename: filename || 'progress-report.pdf',
+          content: Buffer.from(pdfBuffer),
+        },
+      ],
+    });
 
-  const res = await fetch('https://api.resend.com/emails', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${process.env.RESEND_API_KEY}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(payload),
-  });
-
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    const message = body?.message || body?.error || `Resend HTTP ${res.status}`;
-    const err = new Error(`Failed to send email: ${message}`);
-    err.status = res.status >= 400 && res.status < 600 ? res.status : 502;
+    return { id: info?.messageId || null, to, subject: finalSubject };
+  } catch (e) {
+    const err = new Error(`Failed to send email: ${e.message}`);
+    err.status = 502;
     throw err;
   }
-
-  return { id: body?.id || null, to, subject };
 }
 
 module.exports = {
   isConfigured,
   sendReportEmail,
-  buildSubject,
+  buildDefaultSubject,
 };
