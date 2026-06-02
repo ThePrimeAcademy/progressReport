@@ -76,15 +76,44 @@ const s = {
     borderRadius: 8,
     background: '#fafbff',
   },
+  rowWrap: {
+    borderBottom: '1px solid var(--border)',
+  },
   row: {
     display: 'flex',
     alignItems: 'center',
     gap: 10,
     padding: '8px 14px',
-    borderBottom: '1px solid var(--border)',
     fontSize: '0.88rem',
     cursor: 'pointer',
     userSelect: 'none',
+  },
+  emailRow: {
+    display: 'grid',
+    gridTemplateColumns: '1fr 1fr',
+    gap: 8,
+    padding: '0 14px 10px 38px',
+    background: '#fafbff',
+  },
+  emailField: { display: 'flex', flexDirection: 'column', gap: 3 },
+  emailLabel: {
+    fontSize: '0.62rem',
+    fontWeight: 600,
+    letterSpacing: '0.06em',
+    textTransform: 'uppercase',
+    color: 'var(--muted)',
+  },
+  emailInput: {
+    padding: '6px 10px',
+    border: '1.5px solid var(--border)',
+    borderRadius: 6,
+    background: 'var(--bg)',
+    color: 'var(--ink)',
+    fontFamily: 'var(--font-sans)',
+    fontSize: '0.82rem',
+    outline: 'none',
+    width: '100%',
+    boxSizing: 'border-box',
   },
   checkbox: { accentColor: 'var(--accent)' },
   studentName: { flex: 1 },
@@ -153,6 +182,11 @@ export default function BulkSendPanel({ students, startDate, endDate, dayOfWeek,
   const [running, setRunning] = useState(false);
   const [results, setResults] = useState({});
   const [globalError, setGlobalError] = useState(null);
+  // Per-row email overrides for THIS bulk batch only. Keyed by student id.
+  // Effective email = edit > saved contact > ClassMarker registered email
+  // (for the student field). Edits are persisted by the backend's
+  // /email handler as a side effect of a successful send.
+  const [rowEdits, setRowEdits] = useState({});
 
   useEffect(() => {
     let cancelled = false;
@@ -169,11 +203,34 @@ export default function BulkSendPanel({ students, startDate, endDate, dayOfWeek,
     [students]
   );
 
-  // Returns one of: 'both' | 'studentOnly' | 'parentOnly' | 'none'.
+  // Effective email for a student row. Priority:
+  //   1. user's edit in this batch
+  //   2. saved contact in DB
+  //   3. (student field only) the ClassMarker-registered email
+  function effectiveEmail(id, field) {
+    const edit = rowEdits[id]?.[field];
+    if (edit !== undefined) return edit;
+    const saved = allContacts[id]?.[field] || '';
+    if (saved) return saved;
+    if (field === 'studentEmail') {
+      const stu = sortedStudents.find((s) => s.id === id);
+      return stu?.email || '';
+    }
+    return '';
+  }
+
+  function setEdit(id, field, value) {
+    setRowEdits((prev) => ({
+      ...prev,
+      [id]: { ...(prev[id] || {}), [field]: value },
+    }));
+  }
+
+  // Returns one of: 'both' | 'studentOnly' | 'parentOnly' | 'none'
+  // — based on EFFECTIVE emails (edit > saved > ClassMarker), not just saved.
   function contactsState(id) {
-    const c = allContacts[id] || {};
-    const hasStudent = Boolean(c.studentEmail && c.studentEmail.trim());
-    const hasParent = Boolean(c.parentEmail && c.parentEmail.trim());
+    const hasStudent = Boolean((effectiveEmail(id, 'studentEmail') || '').trim());
+    const hasParent = Boolean((effectiveEmail(id, 'parentEmail') || '').trim());
     if (hasStudent && hasParent) return 'both';
     if (hasStudent) return 'studentOnly';
     if (hasParent) return 'parentOnly';
@@ -233,6 +290,8 @@ export default function BulkSendPanel({ students, startDate, endDate, dayOfWeek,
             endDate,
             dayOfWeek: dayOfWeek || undefined,
             subject: subject || undefined,
+            studentEmail: effectiveEmail(stu.id, 'studentEmail'),
+            parentEmail: effectiveEmail(stu.id, 'parentEmail'),
           });
           if (!start?.jobId) throw new Error('No jobId returned.');
           const job = await pollJobUntilTerminal(start.jobId);
@@ -320,25 +379,59 @@ export default function BulkSendPanel({ students, startDate, endDate, dayOfWeek,
               const checked = selectedIds.has(stu.id);
               const state = contactsState(stu.id);
               const pill = CONTACT_PILL[state];
+              const studentEmail = effectiveEmail(stu.id, 'studentEmail');
+              const parentEmail = effectiveEmail(stu.id, 'parentEmail');
               return (
-                <label key={stu.id} style={s.row}>
-                  <input
-                    type="checkbox"
-                    checked={checked}
-                    onChange={() => toggle(stu.id)}
-                    style={s.checkbox}
-                  />
-                  <span style={s.studentName}>{stu.name}</span>
-                  <span style={{ ...s.contactPill, ...pill.style }}>
-                    {pill.label}
-                  </span>
-                </label>
+                <div key={stu.id} style={s.rowWrap}>
+                  <label style={s.row}>
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => toggle(stu.id)}
+                      style={s.checkbox}
+                    />
+                    <span style={s.studentName}>{stu.name}</span>
+                    <span style={{ ...s.contactPill, ...pill.style }}>
+                      {pill.label}
+                    </span>
+                  </label>
+                  {checked && (
+                    <div style={s.emailRow}>
+                      <div style={s.emailField}>
+                        <label style={s.emailLabel} htmlFor={`bulk-student-email-${stu.id}`}>Student email</label>
+                        <input
+                          id={`bulk-student-email-${stu.id}`}
+                          type="email"
+                          placeholder={stu.email || 'student@example.com'}
+                          value={studentEmail}
+                          onChange={(e) => setEdit(stu.id, 'studentEmail', e.target.value)}
+                          style={s.emailInput}
+                          autoComplete="off"
+                          spellCheck={false}
+                        />
+                      </div>
+                      <div style={s.emailField}>
+                        <label style={s.emailLabel} htmlFor={`bulk-parent-email-${stu.id}`}>Parent email</label>
+                        <input
+                          id={`bulk-parent-email-${stu.id}`}
+                          type="email"
+                          placeholder="parent@example.com"
+                          value={parentEmail}
+                          onChange={(e) => setEdit(stu.id, 'parentEmail', e.target.value)}
+                          style={s.emailInput}
+                          autoComplete="off"
+                          spellCheck={false}
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
               );
             })}
           </div>
           {missingContactsCount > 0 && (
             <div style={{ marginTop: 8, fontSize: '0.78rem', color: '#92400e' }}>
-              {missingContactsCount} selected student{missingContactsCount === 1 ? ' has' : 's have'} no saved contacts and will be skipped. Save contacts via the single-student flow first.
+              {missingContactsCount} selected student{missingContactsCount === 1 ? ' has' : 's have'} no recipient email and will be skipped. Fill in an email above to include them.
             </div>
           )}
         </div>
