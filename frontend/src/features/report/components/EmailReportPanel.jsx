@@ -27,12 +27,23 @@ const s = {
   },
   field: { display: 'flex', flexDirection: 'column', gap: 4 },
   fullField: { display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 12 },
+  twoCol: {
+    display: 'grid',
+    gridTemplateColumns: '180px 1fr',
+    gap: 10,
+    marginBottom: 12,
+  },
   label: {
     fontSize: '0.7rem',
     fontWeight: 600,
     letterSpacing: '0.07em',
     textTransform: 'uppercase',
     color: 'var(--muted)',
+  },
+  labelRow: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
   },
   input: {
     padding: '9px 12px',
@@ -43,6 +54,19 @@ const s = {
     fontFamily: 'var(--font-sans)',
     fontSize: '0.9rem',
     outline: 'none',
+    width: '100%',
+    boxSizing: 'border-box',
+  },
+  resetBtn: {
+    fontSize: '0.68rem',
+    fontWeight: 600,
+    color: 'var(--accent)',
+    background: 'none',
+    border: 'none',
+    cursor: 'pointer',
+    padding: '0 4px',
+    textTransform: 'none',
+    letterSpacing: 'normal',
   },
   actions: {
     display: 'flex',
@@ -81,8 +105,13 @@ const s = {
   },
 };
 
+function buildTemplateSubject(category, studentName) {
+  return `Prime Academy ${category || 'Weekly'} Progress Report for ${studentName || ''}`.trim();
+}
+
 export default function EmailReportPanel({
   studentName,
+  registeredStudentEmail,
   contacts,
   onChange,
   onSave,
@@ -93,9 +122,12 @@ export default function EmailReportPanel({
   success,
   subject,
   onSubjectChange,
+  category,
+  onCategoryChange,
 }) {
-  const defaultSubject = `Prime Academy Weekly Progress Report for ${studentName || ''}`.trim();
-  const effectiveSubject = subject != null ? subject : defaultSubject;
+  const effectiveCategory = category || 'Weekly';
+  const defaultSubject = buildTemplateSubject(effectiveCategory, studentName);
+  const effectiveSubject = subject != null && subject !== '' ? subject : defaultSubject;
 
   const [saveState, setSaveState] = useState('idle'); // 'idle' | 'saving' | 'saved'
 
@@ -109,6 +141,26 @@ export default function EmailReportPanel({
     (contacts?.studentEmail && contacts.studentEmail.trim()) ||
     (contacts?.parentEmail && contacts.parentEmail.trim())
   );
+
+  const studentEmailDiffers = Boolean(
+    registeredStudentEmail &&
+    contacts?.studentEmail &&
+    contacts.studentEmail.trim().toLowerCase() !== String(registeredStudentEmail).trim().toLowerCase()
+  );
+
+  function handleCategoryInput(value) {
+    onCategoryChange && onCategoryChange(value);
+    // Re-template the subject whenever category changes, so the user sees
+    // the swap reflected in the subject preview immediately. If they want
+    // a fully custom subject, they can still edit the Subject field directly
+    // after — those edits stick until the category changes again.
+    onSubjectChange && onSubjectChange(buildTemplateSubject(value, studentName));
+  }
+
+  function handleResetStudentEmail() {
+    if (!registeredStudentEmail) return;
+    onChange({ studentEmail: registeredStudentEmail });
+  }
 
   async function handleSave() {
     if (!onSave) return;
@@ -129,11 +181,23 @@ export default function EmailReportPanel({
 
       <div style={s.grid}>
         <div style={s.field}>
-          <label style={s.label} htmlFor="student-email">Student email</label>
+          <div style={s.labelRow}>
+            <label style={s.label} htmlFor="student-email">Student email</label>
+            {studentEmailDiffers && (
+              <button
+                type="button"
+                onClick={handleResetStudentEmail}
+                style={s.resetBtn}
+                title={`Reset to ${registeredStudentEmail}`}
+              >
+                ↺ Reset to registered
+              </button>
+            )}
+          </div>
           <input
             id="student-email"
             type="email"
-            placeholder="student@example.com"
+            placeholder={registeredStudentEmail || 'student@example.com'}
             value={contacts?.studentEmail || ''}
             onChange={(e) => onChange({ studentEmail: e.target.value })}
             style={s.input}
@@ -154,16 +218,29 @@ export default function EmailReportPanel({
         </div>
       </div>
 
-      <div style={s.fullField}>
-        <label style={s.label} htmlFor="email-subject">Subject</label>
-        <input
-          id="email-subject"
-          type="text"
-          value={effectiveSubject}
-          onChange={(e) => onSubjectChange && onSubjectChange(e.target.value)}
-          style={s.input}
-          autoComplete="off"
-        />
+      <div style={s.twoCol}>
+        <div style={s.field}>
+          <label style={s.label} htmlFor="email-category">Category</label>
+          <input
+            id="email-category"
+            type="text"
+            value={effectiveCategory}
+            onChange={(e) => handleCategoryInput(e.target.value)}
+            style={s.input}
+            autoComplete="off"
+          />
+        </div>
+        <div style={s.field}>
+          <label style={s.label} htmlFor="email-subject">Subject</label>
+          <input
+            id="email-subject"
+            type="text"
+            value={effectiveSubject}
+            onChange={(e) => onSubjectChange && onSubjectChange(e.target.value)}
+            style={s.input}
+            autoComplete="off"
+          />
+        </div>
       </div>
 
       <div style={s.actions}>
@@ -179,10 +256,10 @@ export default function EmailReportPanel({
         <Button
           onClick={onSend}
           loading={loading}
-          disabled={!configured || !hasRecipient}
+          disabled={!configured || !hasRecipient || loading}
           size="md"
         >
-          Send Report
+          {loading ? 'Sending…' : 'Send Report'}
         </Button>
       </div>
 

@@ -445,6 +445,7 @@ export default function ReportViewer({
   contacts, onContactsChange, onSaveContacts, onSendEmail,
   emailConfigured, emailLoading, emailError, emailSuccess,
   emailSubject, onEmailSubjectChange,
+  emailCategory, onEmailCategoryChange,
 }) {
   const { student, groups, stats, satScores, startDate, endDate, latestTest, categoryPerf, categoryPerfSplit } = data;
   const totalTests = groups.reduce((s, g) => s + g.results.length, 0);
@@ -497,6 +498,7 @@ export default function ReportViewer({
         {onSendEmail && (
           <EmailReportPanel
             studentName={student.name}
+            registeredStudentEmail={student.email}
             contacts={contacts}
             onChange={onContactsChange}
             onSave={onSaveContacts}
@@ -507,6 +509,8 @@ export default function ReportViewer({
             success={emailSuccess}
             subject={emailSubject}
             onSubjectChange={onEmailSubjectChange}
+            category={emailCategory}
+            onCategoryChange={onEmailCategoryChange}
           />
         )}
       </div>

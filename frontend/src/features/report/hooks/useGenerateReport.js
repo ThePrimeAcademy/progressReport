@@ -39,6 +39,7 @@ export function useGenerateReport() {
   const [emailError, setEmailError] = useState(null);
   const [emailSuccess, setEmailSuccess] = useState(null);
   const [emailSubject, setEmailSubject] = useState('');
+  const [emailCategory, setEmailCategory] = useState('Weekly');
 
   const refreshScoringSheets = useCallback(async () => {
     try {
@@ -77,6 +78,7 @@ export function useGenerateReport() {
     setEmailError(null);
     setEmailSuccess(null);
     setEmailSubject('');
+    setEmailCategory('Weekly');
     if (!selectedStudentId) {
       setContacts({ studentEmail: '', parentEmail: '' });
       return;
@@ -191,6 +193,7 @@ export function useGenerateReport() {
     contacts, updateContacts, saveContacts, contactsLoading,
     emailConfigured, emailLoading, emailError, emailSuccess,
     emailSubject, setEmailSubject,
+    emailCategory, setEmailCategory,
     handleEmail,
     isValid,
   };

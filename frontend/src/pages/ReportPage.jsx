@@ -44,6 +44,7 @@ export default function ReportPage() {
     contacts, updateContacts, saveContacts,
     emailConfigured, emailLoading, emailError, emailSuccess,
     emailSubject, setEmailSubject,
+    emailCategory, setEmailCategory,
     handleEmail,
     isValid,
   } = useGenerateReport();
@@ -125,6 +126,8 @@ export default function ReportPage() {
             emailSuccess={emailSuccess}
             emailSubject={emailSubject}
             onEmailSubjectChange={setEmailSubject}
+            emailCategory={emailCategory}
+            onEmailCategoryChange={setEmailCategory}
           />
         )}
 
