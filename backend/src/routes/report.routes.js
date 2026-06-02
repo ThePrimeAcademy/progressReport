@@ -35,11 +35,15 @@ const SEND_DEDUPE_TTL_MS = 5 * 60 * 1000;
 const sendInFlight = new Map();
 const sendCompleted = new Map();
 
-function dedupeKey({ studentId, startDate, endDate, recipients, subject }) {
+function dedupeKey({ studentId, startDate, endDate, dayOfWeek, recipients, subject }) {
+  const days = Array.isArray(dayOfWeek)
+    ? dayOfWeek.map(String).sort().join(',')
+    : String(dayOfWeek || '');
   const normalized = [
     String(studentId || ''),
     String(startDate || ''),
     String(endDate || ''),
+    days,
     (recipients || []).map((e) => e.toLowerCase()).sort().join(','),
     String(subject || ''),
   ].join('|');
@@ -211,7 +215,7 @@ router.post('/email', validate, async (req, res, next) => {
       return res.status(400).json({ error: 'Provide at least one recipient (student or parent email).' });
     }
 
-    const key = dedupeKey({ studentId, startDate, endDate, recipients, subject });
+    const key = dedupeKey({ studentId, startDate, endDate, dayOfWeek, recipients, subject });
     console.log(`[email] start studentId=${studentId} recipients=${recipients.length} range=${startDate}..${endDate} key=${key}`);
 
     const result = await dedupedSend(key, async () => {
