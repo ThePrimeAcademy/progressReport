@@ -68,7 +68,7 @@ function buildHtmlBody(studentName, startDate, endDate) {
     ? ` covering ${startPretty} to ${endPretty}`
     : '';
   return `<p>Hi,</p>
-<p>Attached is the most recent weekly progress report for ${studentName}$.</p>
+<p>Attached is the most recent weekly progress report for ${studentName}.</p>
 <p>Best regards,<br />Prime Academy</p>`;
 }
 
