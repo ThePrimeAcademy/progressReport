@@ -27,7 +27,7 @@ function isConfigured() {
 }
 
 function buildDefaultSubject(studentName) {
-  return `Prime Academy Report Card: ${studentName}`;
+  return `Prime Academy Weekly Progress Report for ${studentName}`;
 }
 
 function buildHtmlBody(studentName, startDate, endDate) {
