@@ -71,7 +71,7 @@ export default function ReportPage() {
 
         <header style={s.hero}>
           <span style={s.eyebrow}>Student Report Generator</span>
-          <h1 style={s.title}>Student Performance<br />at a Glance</h1>
+          <h1 style={s.title}>Student Performance</h1>
           <p style={s.sub}>Select a student, date range, and optionally filter by day to generate a detailed report.</p>
         </header>
 
