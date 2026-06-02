@@ -30,9 +30,42 @@ function buildDefaultSubject(studentName) {
   return `Prime Academy Weekly Progress Report for ${studentName}`;
 }
 
+const MONTHS = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+];
+
+function ordinal(n) {
+  const v = n % 100;
+  if (v >= 11 && v <= 13) return n + 'th';
+  switch (n % 10) {
+    case 1: return n + 'st';
+    case 2: return n + 'nd';
+    case 3: return n + 'rd';
+    default: return n + 'th';
+  }
+}
+
+// "2025-10-10" -> "October 10th". Returns the input unchanged if it doesn't
+// match the expected ISO YYYY-MM-DD shape.
+function formatPrettyDate(iso) {
+  if (!iso) return '';
+  const m = String(iso).match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return iso;
+  const month = MONTHS[Number(m[2]) - 1];
+  const day = Number(m[3]);
+  if (!month || !day) return iso;
+  return `${month} ${ordinal(day)}`;
+}
+
 function buildHtmlBody(studentName, startDate, endDate) {
-  const range = startDate && endDate
-    ? ` covering ${startDate} to ${endDate}`
+  const startISO = startDate ? String(startDate).slice(0, 10) : '';
+  const endISO = endDate ? String(endDate).slice(0, 10) : '';
+  const sameYear = startISO.slice(0, 4) && startISO.slice(0, 4) === endISO.slice(0, 4);
+  const startPretty = formatPrettyDate(startISO);
+  const endPretty = formatPrettyDate(endISO) + (sameYear ? '' : (endISO ? `, ${endISO.slice(0, 4)}` : ''));
+  const range = startPretty && endPretty
+    ? ` covering ${startPretty} to ${endPretty}`
     : '';
   return `<p>Hi,</p>
 <p>Attached is the Prime Academy progress report for ${studentName}${range}.</p>

@@ -105,10 +105,6 @@ const s = {
   },
 };
 
-function buildTemplateSubject(category, studentName) {
-  return `Prime Academy ${category || 'Weekly'} Progress Report for ${studentName || ''}`.trim();
-}
-
 export default function EmailReportPanel({
   studentName,
   registeredStudentEmail,
@@ -122,11 +118,8 @@ export default function EmailReportPanel({
   success,
   subject,
   onSubjectChange,
-  category,
-  onCategoryChange,
 }) {
-  const effectiveCategory = category || 'Weekly';
-  const defaultSubject = buildTemplateSubject(effectiveCategory, studentName);
+  const defaultSubject = `Prime Academy Weekly Progress Report for ${studentName || ''}`.trim();
   const effectiveSubject = subject != null && subject !== '' ? subject : defaultSubject;
 
   const [saveState, setSaveState] = useState('idle'); // 'idle' | 'saving' | 'saved'
@@ -147,15 +140,6 @@ export default function EmailReportPanel({
     contacts?.studentEmail &&
     contacts.studentEmail.trim().toLowerCase() !== String(registeredStudentEmail).trim().toLowerCase()
   );
-
-  function handleCategoryInput(value) {
-    onCategoryChange && onCategoryChange(value);
-    // Re-template the subject whenever category changes, so the user sees
-    // the swap reflected in the subject preview immediately. If they want
-    // a fully custom subject, they can still edit the Subject field directly
-    // after — those edits stick until the category changes again.
-    onSubjectChange && onSubjectChange(buildTemplateSubject(value, studentName));
-  }
 
   function handleResetStudentEmail() {
     if (!registeredStudentEmail) return;
@@ -218,29 +202,16 @@ export default function EmailReportPanel({
         </div>
       </div>
 
-      <div style={s.twoCol}>
-        <div style={s.field}>
-          <label style={s.label} htmlFor="email-category">Category</label>
-          <input
-            id="email-category"
-            type="text"
-            value={effectiveCategory}
-            onChange={(e) => handleCategoryInput(e.target.value)}
-            style={s.input}
-            autoComplete="off"
-          />
-        </div>
-        <div style={s.field}>
-          <label style={s.label} htmlFor="email-subject">Subject</label>
-          <input
-            id="email-subject"
-            type="text"
-            value={effectiveSubject}
-            onChange={(e) => onSubjectChange && onSubjectChange(e.target.value)}
-            style={s.input}
-            autoComplete="off"
-          />
-        </div>
+      <div style={s.fullField}>
+        <label style={s.label} htmlFor="email-subject">Subject</label>
+        <input
+          id="email-subject"
+          type="text"
+          value={effectiveSubject}
+          onChange={(e) => onSubjectChange && onSubjectChange(e.target.value)}
+          style={s.input}
+          autoComplete="off"
+        />
       </div>
 
       <div style={s.actions}>

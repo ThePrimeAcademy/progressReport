@@ -84,6 +84,14 @@ export async function fetchEmailStatus() {
 }
 
 export async function emailReport(payload) {
-  const response = await apiClient.post('/report/email', payload, { timeout: 120000 });
+  // POST returns immediately with a jobId (work runs in background on the
+  // server). Use a short timeout — anything slower than this means the proxy
+  // ate the request, not the email send itself.
+  const response = await apiClient.post('/report/email', payload, { timeout: 30000 });
+  return response.data.data;
+}
+
+export async function fetchEmailJobStatus(jobId) {
+  const response = await apiClient.get(`/report/email/job/${encodeURIComponent(jobId)}`);
   return response.data.data;
 }

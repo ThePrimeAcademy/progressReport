@@ -9,6 +9,7 @@ import {
   saveStudentContacts,
   fetchEmailStatus,
   emailReport,
+  fetchEmailJobStatus,
 } from '../api/reportApi.js';
 import { downloadFile } from '../../../utils/downloadFile.js';
 
@@ -39,7 +40,6 @@ export function useGenerateReport() {
   const [emailError, setEmailError] = useState(null);
   const [emailSuccess, setEmailSuccess] = useState(null);
   const [emailSubject, setEmailSubject] = useState('');
-  const [emailCategory, setEmailCategory] = useState('Weekly');
 
   const refreshScoringSheets = useCallback(async () => {
     try {
@@ -78,7 +78,6 @@ export function useGenerateReport() {
     setEmailError(null);
     setEmailSuccess(null);
     setEmailSubject('');
-    setEmailCategory('Weekly');
     if (!selectedStudentId) {
       setContacts({ studentEmail: '', parentEmail: '' });
       return;
@@ -153,7 +152,7 @@ export function useGenerateReport() {
     setEmailSuccess(null);
     setEmailLoading(true);
     try {
-      const result = await emailReport({
+      const start = await emailReport({
         studentId: selectedStudentId,
         startDate,
         endDate,
@@ -162,8 +161,37 @@ export function useGenerateReport() {
         parentEmail: contacts.parentEmail || '',
         subject: emailSubject || undefined,
       });
+
+      const jobId = start?.jobId;
+      if (!jobId) throw new Error('Server did not return a job id.');
+
+      // Poll every 2s; total budget ~3 minutes which is well past any realistic
+      // PDF + Gmail latency. The dedupe key/jobId is stable across retries, so
+      // re-clicking Send while a job is pending just rejoins the same job.
+      const maxAttempts = 90;
+      let job = null;
+      for (let i = 0; i < maxAttempts; i++) {
+        // First poll after a 1s delay; subsequent polls every 2s.
+        await new Promise((r) => setTimeout(r, i === 0 ? 1000 : 2000));
+        try {
+          job = await fetchEmailJobStatus(jobId);
+        } catch (e) {
+          // 404 means the job expired or the server restarted — treat as failed.
+          throw new Error(e.message || 'Lost track of the send job.');
+        }
+        if (job?.status === 'sent' || job?.status === 'failed') break;
+      }
+
+      if (!job || job.status === 'pending') {
+        throw new Error('Send is taking longer than expected. Please check your inbox before retrying.');
+      }
+      if (job.status === 'failed') {
+        throw new Error(job.error || 'Send failed.');
+      }
+
+      const result = job.result || {};
       const recipients = result?.to?.length ? result.to.join(', ') : '';
-      if (result?.deduplicated) {
+      if (start?.deduplicated) {
         setEmailSuccess(
           recipients
             ? `Already sent to ${recipients} in the last few minutes — no duplicate sent.`
@@ -198,7 +226,6 @@ export function useGenerateReport() {
     contacts, updateContacts, saveContacts, contactsLoading,
     emailConfigured, emailLoading, emailError, emailSuccess,
     emailSubject, setEmailSubject,
-    emailCategory, setEmailCategory,
     handleEmail,
     isValid,
   };

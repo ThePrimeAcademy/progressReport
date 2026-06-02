@@ -20,20 +20,21 @@ const crypto = require('crypto');
 
 const router = express.Router();
 
-// ── Idempotency for /api/report/email ──────────────────────────────────────
-// Problem: Railway's edge proxy closes connections at ~30s, but a PDF render
-// + Gmail send commonly takes 30-45s. The email lands in the inbox, but the
-// browser sees a "network error" — and users instinctively click Send again.
-// Each retry triggers another full send, dropping duplicate emails on
-// students/parents.
+// ── Async send + job tracking for /api/report/email ────────────────────────
+// Railway's edge closes idle HTTP connections at ~30s but PDF render + Gmail
+// send commonly takes 30-45s. If the route blocked on the full pipeline, the
+// browser saw "network error" mid-flight even though the email had already
+// been queued (or even delivered) by Gmail.
 //
-// Fix: dedupe identical sends server-side. Compute a key from
-// (studentId, range, recipients, subject). Within a 5-minute window any
-// duplicate POST returns the cached result instead of re-sending. Concurrent
-// duplicates wait on the in-flight promise so we never double-send.
-const SEND_DEDUPE_TTL_MS = 5 * 60 * 1000;
-const sendInFlight = new Map();
-const sendCompleted = new Map();
+// New shape: POST returns immediately with a jobId. The actual work runs in
+// the background. The frontend polls GET /email/job/:jobId every 2s for the
+// terminal status. No long-lived HTTP connection = no edge timeout.
+//
+// The same jobId derives from a sha256 hash of inputs, so it doubles as a
+// dedupe key — identical POSTs within 5 min reuse the already-pending or
+// already-completed job instead of starting a parallel send.
+const JOB_TTL_MS = 5 * 60 * 1000;
+const sendJobs = new Map(); // key -> { status, startedAt, finishedAt?, result?, error? }
 
 function dedupeKey({ studentId, startDate, endDate, dayOfWeek, recipients, subject }) {
   const days = Array.isArray(dayOfWeek)
@@ -50,33 +51,68 @@ function dedupeKey({ studentId, startDate, endDate, dayOfWeek, recipients, subje
   return crypto.createHash('sha256').update(normalized).digest('hex').slice(0, 24);
 }
 
-function pruneCompleted() {
-  const cutoff = Date.now() - SEND_DEDUPE_TTL_MS;
-  for (const [k, v] of sendCompleted.entries()) {
-    if (v.timestamp < cutoff) sendCompleted.delete(k);
+function readJob(key) {
+  const job = sendJobs.get(key);
+  if (!job) return null;
+  // Pending jobs never expire (they're still running). Completed/failed jobs
+  // expire after the TTL so duplicate-detection has a reasonable window.
+  if (job.status !== 'pending' && job.finishedAt && Date.now() - job.finishedAt > JOB_TTL_MS) {
+    sendJobs.delete(key);
+    return null;
+  }
+  return job;
+}
+
+function pruneJobs() {
+  const cutoff = Date.now() - JOB_TTL_MS;
+  for (const [k, v] of sendJobs.entries()) {
+    if (v.status !== 'pending' && v.finishedAt && v.finishedAt < cutoff) sendJobs.delete(k);
   }
 }
 
-async function dedupedSend(key, doSend) {
-  const cached = sendCompleted.get(key);
-  if (cached && Date.now() - cached.timestamp < SEND_DEDUPE_TTL_MS) {
-    return { ...cached.result, deduplicated: true };
+function startOrReuseJob(key, doWork) {
+  const existing = readJob(key);
+  if (existing) {
+    return { jobId: key, status: existing.status, deduplicated: true };
   }
-  const flight = sendInFlight.get(key);
-  if (flight) return flight.then((r) => ({ ...r, deduplicated: true }));
-
-  const promise = (async () => {
+  sendJobs.set(key, { status: 'pending', startedAt: Date.now() });
+  // Fire and forget — no await, no res.send blocking on this.
+  (async () => {
     try {
-      const result = await doSend();
-      sendCompleted.set(key, { timestamp: Date.now(), result });
-      if (sendCompleted.size > 200) pruneCompleted();
-      return result;
+      const result = await doWork();
+      sendJobs.set(key, {
+        status: 'sent',
+        startedAt: sendJobs.get(key)?.startedAt || Date.now(),
+        finishedAt: Date.now(),
+        result,
+      });
+    } catch (err) {
+      console.error(`[email job ${key}] FAILED:`, err.message);
+      sendJobs.set(key, {
+        status: 'failed',
+        startedAt: sendJobs.get(key)?.startedAt || Date.now(),
+        finishedAt: Date.now(),
+        error: err.message,
+      });
     } finally {
-      sendInFlight.delete(key);
+      if (sendJobs.size > 200) pruneJobs();
     }
   })();
-  sendInFlight.set(key, promise);
-  return promise;
+  return { jobId: key, status: 'pending' };
+}
+
+// Concatenated first+last+"Report" — e.g. "Darin Kim" -> "DarinKimReport".
+// Strips diacritics/whitespace/punctuation so it's safe in Content-Disposition.
+function buildReportFilename(studentName) {
+  const cleaned = String(studentName || 'Student')
+    .normalize('NFKD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/[^A-Za-z0-9 ]+/g, '')
+    .trim()
+    .split(/\s+/)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join('');
+  return `${cleaned}Report`;
 }
 
 function validate(req, res, next) {
@@ -161,7 +197,7 @@ router.post('/', validate, async (req, res, next) => {
 
     const pdfBuffer = await generateReportPDF(student, groups, stats, satScores, startDate, endDate, latestTest, categoryPerf, webhookCategorySplit);
 
-    const filename = `progress-report-${student.name.replace(/\s+/g, '-').toLowerCase()}-${startDate}-to-${endDate}.pdf`;
+    const filename = `${buildReportFilename(student.name)}.pdf`;
     res.set({
       'Content-Type': 'application/pdf',
       'Content-Disposition': `inline; filename="${filename}"`,
@@ -216,9 +252,9 @@ router.post('/email', validate, async (req, res, next) => {
     }
 
     const key = dedupeKey({ studentId, startDate, endDate, dayOfWeek, recipients, subject });
-    console.log(`[email] start studentId=${studentId} recipients=${recipients.length} range=${startDate}..${endDate} key=${key}`);
+    console.log(`[email] queued studentId=${studentId} recipients=${recipients.length} key=${key}`);
 
-    const result = await dedupedSend(key, async () => {
+    const start = startOrReuseJob(key, async () => {
       const student = await resolveStudent(studentId);
       const [groups, apiLatestTest, satScores, webhookLatestTest, webhookCategoryPerf, webhookCategorySplit] = await Promise.all([
         studentId.startsWith("sheets:") ? Promise.resolve([]) : getStudentResultsGrouped(studentId, startDate, endDate, dayOfWeek),
@@ -236,10 +272,10 @@ router.post('/email', validate, async (req, res, next) => {
         : computeCategoryPerformance(groups);
       const latestTest = webhookLatestTest || apiLatestTest;
 
-      console.log(`[email] data gathered in ${Date.now() - t0}ms, rendering PDF…`);
+      console.log(`[email job ${key}] data gathered in ${Date.now() - t0}ms, rendering PDF…`);
       const pdfBuffer = await generateReportPDF(student, groups, stats, satScores, startDate, endDate, latestTest, categoryPerf, webhookCategorySplit);
-      const filename = `progress-report-${student.name.replace(/\s+/g, '-').toLowerCase()}-${startDate}-to-${endDate}.pdf`;
-      console.log(`[email] PDF rendered (${pdfBuffer.length} bytes) at ${Date.now() - t0}ms, sending via Gmail API…`);
+      const filename = `${buildReportFilename(student.name)}.pdf`;
+      console.log(`[email job ${key}] PDF rendered (${pdfBuffer.length} bytes) at ${Date.now() - t0}ms, sending via Gmail API…`);
 
       const sendResult = await sendReportEmail({
         studentName: student.name,
@@ -250,7 +286,7 @@ router.post('/email', validate, async (req, res, next) => {
         endDate,
         subject,
       });
-      console.log(`[email] sent in total ${Date.now() - t0}ms id=${sendResult.id || '?'}`);
+      console.log(`[email job ${key}] sent in total ${Date.now() - t0}ms id=${sendResult.id || '?'}`);
 
       await db.setContacts(studentId, {
         studentEmail: studentEmail || '',
@@ -259,14 +295,28 @@ router.post('/email', validate, async (req, res, next) => {
       return sendResult;
     });
 
-    if (result.deduplicated) {
-      console.log(`[email] DEDUPED — returning cached send within 5-min window`);
-    }
-    res.json({ success: true, data: result });
+    res.json({ success: true, data: start });
   } catch (err) {
-    console.error(`[email] FAILED after ${Date.now() - t0}ms:`, err.message);
+    console.error(`[email] queue FAILED after ${Date.now() - t0}ms:`, err.message);
     next(err);
   }
+});
+
+// GET /api/report/email/job/:jobId — frontend polls this every 2s after POST
+router.get('/email/job/:jobId', (req, res) => {
+  const job = readJob(req.params.jobId);
+  if (!job) {
+    return res.status(404).json({ success: false, error: 'Job not found (it may have expired after 5 minutes).' });
+  }
+  res.json({
+    success: true,
+    data: {
+      status: job.status,
+      result: job.result,
+      error: job.error,
+      durationMs: (job.finishedAt || Date.now()) - job.startedAt,
+    },
+  });
 });
 
 module.exports = router;
