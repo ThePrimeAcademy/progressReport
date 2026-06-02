@@ -44,7 +44,9 @@ function buildHtmlBody(studentName, startDate, endDate) {
 let _transporter = null;
 function getTransporter() {
   if (_transporter) return _transporter;
-  const port = Number(process.env.SMTP_PORT) || 465;
+  // Default to STARTTLS on port 587 — cloud providers (Railway, Render,
+  // Fly.io, GCP) commonly block implicit-TLS port 465. Gmail accepts both.
+  const port = Number(process.env.SMTP_PORT) || 587;
   const secureEnv = process.env.SMTP_SECURE;
   const secure = secureEnv != null ? secureEnv !== 'false' : port === 465;
   _transporter = nodemailer.createTransport({
@@ -55,6 +57,11 @@ function getTransporter() {
       user: process.env.SMTP_USER,
       pass: process.env.SMTP_PASS,
     },
+    // Fast-fail instead of hanging the request when the SMTP host is
+    // unreachable. 20s is plenty for any healthy SMTP handshake.
+    connectionTimeout: 20000,
+    greetingTimeout: 20000,
+    socketTimeout: 25000,
   });
   return _transporter;
 }
