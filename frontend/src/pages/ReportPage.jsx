@@ -18,6 +18,31 @@ const s = {
   nav: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 44 },
   brand: { fontFamily: 'var(--font-serif)', fontSize: '1.5rem', color: 'var(--accent)', letterSpacing: '-0.3px' },
   badge: { fontSize: '0.7rem', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 20, padding: '4px 12px' },
+  modeGroup: {
+    display: 'inline-flex',
+    background: 'var(--bg)',
+    border: '1px solid var(--border)',
+    borderRadius: 999,
+    padding: 3,
+    gap: 2,
+  },
+  modePill: {
+    fontSize: '0.72rem',
+    fontWeight: 600,
+    letterSpacing: '0.04em',
+    border: 'none',
+    background: 'transparent',
+    color: 'var(--muted)',
+    padding: '6px 14px',
+    borderRadius: 999,
+    cursor: 'pointer',
+    transition: 'all 0.18s var(--ease)',
+    fontFamily: 'var(--font-sans)',
+  },
+  modePillActive: {
+    background: 'var(--accent)',
+    color: '#fff',
+  },
   hero: { textAlign: 'center', marginBottom: 36 },
   eyebrow: { display: 'inline-block', fontSize: '0.72rem', fontWeight: 600, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--accent)', background: 'var(--accent-dim)', borderRadius: 20, padding: '5px 14px', marginBottom: 14 },
   title: { fontFamily: 'var(--font-serif)', fontSize: 'clamp(1.6rem, 4vw, 2.4rem)', lineHeight: 1.2, color: 'var(--ink)', marginBottom: 12 },
@@ -57,15 +82,25 @@ export default function ReportPage() {
 
         <nav style={s.nav}>
           <span style={s.brand}>ProgressReport</span>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <Button
-              onClick={() => setBulkMode((m) => !m)}
-              variant={bulkMode ? 'primary' : 'secondary'}
-              size="sm"
+          <div role="tablist" aria-label="Send mode" style={s.modeGroup}>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={!bulkMode}
+              onClick={() => setBulkMode(false)}
+              style={{ ...s.modePill, ...(!bulkMode ? s.modePillActive : {}) }}
             >
-              {bulkMode ? '← Single Student' : '⇉ Bulk Send'}
-            </Button>
-            <span style={s.badge}>Academic Tool</span>
+              Single Student
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={bulkMode}
+              onClick={() => setBulkMode(true)}
+              style={{ ...s.modePill, ...(bulkMode ? s.modePillActive : {}) }}
+            >
+              Bulk Send
+            </button>
           </div>
         </nav>
 
