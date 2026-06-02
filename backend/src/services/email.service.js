@@ -32,16 +32,11 @@ function buildDefaultSubject(studentName) {
 
 function buildHtmlBody(studentName, startDate, endDate) {
   const range = startDate && endDate
-    ? ` covering <strong>${startDate}</strong> to <strong>${endDate}</strong>`
+    ? ` covering ${startDate} to ${endDate}`
     : '';
-  return `
-    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 560px; margin: 0 auto; color: #1f2937;">
-      <p>Hi,</p>
-      <p>Attached is the Prime Academy progress report for <strong>${studentName}</strong>${range}.</p>
-      <p>If you have any questions about this report, just reply to this email.</p>
-      <p>— Prime Academy</p>
-    </div>
-  `;
+  return `<p>Hi,</p>
+<p>Attached is the Prime Academy progress report for ${studentName}${range}.</p>
+<p>— Prime Academy</p>`;
 }
 
 let _oauth2Client = null;
