@@ -96,8 +96,9 @@ const s = {
     letterSpacing: '0.04em',
     textTransform: 'uppercase',
   },
-  contactsYes: { background: '#dcfce7', color: '#15803d' },
-  contactsNo: { background: '#fef3c7', color: '#92400e' },
+  contactsBoth: { background: '#dcfce7', color: '#15803d' },
+  contactsPartial: { background: '#dbeafe', color: '#1a56db' },
+  contactsNone: { background: '#fef3c7', color: '#92400e' },
   input: {
     width: '100%',
     boxSizing: 'border-box',
@@ -168,10 +169,26 @@ export default function BulkSendPanel({ students, startDate, endDate, dayOfWeek,
     [students]
   );
 
-  function hasSavedContacts(id) {
-    const c = allContacts[id];
-    return Boolean(c && ((c.studentEmail && c.studentEmail.trim()) || (c.parentEmail && c.parentEmail.trim())));
+  // Returns one of: 'both' | 'studentOnly' | 'parentOnly' | 'none'.
+  function contactsState(id) {
+    const c = allContacts[id] || {};
+    const hasStudent = Boolean(c.studentEmail && c.studentEmail.trim());
+    const hasParent = Boolean(c.parentEmail && c.parentEmail.trim());
+    if (hasStudent && hasParent) return 'both';
+    if (hasStudent) return 'studentOnly';
+    if (hasParent) return 'parentOnly';
+    return 'none';
   }
+  function hasSavedContacts(id) {
+    return contactsState(id) !== 'none';
+  }
+
+  const CONTACT_PILL = {
+    both:        { label: 'Student + Parent',  style: s.contactsBoth },
+    studentOnly: { label: 'Student only',      style: s.contactsPartial },
+    parentOnly:  { label: 'Parent only',       style: s.contactsPartial },
+    none:        { label: 'No contacts',       style: s.contactsNone },
+  };
 
   function toggle(id) {
     setSelectedIds((prev) => {
@@ -301,7 +318,8 @@ export default function BulkSendPanel({ students, startDate, endDate, dayOfWeek,
             {!contactsLoading && sortedStudents.length === 0 && <div style={s.emptyHint}>No students found.</div>}
             {!contactsLoading && sortedStudents.map((stu) => {
               const checked = selectedIds.has(stu.id);
-              const hasContacts = hasSavedContacts(stu.id);
+              const state = contactsState(stu.id);
+              const pill = CONTACT_PILL[state];
               return (
                 <label key={stu.id} style={s.row}>
                   <input
@@ -311,8 +329,8 @@ export default function BulkSendPanel({ students, startDate, endDate, dayOfWeek,
                     style={s.checkbox}
                   />
                   <span style={s.studentName}>{stu.name}</span>
-                  <span style={{ ...s.contactPill, ...(hasContacts ? s.contactsYes : s.contactsNo) }}>
-                    {hasContacts ? 'Contacts ✓' : 'No contacts'}
+                  <span style={{ ...s.contactPill, ...pill.style }}>
+                    {pill.label}
                   </span>
                 </label>
               );
