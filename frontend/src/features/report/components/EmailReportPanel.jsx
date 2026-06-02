@@ -119,7 +119,7 @@ export default function EmailReportPanel({
   subject,
   onSubjectChange,
 }) {
-  const defaultSubject = 'Prime Academy Weekly Report';
+  const defaultSubject = `Prime Academy Weekly Progress Report for ${studentName || ''}`.trim();
   const effectiveSubject = subject != null && subject !== '' ? subject : defaultSubject;
 
   const [saveState, setSaveState] = useState('idle'); // 'idle' | 'saving' | 'saved'

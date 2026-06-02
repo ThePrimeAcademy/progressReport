@@ -20,8 +20,8 @@ function isConfigured() {
   return Boolean(process.env.BREVO_API_KEY);
 }
 
-function buildDefaultSubject(_studentName) {
-  return 'Prime Academy Weekly Report';
+function buildDefaultSubject(studentName) {
+  return `Prime Academy Weekly Progress Report for ${studentName}`;
 }
 
 const MONTHS = [
