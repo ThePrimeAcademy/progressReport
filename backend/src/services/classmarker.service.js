@@ -340,12 +340,36 @@ function clearCache() {
   console.log('Cache cleared (results + category map).');
 }
 
+// Set of ClassMarker user_ids that have at least one finished test inside
+// the given date range (+ optional day-of-week filter). Reads from the
+// already-cached fetchAllResults, so this is purely an in-memory scan and
+// never hits the ClassMarker API.
+async function getActiveStudentIds(startDate, endDate, dayOfWeek) {
+  const { results } = await fetchAllResults();
+  const startTs = Math.floor(new Date(startDate).getTime() / 1000);
+  const endTs = Math.floor(new Date(endDate).getTime() / 1000) + 86399;
+  let days = null;
+  if (dayOfWeek != null) {
+    const arr = Array.isArray(dayOfWeek) ? dayOfWeek : [dayOfWeek];
+    const nums = arr.map(Number).filter((n) => !Number.isNaN(n));
+    if (nums.length > 0) days = nums;
+  }
+  const active = new Set();
+  for (const r of results) {
+    if (!r.time_finished || r.time_finished < startTs || r.time_finished > endTs) continue;
+    if (days && !days.includes(new Date(r.time_finished * 1000).getDay())) continue;
+    active.add(String(r.user_id));
+  }
+  return Array.from(active);
+}
+
 module.exports = {
   getAllStudents,
   getStudentById,
   getStudentResults,
   getStudentResultsGrouped,
   getLatestTestResult,
+  getActiveStudentIds,
   computeCategoryPerformance,
   clearCache,
   fetchCategoryMap,

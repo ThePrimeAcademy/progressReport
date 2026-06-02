@@ -90,6 +90,18 @@ export async function fetchAllContacts() {
   return response.data.data || {};
 }
 
+export async function fetchActiveStudents({ startDate, endDate, dayOfWeek }) {
+  const params = new URLSearchParams();
+  if (startDate) params.set('startDate', startDate);
+  if (endDate) params.set('endDate', endDate);
+  if (dayOfWeek && dayOfWeek.length) {
+    params.set('dayOfWeek', Array.isArray(dayOfWeek) ? dayOfWeek.join(',') : dayOfWeek);
+  }
+  const qs = params.toString();
+  const response = await apiClient.get(`/students/active${qs ? `?${qs}` : ''}`);
+  return response.data.data || [];
+}
+
 export async function fetchEmailStatus() {
   const response = await apiClient.get('/report/email/status');
   return response.data.data;

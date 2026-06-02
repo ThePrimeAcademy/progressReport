@@ -9,6 +9,7 @@ import {
   fetchStudentContacts,
   saveStudentContacts,
   fetchAllContacts,
+  fetchActiveStudents,
   fetchEmailStatus,
   emailReport,
   fetchEmailJobStatus,
@@ -39,6 +40,10 @@ export function useGenerateReport() {
   const [contactsLoading, setContactsLoading] = useState(false);
   const [allContacts, setAllContacts] = useState({});
   const [allContactsLoading, setAllContactsLoading] = useState(true);
+  // null = filter not applied (e.g. dates not set or fetch in flight on
+  // first render). When a Set, only students whose id is in the set are
+  // shown in the picker/dropdown.
+  const [activeStudentIds, setActiveStudentIds] = useState(null);
   const [emailConfigured, setEmailConfigured] = useState(false);
   const [emailLoading, setEmailLoading] = useState(false);
   const [emailError, setEmailError] = useState(null);
@@ -104,6 +109,31 @@ export function useGenerateReport() {
     setPreviewError(null);
     setDownloadSuccess(false);
   }, [selectedStudentId, startDate, endDate, dayOfWeek]);
+
+  // Filter the picker / dropdown to only students who actually have a
+  // finished test in the selected date range. Debounced so quickly
+  // tweaking the date inputs doesn't fire a flood of requests. The
+  // endpoint is local-only (no ClassMarker call).
+  useEffect(() => {
+    if (!startDate || !endDate) {
+      setActiveStudentIds(null);
+      return;
+    }
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      try {
+        const ids = await fetchActiveStudents({ startDate, endDate, dayOfWeek });
+        if (!cancelled) setActiveStudentIds(new Set(ids));
+      } catch (_) {
+        if (!cancelled) setActiveStudentIds(null);
+      }
+    }, 400);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [startDate, endDate, dayOfWeek]);
+
+  const filteredStudents = activeStudentIds
+    ? students.filter((s) => activeStudentIds.has(s.id))
+    : students;
 
   const handlePreview = useCallback(async () => {
     setPreviewError(null);
@@ -266,6 +296,8 @@ export function useGenerateReport() {
 
   return {
     students, studentsLoading, studentsError, setStudents,
+    filteredStudents,
+    activeStudentIds,
     selectedStudentId, setSelectedStudentId,
     startDate, setStartDate,
     endDate, setEndDate,

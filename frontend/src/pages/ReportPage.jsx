@@ -59,6 +59,7 @@ const s = {
 export default function ReportPage() {
   const {
     students, studentsLoading, studentsError, setStudents,
+    filteredStudents,
     selectedStudentId, setSelectedStudentId,
     startDate, setStartDate,
     endDate, setEndDate,
@@ -113,7 +114,7 @@ export default function ReportPage() {
 
         {bulkMode ? (
           <BulkSendPanel
-            students={students}
+            students={filteredStudents}
             startDate={startDate}
             endDate={endDate}
             dayOfWeek={dayOfWeek}
@@ -133,7 +134,7 @@ export default function ReportPage() {
           <div style={s.cardBody}>
 
             <StudentSelector
-              students={students}
+              students={filteredStudents}
               loading={studentsLoading}
               error={studentsError}
               value={selectedStudentId}
