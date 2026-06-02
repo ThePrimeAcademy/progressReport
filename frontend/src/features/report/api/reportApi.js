@@ -6,8 +6,15 @@ export async function fetchStudents() {
   return response.data.data;
 }
 
+// previewReport now returns { jobId, status } immediately. Caller is expected
+// to poll fetchPreviewJobStatus(jobId) until status === 'ready' or 'failed'.
 export async function previewReport(payload) {
-  const response = await apiClient.post('/report/preview', payload);
+  const response = await apiClient.post('/report/preview', payload, { timeout: 15000 });
+  return response.data.data;
+}
+
+export async function fetchPreviewJobStatus(jobId) {
+  const response = await apiClient.get(`/report/preview/job/${encodeURIComponent(jobId)}`);
   return response.data.data;
 }
 

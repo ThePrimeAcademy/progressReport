@@ -142,35 +142,116 @@ async function resolveStudent(studentId) {
   return getStudentById(studentId);
 }
 
-// POST /api/report/preview
+// ── Preview job tracking ──────────────────────────────────────────────────
+// Same async-job pattern as /email, applied to /preview because the data
+// gather can briefly exceed Railway's edge timeout when the ClassMarker
+// cache is cold (right after a redeploy/restart). POST enqueues, frontend
+// polls — no long-lived HTTP request, no Railway 499.
+const PREVIEW_TTL_MS = 2 * 60 * 1000;
+const previewJobs = new Map();
+
+function previewKey({ studentId, startDate, endDate, dayOfWeek }) {
+  const days = Array.isArray(dayOfWeek)
+    ? dayOfWeek.map(String).sort().join(',')
+    : String(dayOfWeek || '');
+  const normalized = [String(studentId), String(startDate), String(endDate), days].join('|');
+  return crypto.createHash('sha256').update(normalized).digest('hex').slice(0, 24);
+}
+
+function readPreviewJob(key) {
+  const job = previewJobs.get(key);
+  if (!job) return null;
+  if (job.status !== 'pending' && job.finishedAt && Date.now() - job.finishedAt > PREVIEW_TTL_MS) {
+    previewJobs.delete(key);
+    return null;
+  }
+  return job;
+}
+
+function startOrReusePreview(key, doWork) {
+  const existing = readPreviewJob(key);
+  if (existing) return { jobId: key, status: existing.status };
+  previewJobs.set(key, { status: 'pending', startedAt: Date.now() });
+  (async () => {
+    try {
+      const result = await doWork();
+      previewJobs.set(key, {
+        status: 'ready',
+        startedAt: previewJobs.get(key)?.startedAt || Date.now(),
+        finishedAt: Date.now(),
+        result,
+      });
+    } catch (err) {
+      console.error(`[preview job ${key}] FAILED:`, err.message);
+      previewJobs.set(key, {
+        status: 'failed',
+        startedAt: previewJobs.get(key)?.startedAt || Date.now(),
+        finishedAt: Date.now(),
+        error: err.message,
+      });
+    } finally {
+      if (previewJobs.size > 200) {
+        const cutoff = Date.now() - PREVIEW_TTL_MS;
+        for (const [k, v] of previewJobs.entries()) {
+          if (v.status !== 'pending' && v.finishedAt && v.finishedAt < cutoff) previewJobs.delete(k);
+        }
+      }
+    }
+  })();
+  return { jobId: key, status: 'pending' };
+}
+
+async function gatherPreviewData({ studentId, startDate, endDate, dayOfWeek }) {
+  const student = await resolveStudent(studentId);
+  const [groups, apiLatestTest, satScores, webhookLatestTest, webhookCategoryPerf, webhookCategorySplit] = await Promise.all([
+    studentId.startsWith("sheets:") ? Promise.resolve([]) : getStudentResultsGrouped(studentId, startDate, endDate, dayOfWeek),
+    studentId.startsWith("sheets:") ? Promise.resolve(null) : getLatestTestResult(studentId, startDate, endDate, dayOfWeek),
+    getSatScoresForStudent(student),
+    getLatestWebhookTestResult(student, startDate, endDate, dayOfWeek),
+    getWebhookCategoryPerformance(student, startDate, endDate, dayOfWeek),
+    getWebhookCategoryPerformanceSplit(student, startDate, endDate, dayOfWeek),
+  ]);
+
+  const allResults = groups.flatMap((g) => g.results);
+  const stats = computeStats(allResults);
+  const categoryPerf = webhookCategoryPerf.length
+    ? webhookCategoryPerf
+    : computeCategoryPerformance(groups);
+  const latestTest = webhookLatestTest || apiLatestTest;
+
+  return { student, groups, stats, satScores, startDate, endDate, latestTest, categoryPerf, categoryPerfSplit: webhookCategorySplit };
+}
+
+// POST /api/report/preview — kicks off the data gather in the background and
+// returns immediately with a jobId. Frontend polls the GET endpoint below.
 router.post('/preview', validate, async (req, res, next) => {
   try {
     const { studentId, startDate, endDate, dayOfWeek } = req.body;
-
-    const student = await resolveStudent(studentId);
-    const [groups, apiLatestTest, satScores, webhookLatestTest, webhookCategoryPerf, webhookCategorySplit] = await Promise.all([
-      studentId.startsWith("sheets:") ? Promise.resolve([]) : getStudentResultsGrouped(studentId, startDate, endDate, dayOfWeek),
-      studentId.startsWith("sheets:") ? Promise.resolve(null) : getLatestTestResult(studentId, startDate, endDate, dayOfWeek),
-      getSatScoresForStudent(student),
-      getLatestWebhookTestResult(student, startDate, endDate, dayOfWeek),
-      getWebhookCategoryPerformance(student, startDate, endDate, dayOfWeek),
-      getWebhookCategoryPerformanceSplit(student, startDate, endDate, dayOfWeek),
-    ]);
-
-    const allResults = groups.flatMap((g) => g.results);
-    const stats = computeStats(allResults);
-    const categoryPerf = webhookCategoryPerf.length
-      ? webhookCategoryPerf
-      : computeCategoryPerformance(groups);
-    const latestTest = webhookLatestTest || apiLatestTest;
-
-    res.json({
-      success: true,
-      data: { student, groups, stats, satScores, startDate, endDate, latestTest, categoryPerf, categoryPerfSplit: webhookCategorySplit },
-    });
+    const key = previewKey({ studentId, startDate, endDate, dayOfWeek });
+    const start = startOrReusePreview(key, () =>
+      gatherPreviewData({ studentId, startDate, endDate, dayOfWeek })
+    );
+    res.json({ success: true, data: start });
   } catch (err) {
     next(err);
   }
+});
+
+// GET /api/report/preview/job/:jobId — poll target. Returns {status, result, error}.
+router.get('/preview/job/:jobId', (req, res) => {
+  const job = readPreviewJob(req.params.jobId);
+  if (!job) {
+    return res.status(404).json({ success: false, error: 'Preview job not found (it may have expired).' });
+  }
+  res.json({
+    success: true,
+    data: {
+      status: job.status,
+      result: job.result,
+      error: job.error,
+      durationMs: (job.finishedAt || Date.now()) - job.startedAt,
+    },
+  });
 });
 
 // POST /api/report — PDF

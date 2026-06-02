@@ -68,8 +68,8 @@ function buildHtmlBody(studentName, startDate, endDate) {
     ? ` covering ${startPretty} to ${endPretty}`
     : '';
   return `<p>Hi,</p>
-<p>Attached is the Prime Academy progress report for ${studentName}${range}.</p>
-<p>— Prime Academy</p>`;
+<p>Attached is the weekly progress report for ${studentName}${range}.</p>
+<p>Best regards,<br />Prime Academy</p>`;
 }
 
 let _oauth2Client = null;

@@ -3,6 +3,7 @@ import { useState, useEffect, useCallback } from 'react';
 import {
   fetchStudents,
   previewReport,
+  fetchPreviewJobStatus,
   downloadReport,
   listScoringSheets,
   fetchStudentContacts,
@@ -102,13 +103,34 @@ export function useGenerateReport() {
     setPreviewLoading(true);
     setDownloadSuccess(false);
     try {
-      const data = await previewReport({
+      const start = await previewReport({
         studentId: selectedStudentId,
         startDate,
         endDate,
         dayOfWeek: dayOfWeek || undefined,
       });
-      setPreviewData(data);
+      const jobId = start?.jobId;
+      if (!jobId) throw new Error('Server did not return a preview job id.');
+
+      // Poll up to ~60s; the data gather is usually <2s when cache is warm.
+      // First check after 200ms, then every 1s.
+      let job = null;
+      for (let i = 0; i < 60; i++) {
+        await new Promise((r) => setTimeout(r, i === 0 ? 200 : 1000));
+        try {
+          job = await fetchPreviewJobStatus(jobId);
+        } catch (e) {
+          throw new Error(e.message || 'Lost track of the preview job.');
+        }
+        if (job?.status === 'ready' || job?.status === 'failed') break;
+      }
+      if (!job || job.status === 'pending') {
+        throw new Error('Preview is taking longer than expected. Try again.');
+      }
+      if (job.status === 'failed') {
+        throw new Error(job.error || 'Preview failed.');
+      }
+      setPreviewData(job.result);
     } catch (err) {
       setPreviewError(err.message);
     } finally {
