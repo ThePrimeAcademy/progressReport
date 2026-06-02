@@ -75,8 +75,48 @@ async function getDb() {
     )
   `);
 
+    _db.run(`
+    CREATE TABLE IF NOT EXISTS student_contacts (
+      student_id     TEXT PRIMARY KEY,
+      student_email  TEXT,
+      parent_email   TEXT,
+      updated_at     TEXT
+    )
+  `);
+
     flush();
     return _db;
+}
+
+async function getContacts(studentId) {
+    const db = await getDb();
+    const result = db.exec(
+        'SELECT student_email, parent_email FROM student_contacts WHERE student_id = ?',
+        [String(studentId)]
+    );
+    if (!result.length) return null;
+    const [studentEmail, parentEmail] = result[0].values[0];
+    return { studentEmail: studentEmail || '', parentEmail: parentEmail || '' };
+}
+
+async function setContacts(studentId, { studentEmail, parentEmail }) {
+    const db = await getDb();
+    db.run(
+        `INSERT INTO student_contacts (student_id, student_email, parent_email, updated_at)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT(student_id) DO UPDATE SET
+           student_email = excluded.student_email,
+           parent_email  = excluded.parent_email,
+           updated_at    = excluded.updated_at`,
+        [
+            String(studentId),
+            studentEmail || null,
+            parentEmail || null,
+            new Date().toISOString(),
+        ]
+    );
+    flush();
+    return { studentEmail: studentEmail || '', parentEmail: parentEmail || '' };
 }
 
 function flush() {
@@ -242,4 +282,6 @@ module.exports = {
     updateQuestions,
     getTotalResults,
     getLatestUpdatedAt,
+    getContacts,
+    setContacts,
 };

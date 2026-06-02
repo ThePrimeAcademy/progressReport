@@ -62,3 +62,28 @@ export async function setScoringSheetBound({ groupId, section, bound }) {
   );
   return response.data.data;
 }
+
+export async function fetchStudentContacts(studentId) {
+  const response = await apiClient.get(
+    `/students/${encodeURIComponent(studentId)}/contacts`
+  );
+  return response.data.data;
+}
+
+export async function saveStudentContacts(studentId, contacts) {
+  const response = await apiClient.put(
+    `/students/${encodeURIComponent(studentId)}/contacts`,
+    contacts
+  );
+  return response.data.data;
+}
+
+export async function fetchEmailStatus() {
+  const response = await apiClient.get('/report/email/status');
+  return response.data.data;
+}
+
+export async function emailReport(payload) {
+  const response = await apiClient.post('/report/email', payload, { timeout: 120000 });
+  return response.data.data;
+}

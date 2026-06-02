@@ -111,4 +111,57 @@ router.get('/debug/categories', async (req, res) => {
   }
 });
 
+/**
+ * GET /api/students/:id/contacts
+ * Returns saved student + parent email contacts for a student.
+ * If no contacts have been saved yet, pre-fills student_email from ClassMarker.
+ */
+router.get('/:id/contacts', async (req, res, next) => {
+  try {
+    const studentId = req.params.id;
+    const saved = await db.getContacts(studentId);
+
+    if (saved) {
+      return res.json({ success: true, data: saved });
+    }
+
+    let studentEmail = '';
+    try {
+      const student = await getStudentById(studentId);
+      studentEmail = student?.email || '';
+    } catch (_) {
+      // sheets-only or missing student — leave blank
+    }
+
+    res.json({ success: true, data: { studentEmail, parentEmail: '' } });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * PUT /api/students/:id/contacts
+ * body: { studentEmail, parentEmail }
+ * Upserts contacts for the student.
+ */
+router.put('/:id/contacts', express.json(), async (req, res, next) => {
+  try {
+    const studentId = req.params.id;
+    const { studentEmail = '', parentEmail = '' } = req.body || {};
+
+    const emailRx = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (studentEmail && !emailRx.test(studentEmail)) {
+      return res.status(400).json({ error: 'studentEmail is not a valid email address' });
+    }
+    if (parentEmail && !emailRx.test(parentEmail)) {
+      return res.status(400).json({ error: 'parentEmail is not a valid email address' });
+    }
+
+    const saved = await db.setContacts(studentId, { studentEmail, parentEmail });
+    res.json({ success: true, data: saved });
+  } catch (err) {
+    next(err);
+  }
+});
+
 module.exports = router;

@@ -2,6 +2,7 @@
 import React, { useState } from 'react';
 import Button from '../../../components/ui/Button.jsx';
 import ScoringSheetUpload from './ScoringSheetUpload.jsx';
+import EmailReportPanel from './EmailReportPanel.jsx';
 
 const SAT_GROUP_NAME = /sat/i;
 function isSatGroupName(name) {
@@ -77,6 +78,60 @@ function SATScores({ satScores }) {
           </div>
         </div>
       ))}
+    </div>
+  );
+}
+
+// ── SAT score history (one card per SAT attempt, newest first) ───
+function SatScoreHistory({ allScores }) {
+  if (!allScores || allScores.length === 0) return null;
+
+  return (
+    <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 24 }}>
+      {allScores.map((s) => {
+        const accent = s.total != null ? '#1a56db' : '#6b7280';
+        return (
+          <div
+            key={s.groupId}
+            style={{
+              flex: 1,
+              minWidth: 150,
+              background: '#fafbff',
+              border: '1.5px solid var(--border)',
+              borderRadius: 10,
+              padding: '14px 16px',
+            }}
+          >
+            <div
+              style={{
+                fontSize: '0.7rem',
+                color: 'var(--muted)',
+                fontWeight: 600,
+                textTransform: 'uppercase',
+                letterSpacing: '0.07em',
+                marginBottom: 6,
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+              }}
+              title={s.groupName}
+            >
+              {s.groupName || 'SAT'}
+            </div>
+            <div style={{ fontSize: '1.5rem', fontWeight: 700, color: accent, lineHeight: 1 }}>
+              {s.total ?? '—'}
+            </div>
+            <div style={{ fontSize: '0.7rem', color: 'var(--muted)', marginTop: 6 }}>
+              RW {s.english ?? '—'} · M {s.math ?? '—'}
+            </div>
+            {s.date && (
+              <div style={{ fontSize: '0.66rem', color: 'var(--muted)', marginTop: 2 }}>
+                {s.date}
+              </div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -162,31 +217,13 @@ function LatestTestSection({ latestTest }) {
     </Card>
   );
 
-  const questions = latestTest.questions || [];
   const gc = gradeColor(latestTest.percentage);
-
-  // Group by section_number; preserve question order within each section
-  const sectionMap = {};
-  for (const q of questions) {
-    const sec = q.section_number ?? 0;
-    if (!sectionMap[sec]) sectionMap[sec] = [];
-    sectionMap[sec].push(q);
-  }
-  const sectionNums = Object.keys(sectionMap).map(Number).sort((a, b) => a - b);
-
-  // Layout: EN sections (1,2) left col, MA sections (3,4) right col
-  // If no section data, fall back to raw 2-column split
-  const hasSectionData = sectionNums.some((s) => s >= 1 && s <= 4);
-  const enSections = sectionNums.filter((s) => s === 1 || s === 2);
-  const maSections = sectionNums.filter((s) => s === 3 || s === 4);
-  const otherSections = sectionNums.filter((s) => s < 1 || s > 4);
 
   return (
     <Card style={{ marginBottom: 24 }}>
       <SectionTitle>Latest Test Performance</SectionTitle>
 
-      {/* Test header */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, flexWrap: 'wrap', gap: 10 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10 }}>
         <div>
           <div style={{ fontWeight: 600, fontSize: '0.95rem' }}>{latestTest.testName}</div>
           <div style={{ fontSize: '0.78rem', color: 'var(--muted)', marginTop: 2 }}>
@@ -194,78 +231,12 @@ function LatestTestSection({ latestTest }) {
           </div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--muted)' }}>Question Analysis</span>
           <span style={{ fontSize: '1.1rem', fontWeight: 700, color: gc.color }}>{latestTest.percentage}%</span>
           <span style={{ background: gc.bg, color: gc.color, fontWeight: 700, fontSize: '0.8rem', padding: '3px 10px', borderRadius: 6 }}>
             {letterGrade(latestTest.percentage)}
           </span>
         </div>
       </div>
-
-      {questions.length > 0 ? (
-        hasSectionData ? (
-          /* Section-grouped 2-column layout */
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, alignItems: 'start' }}>
-            {/* Left col: EN sections 1 & 2 */}
-            <div>
-              {enSections.map((s) => (
-                <SectionTable key={s} section={s} questions={sectionMap[s]} />
-              ))}
-            </div>
-            {/* Right col: MA sections 3 & 4 */}
-            <div>
-              {maSections.map((s) => (
-                <SectionTable key={s} section={s} questions={sectionMap[s]} />
-              ))}
-              {/* Any sections outside 1-4 overflow to right col */}
-              {otherSections.map((s) => (
-                <SectionTable key={s} section={s} questions={sectionMap[s]} />
-              ))}
-            </div>
-          </div>
-        ) : (
-          /* Fallback: flat 2-column split — continue numbering across columns */
-          (() => {
-            const half = Math.ceil(questions.length / 2);
-            const cols = [
-              { items: questions.slice(0, half), startIdx: 0 },
-              { items: questions.slice(half), startIdx: half },
-            ];
-            return (
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                {cols.map((col, ci) => (
-                  <table key={ci} style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
-                    <thead>
-                      <tr style={{ background: '#f1f5ff' }}>
-                        <th style={thStyle}>Section - Q</th>
-                        <th style={thStyle}>Category</th>
-                        <th style={{ ...thStyle, textAlign: 'center' }}>Correct?</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {col.items.map((q, i) => (
-                        <tr key={i} style={{ borderBottom: '1px solid var(--border)', background: i % 2 === 0 ? '#fff' : '#fafbff' }}>
-                          <td style={tdStyle}>{`Q${q.question_number || col.startIdx + i + 1}`}</td>
-                          <td style={tdStyle}>{q.category_name || '—'}</td>
-                          <td style={{ ...tdStyle, textAlign: 'center' }}>
-                            {q.correct
-                              ? <span style={{ color: '#15803d', fontWeight: 700, fontSize: '1rem' }}>Yes</span>
-                              : <span style={{ color: '#b91c1c', fontWeight: 700, fontSize: '1rem' }}>No</span>}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                ))}
-              </div>
-            );
-          })()
-        )
-      ) : (
-        <div style={{ fontSize: '0.82rem', color: 'var(--muted)', fontStyle: 'italic' }}>
-          Question-level data not available. Enable "Questions / Responses / Category results" in your ClassMarker webhook settings to see per-question breakdown.
-        </div>
-      )}
     </Card>
   );
 }
@@ -468,7 +439,12 @@ function GroupSection({ group, sheets, onChanged }) {
 }
 
 // ── Main ReportViewer ─────────────────────────────────────────
-export default function ReportViewer({ data, onDownload, downloadLoading, downloadError, downloadSuccess, scoringSheets, onScoringSheetsChanged }) {
+export default function ReportViewer({
+  data, onDownload, downloadLoading, downloadError, downloadSuccess,
+  scoringSheets, onScoringSheetsChanged,
+  contacts, onContactsChange, onSaveContacts, onSendEmail,
+  emailConfigured, emailLoading, emailError, emailSuccess,
+}) {
   const { student, groups, stats, satScores, startDate, endDate, latestTest, categoryPerf, categoryPerfSplit } = data;
   const totalTests = groups.reduce((s, g) => s + g.results.length, 0);
   const totalGroups = groups.length;
@@ -503,8 +479,8 @@ export default function ReportViewer({ data, onDownload, downloadLoading, downlo
         {/* SAT score placeholders */}
         <SATScores satScores={satScores} />
 
-        {/* Overall stats */}
-        <OverallStats stats={stats} totalTests={totalTests} totalGroups={totalGroups} />
+        {/* Full SAT score history — replaces the old Average/Highest/Lowest/Trend strip */}
+        <SatScoreHistory allScores={satScores?.allScores} />
 
         {downloadSuccess && (
           <div style={{ padding: '10px 14px', background: '#f0fdf4', border: '1.5px solid #86efac', borderRadius: 8, color: '#15803d', fontSize: '0.85rem', fontWeight: 500 }}>
@@ -515,6 +491,20 @@ export default function ReportViewer({ data, onDownload, downloadLoading, downlo
           <div style={{ padding: '10px 14px', background: '#fff1f2', border: '1.5px solid #fca5a5', borderRadius: 8, color: '#b91c1c', fontSize: '0.85rem' }}>
             ⚠ {downloadError}
           </div>
+        )}
+
+        {onSendEmail && (
+          <EmailReportPanel
+            studentName={student.name}
+            contacts={contacts}
+            onChange={onContactsChange}
+            onSave={onSaveContacts}
+            onSend={onSendEmail}
+            configured={emailConfigured}
+            loading={emailLoading}
+            error={emailError}
+            success={emailSuccess}
+          />
         )}
       </div>
 

@@ -41,6 +41,9 @@ export default function ReportPage() {
     downloadLoading, downloadError, downloadSuccess,
     handlePreview, handleDownload,
     scoringSheets, refreshScoringSheets,
+    contacts, updateContacts, saveContacts,
+    emailConfigured, emailLoading, emailError, emailSuccess,
+    handleEmail,
     isValid,
   } = useGenerateReport();
 
@@ -111,6 +114,14 @@ export default function ReportPage() {
               await refreshScoringSheets();
               await handlePreview();
             }}
+            contacts={contacts}
+            onContactsChange={updateContacts}
+            onSaveContacts={saveContacts}
+            onSendEmail={handleEmail}
+            emailConfigured={emailConfigured}
+            emailLoading={emailLoading}
+            emailError={emailError}
+            emailSuccess={emailSuccess}
           />
         )}
 

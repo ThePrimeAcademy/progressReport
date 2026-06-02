@@ -1,6 +1,15 @@
 // features/report/hooks/useGenerateReport.js
 import { useState, useEffect, useCallback } from 'react';
-import { fetchStudents, previewReport, downloadReport, listScoringSheets } from '../api/reportApi.js';
+import {
+  fetchStudents,
+  previewReport,
+  downloadReport,
+  listScoringSheets,
+  fetchStudentContacts,
+  saveStudentContacts,
+  fetchEmailStatus,
+  emailReport,
+} from '../api/reportApi.js';
 import { downloadFile } from '../../../utils/downloadFile.js';
 
 export function useGenerateReport() {
@@ -22,6 +31,13 @@ export function useGenerateReport() {
   const [downloadSuccess, setDownloadSuccess] = useState(false);
 
   const [scoringSheets, setScoringSheets] = useState({});
+
+  const [contacts, setContacts] = useState({ studentEmail: '', parentEmail: '' });
+  const [contactsLoading, setContactsLoading] = useState(false);
+  const [emailConfigured, setEmailConfigured] = useState(false);
+  const [emailLoading, setEmailLoading] = useState(false);
+  const [emailError, setEmailError] = useState(null);
+  const [emailSuccess, setEmailSuccess] = useState(null);
 
   const refreshScoringSheets = useCallback(async () => {
     try {
@@ -49,8 +65,27 @@ export function useGenerateReport() {
     }
     load();
     refreshScoringSheets();
+    fetchEmailStatus()
+      .then((s) => setEmailConfigured(Boolean(s?.configured)))
+      .catch(() => setEmailConfigured(false));
     return () => { cancelled = true; };
   }, [refreshScoringSheets]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setEmailError(null);
+    setEmailSuccess(null);
+    if (!selectedStudentId) {
+      setContacts({ studentEmail: '', parentEmail: '' });
+      return;
+    }
+    setContactsLoading(true);
+    fetchStudentContacts(selectedStudentId)
+      .then((c) => { if (!cancelled) setContacts({ studentEmail: c?.studentEmail || '', parentEmail: c?.parentEmail || '' }); })
+      .catch(() => { if (!cancelled) setContacts({ studentEmail: '', parentEmail: '' }); })
+      .finally(() => { if (!cancelled) setContactsLoading(false); });
+    return () => { cancelled = true; };
+  }, [selectedStudentId]);
 
   useEffect(() => {
     setPreviewData(null);
@@ -98,6 +133,42 @@ export function useGenerateReport() {
     }
   }, [selectedStudentId, startDate, endDate, dayOfWeek]);
 
+  const updateContacts = useCallback((patch) => {
+    setContacts((c) => ({ ...c, ...patch }));
+    setEmailSuccess(null);
+    setEmailError(null);
+  }, []);
+
+  const saveContacts = useCallback(async () => {
+    if (!selectedStudentId) return;
+    await saveStudentContacts(selectedStudentId, contacts);
+  }, [selectedStudentId, contacts]);
+
+  const handleEmail = useCallback(async () => {
+    setEmailError(null);
+    setEmailSuccess(null);
+    setEmailLoading(true);
+    try {
+      const result = await emailReport({
+        studentId: selectedStudentId,
+        startDate,
+        endDate,
+        dayOfWeek: dayOfWeek || undefined,
+        studentEmail: contacts.studentEmail || '',
+        parentEmail: contacts.parentEmail || '',
+      });
+      setEmailSuccess(
+        result?.to?.length
+          ? `Sent to ${result.to.join(', ')}`
+          : 'Email sent.'
+      );
+    } catch (err) {
+      setEmailError(err.message);
+    } finally {
+      setEmailLoading(false);
+    }
+  }, [selectedStudentId, startDate, endDate, dayOfWeek, contacts]);
+
   const isValid =
     selectedStudentId !== '' &&
     startDate !== '' &&
@@ -114,6 +185,9 @@ export function useGenerateReport() {
     downloadLoading, downloadError, downloadSuccess,
     handlePreview, handleDownload,
     scoringSheets, refreshScoringSheets,
+    contacts, updateContacts, saveContacts, contactsLoading,
+    emailConfigured, emailLoading, emailError, emailSuccess,
+    handleEmail,
     isValid,
   };
 }

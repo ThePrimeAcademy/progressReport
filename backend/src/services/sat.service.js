@@ -100,6 +100,7 @@ async function getSatScoresForStudent(student) {
     latestMathScore: null,
     superScore: null,
     source: null,
+    allScores: [],
   };
   if (!student) return empty;
 
@@ -127,6 +128,24 @@ async function getSatScoresForStudent(student) {
   const bestMath = buckets.reduce((m, b) => Math.max(m, b.mathScaled || 0), 0);
   const superScore = bestRw > 0 && bestMath > 0 ? bestRw + bestMath : null;
 
+  // Full per-attempt history, newest first. Only include buckets that have at
+  // least one section graded — otherwise an empty SAT group would render a
+  // ghost card with all dashes.
+  const allScores = anyGraded
+    .slice()
+    .sort((a, b) => b.latestFinished - a.latestFinished)
+    .map((b) => ({
+      groupId: b.groupId,
+      groupName: b.groupName,
+      total: b.total,
+      english: b.rwScaled,
+      math: b.mathScaled,
+      date: b.latestFinished
+        ? new Date(b.latestFinished * 1000).toISOString().split('T')[0]
+        : null,
+      timeFinished: b.latestFinished || null,
+    }));
+
   return {
     latestTestLabel: latest?.groupName ?? null,
     latestTestScore: latest?.total ?? null,
@@ -134,6 +153,7 @@ async function getSatScoresForStudent(student) {
     latestMathScore: latest?.mathScaled ?? null,
     superScore,
     source: latest || superScore ? 'curve' : null,
+    allScores,
   };
 }
 
