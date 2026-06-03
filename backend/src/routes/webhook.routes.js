@@ -159,6 +159,74 @@ router.post('/classmarker/backfill-categories', async (req, res, next) => {
   }
 });
 
+// ── Export for cmReview ───────────────────────────────────────
+// GET /api/webhooks/classmarker/export?since=<ISO receivedAt>&limit=200&offset=0
+// Token-protected full export of stored webhook results, with per-question
+// detail (question text, options, correct answer, student response) merged
+// in from the raw ClassMarker payload. Consumed by the cmReview tool.
+router.get('/classmarker/export', async (req, res, next) => {
+  try {
+    const crypto = require('crypto');
+    const token = process.env.EXPORT_TOKEN;
+    if (!token) return res.status(503).json({ error: 'EXPORT_TOKEN not configured on server' });
+
+    const provided = (req.get('authorization') || '').replace(/^Bearer\s+/i, '') || req.get('x-export-token') || '';
+    const a = Buffer.from(String(provided));
+    const b = Buffer.from(String(token));
+    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+      return res.status(401).json({ error: 'Invalid export token' });
+    }
+
+    const since = req.query.since ? String(req.query.since) : null;
+    const limit = Math.min(Number(req.query.limit) || 200, 500);
+    const offset = Math.max(Number(req.query.offset) || 0, 0);
+
+    let records = await db.getAllRecords();
+    if (since) records = records.filter((r) => (r.received_at || '') > since);
+    records.sort((x, y) => String(x.received_at || '').localeCompare(String(y.received_at || '')));
+
+    const total = records.length;
+    const page = records.slice(offset, offset + limit);
+
+    const exportRecords = page.map((r) => {
+      const rawQuestions = Array.isArray(r.raw?.questions) ? r.raw.questions : [];
+      const questions = (r.questions || []).map((q, i) => {
+        const raw = rawQuestions.find((rq) => String(rq.question_id) === String(q.questionId)) || rawQuestions[i] || {};
+        return {
+          ...q,
+          question: raw.question ?? null,
+          options: raw.options ?? null,
+          correctOption: raw.correct_option ?? null,
+          userResponse: raw.user_response ?? null,
+          feedback: raw.feedback ?? null,
+        };
+      });
+      return {
+        recordKey: r.record_key,
+        userId: r.user_id,
+        email: r.email,
+        name: r.name,
+        testId: r.test_id,
+        testName: r.test_name,
+        groupId: r.group_id,
+        groupName: r.group_name,
+        percentage: r.percentage,
+        score: r.score,
+        maxScore: r.max_score,
+        passed: r.passed,
+        duration: r.duration,
+        timeStarted: r.time_started,
+        timeFinished: r.time_finished,
+        date: r.date,
+        receivedAt: r.received_at,
+        questions,
+      };
+    });
+
+    res.json({ total, offset, limit, count: exportRecords.length, records: exportRecords });
+  } catch (e) { next(e); }
+});
+
 // ── Receive webhook (must be last — uses raw body parser) ─────
 router.post(
   '/classmarker',
