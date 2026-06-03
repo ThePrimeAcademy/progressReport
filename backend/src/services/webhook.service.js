@@ -131,6 +131,33 @@ function selectLatestSatExamRecords(records) {
   });
 }
 
+// When a test is re-categorized on ClassMarker, attempts taken BEFORE the
+// change keep their original category ids/names forever (webhook payloads are
+// snapshots). The live category map only fixes renames of the SAME category id
+// — not questions moved to different categories. So for display, take each
+// question's category from the most recently *taken* attempt anywhere in the
+// store (any student). Keyed per test to avoid cross-test id collisions.
+function computeLatestQuestionCategories(records) {
+  const latest = new Map(); // `${testId}:${questionId}` → { takenAt, categoryId, categoryName }
+  for (const record of records || []) {
+    const takenAt = record.timeFinished || 0;
+    const testId = record.test?.testId ?? record.test_id ?? '';
+    for (const q of record.questions || []) {
+      if (q.questionId == null || (q.categoryId == null && !q.categoryName)) continue;
+      const key = `${testId}:${q.questionId}`;
+      const prev = latest.get(key);
+      if (!prev || takenAt >= prev.takenAt) {
+        latest.set(key, { takenAt, categoryId: q.categoryId, categoryName: q.categoryName });
+      }
+    }
+  }
+  return latest;
+}
+
+async function getLatestQuestionCategories() {
+  return computeLatestQuestionCategories(await db.getAllRecords());
+}
+
 async function getWebhookCategoryPerformance(student, startDate, endDate, dayOfWeek) {
   const allRecords = await findMatchingRecords(student, startDate, endDate, dayOfWeek);
   const records = selectLatestSatExamRecords(allRecords);
@@ -162,6 +189,9 @@ async function getWebhookCategoryPerformanceSplit(student, startDate, endDate, d
   // Resolve names from the live ClassMarker category map so renames are
   // reflected without requiring students to retake tests.
   await fetchCategoryMap();
+  // Re-categorizations: prefer the category from the latest attempt of each
+  // question (any student) over this student's possibly-stale snapshot.
+  const latestCats = await getLatestQuestionCategories();
   const resolveName = (id, stored) => {
     const current = id ? getCategoryName(id) : null;
     return (current || stored || '').trim();
@@ -177,11 +207,13 @@ async function getWebhookCategoryPerformanceSplit(student, startDate, endDate, d
   for (const record of records) {
     const testName = record.test?.testName ?? record.test_name ?? null;
     const groupName = record.group?.groupName ?? record.group_name ?? null;
+    const testId = record.test?.testId ?? record.test_id ?? '';
     const questions = record.questions || [];
     const recordSection = deriveTestSection(testName, groupName, questions);
 
     for (const q of questions) {
-      const name = resolveName(q.categoryId, q.categoryName);
+      const cur = latestCats.get(`${testId}:${q.questionId}`);
+      const name = resolveName(cur?.categoryId ?? q.categoryId, cur?.categoryName ?? q.categoryName);
       if (!name || name === 'Unknown') continue;
 
       const qSec = Number(q.sectionNumber);
@@ -213,6 +245,12 @@ async function getLatestWebhookTestResult(student, startDate, endDate, dayOfWeek
   const latest = records[0];
   if (!latest) return null;
 
+  // Show current categories even if this student's attempt predates a
+  // re-categorization — see computeLatestQuestionCategories.
+  await fetchCategoryMap();
+  const latestCats = await getLatestQuestionCategories();
+  const testId = latest.test?.testId ?? latest.test_id ?? '';
+
   return {
     testName: latest.test?.testName || `Test #${latest.test?.testId}`,
     groupName: latest.group?.groupName || latest.link?.linkName || 'Webhook Result',
@@ -223,12 +261,18 @@ async function getLatestWebhookTestResult(student, startDate, endDate, dayOfWeek
     duration: latest.duration,
     date: latest.date,
     categoryResults: latest.categoryResults,
-    questions: (latest.questions || []).map((q) => ({
-      section_number: q.sectionNumber,
-      question_number: q.questionNumber,
-      category_name: q.categoryName,
-      correct: q.correct,
-    })),
+    questions: (latest.questions || []).map((q) => {
+      const cur = latestCats.get(`${testId}:${q.questionId}`);
+      const categoryId = cur?.categoryId ?? q.categoryId;
+      const categoryName = (categoryId ? getCategoryName(categoryId) : null)
+        || cur?.categoryName || q.categoryName;
+      return {
+        section_number: q.sectionNumber,
+        question_number: q.questionNumber,
+        category_name: categoryName,
+        correct: q.correct,
+      };
+    }),
   };
 }
 
@@ -240,6 +284,7 @@ async function getWebhookStoreSummary() {
 }
 
 module.exports = {
+  computeLatestQuestionCategories,
   getLatestWebhookTestResult,
   getWebhookCategoryPerformance,
   getWebhookCategoryPerformanceSplit,
