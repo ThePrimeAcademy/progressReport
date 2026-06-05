@@ -124,8 +124,10 @@ const SAT_EXAM_WINDOW_SECONDS = 24 * 3600;
 function selectLatestSatExamRecords(records) {
   const examMap = getTestSectionMap();
   const recordTestId = (r) => String(r.test?.testId ?? r.test_id ?? '');
+  const isHiddenFromExam = (r) =>
+    examMap.get(recordTestId(r))?.hidden?.has(String(r.student?.userId ?? r.user_id ?? ''));
 
-  const examCandidates = records.filter((r) => examMap.has(recordTestId(r)));
+  const examCandidates = records.filter((r) => examMap.has(recordTestId(r)) && !isHiddenFromExam(r));
   const legacyCandidates = records.filter((r) => {
     if (examMap.has(recordTestId(r))) return false;
     const gn = r.group?.groupName ?? r.group_name ?? null;

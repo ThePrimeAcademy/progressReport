@@ -444,17 +444,20 @@ async function getKnownTests() {
   return Array.from(tests.values()).map((t) => ({ ...t, groups: Array.from(t.groups.values()) }));
 }
 
-// user_ids (as strings) with at least one cached API result on any of the
-// given testIds. Complements the webhook store for exam-taker lookups.
+// Map of user_id (string) → display name for everyone with at least one
+// cached API result on any of the given testIds. Complements the webhook
+// store for exam-taker lookups.
 async function getTakersForTests(testIdSet) {
   const { results } = await fetchAllResults();
-  const ids = new Set();
+  const takers = new Map();
   for (const r of results) {
-    if (r.test_id != null && testIdSet.has(String(r.test_id)) && r.user_id != null) {
-      ids.add(String(r.user_id));
+    if (r.test_id == null || !testIdSet.has(String(r.test_id)) || r.user_id == null) continue;
+    const id = String(r.user_id);
+    if (!takers.has(id)) {
+      takers.set(id, `${r.first || ''} ${r.last || ''}`.trim() || r.email || `User ${id}`);
     }
   }
-  return ids;
+  return takers;
 }
 
 // Set of ClassMarker user_ids that have at least one finished test inside

@@ -122,9 +122,9 @@ router.get('/available-tests', async (req, res, next) => {
 });
 
 // GET /api/exams/:examId/takers
-// ClassMarker user_ids of every student with at least one attempt on any of
-// the exam's tests (webhook store + API cache). Used by the report page to
-// exclude students who already took an exam.
+// Every student with at least one attempt on any of the exam's tests
+// (webhook store + API cache), as { id, name } pairs. Feeds the per-exam
+// hidden-students picker in the UI.
 router.get('/:examId/takers', async (req, res, next) => {
   try {
     const exam = exams.getExam(req.params.examId);
@@ -133,41 +133,50 @@ router.get('/:examId/takers', async (req, res, next) => {
     const testIds = new Set(
       Object.values(exam.sections || {}).filter(Boolean).map((s) => String(s.testId))
     );
-    const ids = new Set();
+    const takers = new Map(); // id → name
 
     for (const r of await db.getAllRecords()) {
       const tid = String(r.test?.testId ?? r.test_id ?? '');
       if (!testIds.has(tid)) continue;
       const uid = r.student?.userId ?? r.user_id;
-      if (uid != null) ids.add(String(uid));
+      if (uid == null) continue;
+      const id = String(uid);
+      if (!takers.has(id)) {
+        takers.set(id, r.student?.name || r.name || r.student?.email || r.email || `User ${id}`);
+      }
     }
     try {
-      for (const uid of await getTakersForTests(testIds)) ids.add(uid);
+      for (const [id, name] of await getTakersForTests(testIds)) {
+        if (!takers.has(id)) takers.set(id, name);
+      }
     } catch (e) {
       console.warn('[exams] API-cache takers unavailable:', e.message);
     }
 
-    res.json({ success: true, data: Array.from(ids) });
+    const data = Array.from(takers.entries())
+      .map(([id, name]) => ({ id, name }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+    res.json({ success: true, data });
   } catch (err) {
     next(err);
   }
 });
 
-// POST /api/exams — body: { name, sections: { "1": { testId, testName } | null, ... } }
+// POST /api/exams — body: { name, sections: { "1": { testId, testName } | null, ... }, hiddenStudentIds? }
 router.post('/', (req, res, next) => {
   try {
-    const { name, sections } = req.body || {};
-    res.json({ success: true, data: exams.createExam({ name, sections }) });
+    const { name, sections, hiddenStudentIds } = req.body || {};
+    res.json({ success: true, data: exams.createExam({ name, sections, hiddenStudentIds }) });
   } catch (err) {
     next(err);
   }
 });
 
-// PUT /api/exams/:examId — rename and/or re-map sections.
+// PUT /api/exams/:examId — rename, re-map sections and/or set hidden students.
 router.put('/:examId', (req, res, next) => {
   try {
-    const { name, sections } = req.body || {};
-    res.json({ success: true, data: exams.updateExam(req.params.examId, { name, sections }) });
+    const { name, sections, hiddenStudentIds } = req.body || {};
+    res.json({ success: true, data: exams.updateExam(req.params.examId, { name, sections, hiddenStudentIds }) });
   } catch (err) {
     next(err);
   }

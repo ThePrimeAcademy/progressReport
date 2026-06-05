@@ -70,6 +70,10 @@ function gradeRecordsByGroup(records) {
   for (const r of records) {
     const testId = String(r.test?.testId ?? r.test_id ?? '');
     if (testId && examMap.has(testId)) {
+      // Per-exam hidden students: their attempts on the exam's tests are
+      // ignored entirely (not even legacy-bucketed — the exam owns the test).
+      const uid = String(r.student?.userId ?? r.user_id ?? '');
+      if (examMap.get(testId).hidden?.has(uid)) continue;
       const prev = latestExamAttempts.get(testId);
       if (!prev || (r.timeFinished || 0) > (prev.timeFinished || 0)) {
         latestExamAttempts.set(testId, r);
@@ -180,6 +184,7 @@ async function getSatScoresForStudent(student) {
         for (const r of g.results) {
           const tid = String(r.testId ?? '');
           if (!tid || !examMap.has(tid) || covered.has(tid)) continue;
+          if (examMap.get(tid).hidden?.has(String(student.id))) continue;
           records.push({
             test: { testId: tid, testName: r.testName },
             group: { groupId: g.groupId, groupName: g.groupName },
