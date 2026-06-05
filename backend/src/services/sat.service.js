@@ -12,7 +12,7 @@
 
 const db = require('./db.service');
 const { getCurve, gradeScaled } = require('./scoring-sheet.service');
-const { getTestSectionMap, examCurveKey, getExam } = require('./exam.service');
+const { getTestSectionMap, examCurveKey, getExam, listExams } = require('./exam.service');
 const { getStudentResultsGrouped, getResultsForTests } = require('./classmarker.service');
 
 // Only groups whose name contains "SAT" (case-insensitive) participate in SAT
@@ -144,6 +144,31 @@ function applyCurves(bucket) {
   return { ...bucket, mathScaled, rwScaled, total };
 }
 
+// Empty history cards for exams the student is rostered on but has no
+// graded score for yet — upcoming/placeholder exams appear on the report
+// with their scheduled date and dashes, so families see what's coming.
+function rosterPlaceholders(student, gradedKeys) {
+  const sid = String(student?.id || '');
+  if (!sid || sid.startsWith('sheets:')) return [];
+  const placeholders = [];
+  for (const exam of listExams()) {
+    const key = examCurveKey(exam.examId);
+    if (gradedKeys.has(key)) continue;
+    if (!(exam.studentIds || []).includes(sid)) continue;
+    if ((exam.hiddenStudentIds || []).includes(sid)) continue;
+    placeholders.push({
+      groupId: key,
+      groupName: exam.name,
+      total: null,
+      english: null,
+      math: null,
+      date: exam.date || null,
+      timeFinished: exam.date ? Math.floor(new Date(exam.date).getTime() / 1000) : null,
+    });
+  }
+  return placeholders;
+}
+
 async function getSatScoresForStudent(student) {
   const empty = {
     latestTestLabel: null,
@@ -152,9 +177,9 @@ async function getSatScoresForStudent(student) {
     latestMathScore: null,
     superScore: null,
     source: null,
-    allScores: [],
+    allScores: rosterPlaceholders(student, new Set()),
   };
-  if (!student) return empty;
+  if (!student) return { ...empty, allScores: [] };
 
   // Pull every webhook record for this student (wide date window — the SQL
   // filter is timestamp-bounded but we want all-time for super-score purposes).
@@ -222,11 +247,11 @@ async function getSatScoresForStudent(student) {
   const superScore = bestRw > 0 && bestMath > 0 ? bestRw + bestMath : null;
 
   // Full per-attempt history, OLDEST FIRST (reads left → right in the UI and
-  // PDF). Only include buckets that have at least one section graded —
-  // otherwise an empty SAT group would render a ghost card with all dashes.
+  // PDF). Attempt-derived cards need at least one graded section — otherwise
+  // an empty SAT group would render a ghost card — but rostered exams the
+  // student hasn't been scored on yet ARE shown as deliberate placeholders.
   const allScores = anyGraded
     .slice()
-    .sort((a, b) => a.latestFinished - b.latestFinished)
     .map((b) => ({
       groupId: b.groupId,
       groupName: b.groupName,
@@ -238,6 +263,9 @@ async function getSatScoresForStudent(student) {
         : null,
       timeFinished: b.latestFinished || null,
     }));
+  allScores.push(...rosterPlaceholders(student, new Set(allScores.map((s) => s.groupId))));
+  // Dated placeholders sort into position; undated ones go last (upcoming).
+  allScores.sort((a, b) => (a.timeFinished ?? Infinity) - (b.timeFinished ?? Infinity));
 
   return {
     latestTestLabel: latest?.groupName ?? null,
