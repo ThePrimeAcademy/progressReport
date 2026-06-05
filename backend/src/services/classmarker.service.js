@@ -7,27 +7,44 @@ const API_KEY = process.env.CLASSMARKER_API_KEY;
 const API_SECRET = process.env.CLASSMARKER_API_SECRET;
 const BASE_URL = 'https://api.classmarker.com/v1';
 
-const CACHE_FILE = path.join(__dirname, '../../cache.json');
+// ClassMarker allows only 30 API requests per HOUR, so every request counts:
+//   - the cache persists on the DATA_DIR volume and survives redeploys
+//   - a stale cache refreshes INCREMENTALLY (finishedAfter newest cached
+//     result — normally a single request) instead of re-pulling 85 days
+//   - concurrent callers share one in-flight fetch
+//   - a failed refresh serves the stale cache and backs off instead of
+//     leaving the app dataless and hammering the API
+const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '../../data');
+const CACHE_FILE = path.join(DATA_DIR, 'classmarker-cache.json');
+const LEGACY_CACHE_FILE = path.join(__dirname, '../../cache.json');
 const CACHE_TTL = 55 * 60 * 1000;
+const FETCH_FAILURE_BACKOFF_MS = 10 * 60 * 1000;
+const WINDOW_DAYS = 85;
+const INCREMENTAL_OVERLAP_SECONDS = 3600;
+const PAGE_CAP = 30;
 
 function loadCache() {
-  try {
-    if (fs.existsSync(CACHE_FILE)) {
-      const raw = fs.readFileSync(CACHE_FILE, 'utf-8');
-      const data = JSON.parse(raw);
-      if (Date.now() - data.cacheTime < CACHE_TTL) {
-        console.log('Loaded cache from file.');
-        return data;
+  // Any age is acceptable — stale data beats no data, and the incremental
+  // refresh catches up cheaply on the first fetchAllResults call.
+  for (const file of [CACHE_FILE, LEGACY_CACHE_FILE]) {
+    try {
+      if (fs.existsSync(file)) {
+        const data = JSON.parse(fs.readFileSync(file, 'utf-8'));
+        if (Array.isArray(data.results)) {
+          console.log(`Loaded cache from ${path.basename(file)} (${data.results.length} results).`);
+          return data;
+        }
       }
+    } catch (e) {
+      console.log(`Cache file ${path.basename(file)} unreadable, skipping.`);
     }
-  } catch (e) {
-    console.log('Cache file unreadable, will re-fetch.');
   }
   return null;
 }
 
 function saveCache(data) {
   try {
+    if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
     // Keep the original cacheTime when present — webhook merges re-save the
     // cache but must not push back the 55-min API reconcile window.
     fs.writeFileSync(CACHE_FILE, JSON.stringify({ cacheTime: Date.now(), ...data }));
@@ -108,37 +125,29 @@ function authParams() {
   return `api_key=${API_KEY}&signature=${signature}&timestamp=${timestamp}`;
 }
 
-async function fetchAllResults() {
-  if (memCache && (Date.now() - memCache.cacheTime) < CACHE_TTL) {
-    console.log('Using cached results.');
-    return memCache;
-  }
+async function fetchResultsPage(finishedAfterTimestamp) {
+  const res = await fetch(
+    `${BASE_URL}/groups/recent_results.json?${authParams()}&finishedAfterTimestamp=${finishedAfterTimestamp}&limit=200`
+  );
+  if (!res.ok) throw new Error(`ClassMarker HTTP error: ${res.status}`);
+  const data = await res.json();
+  if (data.status === 'error') throw new Error(`ClassMarker: ${data.error.error_message}`);
+  return data;
+}
 
-  const finishedAfterTimestamp = Math.floor(Date.now() / 1000) - (85 * 24 * 60 * 60);
+const resultKey = (r) =>
+  r.pk_id != null ? `pk:${r.pk_id}` : `${r.user_id}:${r.test_id}:${r.time_finished}`;
 
-  let allResults = [];
-  const groupMap = {};
-  const testMap = {};
-  let currentTimestamp = finishedAfterTimestamp;
+// Paginate from `fromTimestamp` forward, upserting into the provided
+// containers. Returns the number of pages fetched.
+async function paginateResults(fromTimestamp, byKey, groupMap, testMap) {
+  let currentTimestamp = fromTimestamp;
   let page = 0;
-
   while (true) {
     page++;
     console.log(`Fetching page ${page}…`);
-
-    const res = await fetch(
-      `${BASE_URL}/groups/recent_results.json?${authParams()}&finishedAfterTimestamp=${currentTimestamp}&limit=200`
-    );
-    if (!res.ok) throw new Error(`ClassMarker HTTP error: ${res.status}`);
-    const data = await res.json();
-
-    if (data.status === 'error') throw new Error(`ClassMarker: ${data.error.error_message}`);
+    const data = await fetchResultsPage(currentTimestamp);
     if (data.status === 'no_results' || !data.results) break;
-
-    // Log first result in full on first page to see all available fields
-    if (page === 1 && data.results.length > 0) {
-      console.log('SAMPLE RESULT FIELDS:', JSON.stringify(data.results[0], null, 2));
-    }
 
     for (const g of (data.groups || [])) {
       const grp = g.group || g;
@@ -148,29 +157,72 @@ async function fetchAllResults() {
       const tst = t.test || t;
       if (tst.test_id) testMap[String(tst.test_id)] = tst.test_name;
     }
-
-    allResults = allResults.concat(data.results.map((r) => r.result || r));
+    for (const raw of data.results) {
+      const r = raw.result || raw;
+      byKey.set(resultKey(r), r);
+    }
 
     if (!data.more_results_exist || !data.next_finished_after_timestamp) break;
-    // Safety cap only. Pagination walks forward in time from 85 days ago, so
-    // stopping early silently drops the NEWEST results once the account has
-    // more than pageLimit×200 results in the window (the old cap of 3 pages /
-    // 600 results did exactly that once the summer program ramped up).
-    if (page >= 30) {
+    // Safety cap only — pagination walks forward in time, so stopping early
+    // would silently drop the NEWEST results.
+    if (page >= PAGE_CAP) {
       console.warn(`[classmarker] Page cap hit at ${page} pages — newest results may be missing`);
       break;
     }
-
     currentTimestamp = data.next_finished_after_timestamp;
   }
+  return page;
+}
 
-  console.log(`Fetched ${allResults.length} results | ${Object.keys(groupMap).length} groups | ${Object.keys(testMap).length} tests`);
+let inflightFetch = null;
 
-  memCache = { results: allResults, groupMap, testMap, cacheTime: Date.now() };
-  dataVersion++;
-  saveCache(memCache);
+async function fetchAllResults() {
+  if (memCache && (Date.now() - memCache.cacheTime) < CACHE_TTL) {
+    return memCache;
+  }
+  // One fetch at a time — concurrent cold callers used to each fire their own
+  // full pagination, burning through the 30 req/hour budget in one page load.
+  if (inflightFetch) return inflightFetch;
 
-  return memCache;
+  inflightFetch = (async () => {
+    const windowStart = Math.floor(Date.now() / 1000) - WINDOW_DAYS * 24 * 3600;
+    try {
+      const byKey = new Map();
+      const groupMap = { ...(memCache?.groupMap || {}) };
+      const testMap = { ...(memCache?.testMap || {}) };
+      let from = windowStart;
+
+      if (memCache) {
+        // Incremental: only pull results newer than the cache (small overlap
+        // for clock skew / late arrivals). Usually a single request.
+        for (const r of memCache.results) byKey.set(resultKey(r), r);
+        const newest = memCache.results.reduce((m, r) => Math.max(m, r.time_finished || 0), 0);
+        if (newest > 0) from = Math.max(newest - INCREMENTAL_OVERLAP_SECONDS, windowStart);
+      }
+
+      const pages = await paginateResults(from, byKey, groupMap, testMap);
+      const results = Array.from(byKey.values())
+        .filter((r) => (r.time_finished || 0) >= windowStart);
+      console.log(`[classmarker] ${memCache ? 'Incremental' : 'Full'} refresh: ${pages} page(s), ${results.length} results in window`);
+
+      memCache = { results, groupMap, testMap, cacheTime: Date.now() };
+      dataVersion++;
+      saveCache(memCache);
+      return memCache;
+    } catch (e) {
+      if (memCache) {
+        // Serve stale data and back off — a rate-limited refresh must never
+        // leave the app dataless or retry on every request.
+        console.error('[classmarker] Refresh failed — serving stale cache:', e.message);
+        memCache.cacheTime = Date.now() - CACHE_TTL + FETCH_FAILURE_BACKOFF_MS;
+        return memCache;
+      }
+      throw e;
+    } finally {
+      inflightFetch = null;
+    }
+  })();
+  return inflightFetch;
 }
 
 // Splice a just-received webhook result into the cached ClassMarker results so
@@ -517,8 +569,10 @@ module.exports = {
 };
 
 // Pre-warm cache on startup
-fetchAllResults().catch((err) => console.error('Initial fetch failed:', err));
+fetchAllResults().catch((err) => console.error('Initial fetch failed:', err.message));
 setInterval(() => {
-  memCache = null;
-  fetchAllResults().catch((err) => console.error('Refresh failed:', err));
+  // Mark stale (don't discard!) so the next fetch refreshes incrementally —
+  // and a failed refresh still has the old data to serve.
+  if (memCache) memCache.cacheTime = 0;
+  fetchAllResults().catch((err) => console.error('Refresh failed:', err.message));
 }, 55 * 60 * 1000);
