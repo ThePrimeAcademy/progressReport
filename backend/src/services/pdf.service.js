@@ -243,7 +243,7 @@ function buildSatHistorySection(allScores) {
   const cards = allScores.map((s) => {
     const accent = s.total != null ? '#1a56db' : '#6b7280';
     return `
-      <div style="flex:1;min-width:150px;background:#fafbff;border:1px solid var(--border);border-radius:10px;padding:12px 14px;">
+      <div style="flex:1 1 0;min-width:0;background:#fafbff;border:1px solid var(--border);border-radius:10px;padding:10px 12px;">
         <div style="font-size:0.7rem;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:0.07em;margin-bottom:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
           ${escapeHtml(s.groupName || 'SAT')}
         </div>
@@ -251,7 +251,8 @@ function buildSatHistorySection(allScores) {
         <div style="font-size:0.7rem;color:var(--muted);margin-top:5px;">RW ${s.english ?? '—'} &middot; M ${s.math ?? '—'} ${s.date ? `&middot; ${escapeHtml(s.date)}` : ''}</div>
       </div>`;
   }).join('');
-  return `<div style="display:flex;gap:10px;flex-wrap:wrap;margin:0 0 18px;">${cards}</div>`;
+  // Single row — cards shrink to fit however many exams there are.
+  return `<div style="display:flex;gap:8px;flex-wrap:nowrap;margin:0 0 18px;">${cards}</div>`;
 }
 
 function buildTestRows(groups) {

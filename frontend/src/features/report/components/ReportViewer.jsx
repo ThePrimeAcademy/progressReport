@@ -81,19 +81,20 @@ function SatScoreHistory({ allScores }) {
   if (!allScores || allScores.length === 0) return null;
 
   return (
-    <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 24 }}>
+    // Single row — cards shrink to fit however many exams there are.
+    <div style={{ display: 'flex', gap: 8, flexWrap: 'nowrap', marginBottom: 24 }}>
       {allScores.map((s) => {
         const accent = s.total != null ? '#1a56db' : '#6b7280';
         return (
           <div
             key={s.groupId}
             style={{
-              flex: 1,
-              minWidth: 150,
+              flex: '1 1 0',
+              minWidth: 0,
               background: '#fafbff',
               border: '1.5px solid var(--border)',
               borderRadius: 10,
-              padding: '14px 16px',
+              padding: '12px 12px',
             }}
           >
             <div

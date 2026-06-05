@@ -129,6 +129,65 @@ function ScoreboardPanel({ exam, onError }) {
   );
 }
 
+// Per-exam roster editor — pick the students taking this exam from the full
+// student list. Opens from the "N students" chip on the exam row.
+function RosterPanel({ exam, roster, onSaved, onError }) {
+  const [selected, setSelected] = useState(() => new Set(exam.studentIds || []));
+  const [search, setSearch] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const filtered = roster.filter(
+    (st) => !search || st.name.toLowerCase().includes(search.toLowerCase())
+  );
+
+  const toggle = (id) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  async function handleSave() {
+    setSaving(true);
+    try {
+      await updateExam(exam.examId, { studentIds: Array.from(selected) });
+      onSaved?.();
+    } catch (err) {
+      onError?.(err.message || 'Failed to save students');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div style={s.hiddenPanel}>
+      <div style={s.hiddenTitle}>Students taking this exam — {selected.size} selected</div>
+      <input
+        style={s.searchInput}
+        value={search}
+        placeholder="Search students…"
+        onChange={(e) => setSearch(e.target.value)}
+      />
+      <div style={s.hiddenList}>
+        {filtered.map((st) => (
+          <label key={st.id} style={s.hiddenRow}>
+            <input type="checkbox" checked={selected.has(st.id)} onChange={() => toggle(st.id)} />
+            {st.name}
+          </label>
+        ))}
+        {filtered.length === 0 && <span style={{ ...s.hint, gridColumn: '1 / -1' }}>No students match.</span>}
+      </div>
+      <div style={s.formActions}>
+        <button type="button" style={s.btn} disabled={saving} onClick={handleSave}>
+          {saving ? 'Saving…' : 'Save Students'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // Per-exam hidden-students editor: lists everyone who took the exam's tests;
 // checked = hidden (their attempts are ignored when scoring this exam).
 function HiddenStudentsPanel({ exam, onSaved, onError }) {
@@ -221,6 +280,10 @@ export default function ExamManager({ onExamsChanged }) {
   const [studentsOpenFor, setStudentsOpenFor] = useState(null);
   // examId whose scoreboard is expanded (one at a time).
   const [scoreboardOpenFor, setScoreboardOpenFor] = useState(null);
+  // examId whose roster panel is expanded (one at a time).
+  const [rosterOpenFor, setRosterOpenFor] = useState(null);
+  // { examId, key } of the section chip currently showing its inline select.
+  const [sectionEditing, setSectionEditing] = useState(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -264,10 +327,8 @@ export default function ExamManager({ onExamsChanged }) {
     return t.groupName === groupName;
   }, []);
 
-  const editingExamId = formMode && formMode !== 'new' ? formMode : null;
-
-  // Tests available for a given section slot: not assigned to another exam and
-  // not already chosen in a different slot of this form.
+  // Tests available for a given section slot of the CREATE form: not assigned
+  // to another exam and not already chosen in a different slot.
   const optionsForSection = useCallback((sectionKey) => {
     const chosenElsewhere = new Set(
       Object.entries(form.sections)
@@ -277,33 +338,16 @@ export default function ExamManager({ onExamsChanged }) {
     return tests.filter((t) => {
       if (!inGroup(t, groupFilter)) return false;
       if (chosenElsewhere.has(t.testId)) return false;
-      if (t.assignedToExamId && t.assignedToExamId !== editingExamId) return false;
+      if (t.assignedToExamId) return false;
       return true;
     });
-  }, [tests, form.sections, groupFilter, editingExamId, inGroup]);
+  }, [tests, form.sections, groupFilter, inGroup]);
 
   function openCreate() {
     setForm(EMPTY_FORM);
     setGroupFilter('');
     setStudentSearch('');
     setFormMode('new');
-  }
-
-  function openEdit(exam) {
-    setForm({
-      name: exam.name,
-      date: exam.date || '',
-      sections: {
-        1: exam.sections?.['1']?.testId || '',
-        2: exam.sections?.['2']?.testId || '',
-        3: exam.sections?.['3']?.testId || '',
-        4: exam.sections?.['4']?.testId || '',
-      },
-      studentIds: exam.studentIds || [],
-    });
-    setGroupFilter('');
-    setStudentSearch('');
-    setFormMode(exam.examId);
   }
 
   const toggleStudent = (id) => {
@@ -325,12 +369,7 @@ export default function ExamManager({ onExamsChanged }) {
         const test = tests.find((t) => t.testId === testId);
         sections[key] = testId ? { testId, testName: test?.testName || null } : null;
       }
-      const payload = { name: form.name, date: form.date, sections, studentIds: form.studentIds };
-      if (formMode === 'new') {
-        await createExam(payload);
-      } else {
-        await updateExam(formMode, payload);
-      }
+      await createExam({ name: form.name, date: form.date, sections, studentIds: form.studentIds });
       setFormMode(null);
       await refresh();
       onExamsChanged?.();
@@ -341,14 +380,65 @@ export default function ExamManager({ onExamsChanged }) {
     }
   }
 
-  // Duplicate carries over the name + student roster, then opens the copy
-  // for editing so the new date/tests can be set immediately.
+  // ── Inline click-to-edit (no edit form): every element on an exam row
+  // saves itself — title and date via prompt, section chips via an inline
+  // select, roster via its panel.
+  async function patchExam(examId, patch) {
+    setError(null);
+    try {
+      await updateExam(examId, patch);
+      await refresh();
+      onExamsChanged?.();
+    } catch (err) {
+      setError(err.response?.data?.error || err.message || 'Failed to update exam');
+    }
+  }
+
+  function renameExam(exam) {
+    // eslint-disable-next-line no-alert
+    const name = window.prompt('Exam name', exam.name);
+    if (name == null || !name.trim() || name.trim() === exam.name) return;
+    patchExam(exam.examId, { name: name.trim() });
+  }
+
+  function changeDate(exam) {
+    // eslint-disable-next-line no-alert
+    const date = window.prompt('Exam date (YYYY-MM-DD — leave empty to clear)', exam.date || '');
+    if (date == null || date.trim() === (exam.date || '')) return;
+    patchExam(exam.examId, { date: date.trim() });
+  }
+
+  // Options for one exam's section chip: unassigned tests + the exam's own.
+  function sectionOptions(exam, sectionKey) {
+    const usedElsewhereInExam = new Set(
+      SECTION_DEFS.filter((d) => d.key !== sectionKey)
+        .map((d) => exam.sections?.[d.key]?.testId)
+        .filter(Boolean)
+    );
+    return tests.filter((t) => {
+      if (usedElsewhereInExam.has(t.testId)) return false;
+      if (t.assignedToExamId && t.assignedToExamId !== exam.examId) return false;
+      return true;
+    });
+  }
+
+  function setSection(exam, sectionKey, testId) {
+    const sections = {};
+    for (const d of SECTION_DEFS) {
+      const cur = exam.sections?.[d.key];
+      sections[d.key] = cur ? { testId: cur.testId, testName: cur.testName } : null;
+    }
+    const test = tests.find((t) => t.testId === testId);
+    sections[sectionKey] = testId ? { testId, testName: test?.testName || null } : null;
+    setSectionEditing(null);
+    patchExam(exam.examId, { sections });
+  }
+
   async function handleDuplicate(exam) {
     setError(null);
     try {
-      const copy = await duplicateExam(exam.examId);
+      await duplicateExam(exam.examId);
       await refresh();
-      openEdit(copy);
       onExamsChanged?.();
     } catch (err) {
       setError(err.response?.data?.error || err.message || 'Failed to duplicate exam');
@@ -404,11 +494,27 @@ export default function ExamManager({ onExamsChanged }) {
             exams.map((exam) => (
               <div key={exam.examId} style={s.examRow}>
                 <div style={s.examHead}>
-                  <span style={s.examName}>{exam.name}</span>
-                  {exam.date && <span style={s.dateChip}>{exam.date}</span>}
-                  {(exam.studentIds || []).length > 0 && (
-                    <span style={s.rosterChip}>{exam.studentIds.length} student{exam.studentIds.length === 1 ? '' : 's'}</span>
-                  )}
+                  <span
+                    style={{ ...s.examName, cursor: 'pointer' }}
+                    onClick={() => renameExam(exam)}
+                    title="Click to rename"
+                  >
+                    {exam.name}
+                  </span>
+                  <span
+                    style={{ ...s.dateChip, cursor: 'pointer' }}
+                    onClick={() => changeDate(exam)}
+                    title="Click to change the exam date"
+                  >
+                    {exam.date || 'set date'}
+                  </span>
+                  <span
+                    style={{ ...s.rosterChip, cursor: 'pointer' }}
+                    onClick={() => setRosterOpenFor((cur) => (cur === exam.examId ? null : exam.examId))}
+                    title="Click to pick the students taking this exam"
+                  >
+                    {(exam.studentIds || []).length} student{(exam.studentIds || []).length === 1 ? '' : 's'}
+                  </span>
                   {(exam.hiddenStudentIds || []).length > 0 && (
                     <span style={s.hiddenBadge}>{exam.hiddenStudentIds.length} hidden</span>
                   )}
@@ -424,25 +530,58 @@ export default function ExamManager({ onExamsChanged }) {
                     style={s.btnGhost}
                     onClick={() => setStudentsOpenFor((cur) => (cur === exam.examId ? null : exam.examId))}
                   >
-                    {studentsOpenFor === exam.examId ? 'Close Students' : 'Students'}
+                    {studentsOpenFor === exam.examId ? 'Close Hidden' : 'Hidden'}
                   </button>
-                  <button type="button" style={s.btnGhost} onClick={() => openEdit(exam)}>Edit</button>
                   <button type="button" style={s.btnGhost} onClick={() => handleDuplicate(exam)} title="New exam with the same students — set its own date and tests">Duplicate</button>
                   <button type="button" style={s.btnDanger} onClick={() => handleDelete(exam)}>Delete</button>
                 </div>
                 <div style={s.sectionList}>
                   {SECTION_DEFS.map(({ key, label, hint }) => {
                     const assigned = exam.sections?.[key];
+                    const editing = sectionEditing?.examId === exam.examId && sectionEditing?.key === key;
                     return (
-                      <div key={key} style={s.sectionChip}>
+                      <div
+                        key={key}
+                        style={{ ...s.sectionChip, cursor: 'pointer' }}
+                        onClick={() => !editing && setSectionEditing({ examId: exam.examId, key })}
+                        title="Click to change this section's test"
+                      >
                         <span style={s.sectionLabel}>{label} · {hint}</span>
-                        {assigned
+                        {editing ? (
+                          <select
+                            style={s.select}
+                            autoFocus
+                            value={assigned?.testId || ''}
+                            onChange={(e) => setSection(exam, key, e.target.value)}
+                            onBlur={() => setSectionEditing(null)}
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <option value="">— none —</option>
+                            {sectionOptions(exam, key).map((t) => (
+                              <option key={t.testId} value={t.testId}>
+                                {t.testName} ({t.attempts} attempt{t.attempts === 1 ? '' : 's'})
+                              </option>
+                            ))}
+                          </select>
+                        ) : assigned
                           ? <span>{assigned.testName || `Test #${assigned.testId}`}</span>
                           : <span style={s.sectionEmpty}>not assigned</span>}
                       </div>
                     );
                   })}
                 </div>
+                {rosterOpenFor === exam.examId && (
+                  <RosterPanel
+                    exam={exam}
+                    roster={roster}
+                    onError={setError}
+                    onSaved={async () => {
+                      setRosterOpenFor(null);
+                      await refresh();
+                      onExamsChanged?.();
+                    }}
+                  />
+                )}
                 {scoreboardOpenFor === exam.examId && (
                   <ScoreboardPanel exam={exam} onError={setError} />
                 )}
@@ -550,7 +689,7 @@ export default function ExamManager({ onExamsChanged }) {
               <div style={s.formActions}>
                 <button type="button" style={s.btnGhost} disabled={saving} onClick={() => setFormMode(null)}>Cancel</button>
                 <button type="button" style={s.btn} disabled={saving || !formValid} onClick={handleSave}>
-                  {saving ? 'Saving…' : formMode === 'new' ? 'Create Exam' : 'Save Changes'}
+                  {saving ? 'Saving…' : 'Create Exam'}
                 </button>
               </div>
             </div>
