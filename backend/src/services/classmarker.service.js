@@ -152,7 +152,14 @@ async function fetchAllResults() {
     allResults = allResults.concat(data.results.map((r) => r.result || r));
 
     if (!data.more_results_exist || !data.next_finished_after_timestamp) break;
-    if (page >= 3) break;
+    // Safety cap only. Pagination walks forward in time from 85 days ago, so
+    // stopping early silently drops the NEWEST results once the account has
+    // more than pageLimit×200 results in the window (the old cap of 3 pages /
+    // 600 results did exactly that once the summer program ramped up).
+    if (page >= 30) {
+      console.warn(`[classmarker] Page cap hit at ${page} pages — newest results may be missing`);
+      break;
+    }
 
     currentTimestamp = data.next_finished_after_timestamp;
   }
