@@ -5,7 +5,6 @@ import {
   previewReport,
   fetchPreviewJobStatus,
   downloadReport,
-  listScoringSheets,
   fetchStudentContacts,
   saveStudentContacts,
   fetchAllContacts,
@@ -34,8 +33,6 @@ export function useGenerateReport() {
   const [downloadError, setDownloadError] = useState(null);
   const [downloadSuccess, setDownloadSuccess] = useState(false);
 
-  const [scoringSheets, setScoringSheets] = useState({});
-
   const [contacts, setContacts] = useState({ studentEmail: '', parentEmail: '' });
   const [contactsLoading, setContactsLoading] = useState(false);
   const [allContacts, setAllContacts] = useState({});
@@ -49,16 +46,6 @@ export function useGenerateReport() {
   const [emailError, setEmailError] = useState(null);
   const [emailSuccess, setEmailSuccess] = useState(null);
   const [emailSubject, setEmailSubject] = useState('');
-
-  const refreshScoringSheets = useCallback(async () => {
-    try {
-      const data = await listScoringSheets();
-      setScoringSheets(data || {});
-    } catch (err) {
-      // Non-fatal; report still renders without scoring-sheet metadata.
-      console.warn('Failed to load scoring sheets', err.message);
-    }
-  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -75,7 +62,6 @@ export function useGenerateReport() {
       }
     }
     load();
-    refreshScoringSheets();
     fetchEmailStatus()
       .then((s) => setEmailConfigured(Boolean(s?.configured)))
       .catch(() => setEmailConfigured(false));
@@ -85,7 +71,7 @@ export function useGenerateReport() {
       .catch(() => { if (!cancelled) setAllContacts({}); })
       .finally(() => { if (!cancelled) setAllContactsLoading(false); });
     return () => { cancelled = true; };
-  }, [refreshScoringSheets]);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -305,7 +291,6 @@ export function useGenerateReport() {
     previewData, previewLoading, previewError,
     downloadLoading, downloadError, downloadSuccess,
     handlePreview, handleDownload,
-    scoringSheets, refreshScoringSheets,
     contacts, updateContacts, saveContacts, contactsLoading,
     allContacts, allContactsLoading, noteContactsSaved,
     emailConfigured, emailLoading, emailError, emailSuccess,

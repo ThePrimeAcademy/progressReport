@@ -228,6 +228,33 @@ function buildWeeklySection(categoryPerfSplit, categoryPerf) {
 }
 
 // ── Test rows ─────────────────────────────────────────────────
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+// One card per SAT exam attempt, newest first — mirrors the web preview's
+// SatScoreHistory strip rendered under the four headline score cards.
+function buildSatHistorySection(allScores) {
+  if (!allScores || allScores.length === 0) return '';
+  const cards = allScores.map((s) => {
+    const accent = s.total != null ? '#1a56db' : '#6b7280';
+    return `
+      <div style="flex:1;min-width:150px;background:#fafbff;border:1px solid var(--border);border-radius:10px;padding:14px 16px;">
+        <div style="font-size:0.7rem;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:0.07em;margin-bottom:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+          ${escapeHtml(s.groupName || 'SAT')}
+        </div>
+        <div style="font-size:1.5rem;font-weight:700;color:${accent};line-height:1;">${s.total ?? '—'}</div>
+        <div style="font-size:0.7rem;color:var(--muted);margin-top:6px;">RW ${s.english ?? '—'} &middot; M ${s.math ?? '—'}</div>
+        ${s.date ? `<div style="font-size:0.66rem;color:var(--muted);margin-top:2px;">${escapeHtml(s.date)}</div>` : ''}
+      </div>`;
+  }).join('');
+  return `<div style="display:flex;gap:10px;flex-wrap:wrap;margin:-16px 0 30px;">${cards}</div>`;
+}
+
 function buildTestRows(groups) {
   const allTests = groups.flatMap((g) => g.results);
   allTests.sort((a, b) => new Date(a.date) - new Date(b.date));
@@ -272,6 +299,7 @@ async function generateReportPDF(student, groups, stats, satScores, startDate, e
     satLatestEnglishScore: satScores?.latestEnglishScore ?? '—',
     satLatestMathScore: satScores?.latestMathScore ?? '—',
     satSuperScore: satScores?.superScore ?? '—',
+    satHistorySection: buildSatHistorySection(satScores?.allScores),
     // latestTestSection: buildLatestTestSection(latestTest), // hidden from PDF — restore this line (and delete the '' line below) to bring back "Latest Test Performance"
     latestTestSection: '',
     weeklySection: buildWeeklySection(categoryPerfSplit, categoryPerf),

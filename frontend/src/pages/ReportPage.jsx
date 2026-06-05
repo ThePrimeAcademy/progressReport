@@ -68,7 +68,6 @@ export default function ReportPage() {
     previewData, previewLoading, previewError,
     downloadLoading, downloadError, downloadSuccess,
     handlePreview, handleDownload,
-    scoringSheets, refreshScoringSheets,
     contacts, updateContacts, saveContacts,
     allContacts, allContactsLoading, noteContactsSaved,
     emailConfigured, emailLoading, emailError, emailSuccess,
@@ -169,7 +168,6 @@ export default function ReportPage() {
 
         <ExamManager
           onExamsChanged={async () => {
-            await refreshScoringSheets();
             // Re-run the preview so new exam scores show without reselecting.
             if (previewData) await handlePreview();
           }}
@@ -182,11 +180,6 @@ export default function ReportPage() {
             downloadLoading={downloadLoading}
             downloadError={downloadError}
             downloadSuccess={downloadSuccess}
-            scoringSheets={scoringSheets}
-            onScoringSheetsChanged={async () => {
-              await refreshScoringSheets();
-              await handlePreview();
-            }}
             contacts={contacts}
             onContactsChange={updateContacts}
             onSaveContacts={saveContacts}
