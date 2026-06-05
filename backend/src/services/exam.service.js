@@ -160,6 +160,21 @@ function updateExam(examId, { name, date, sections, studentIds, hiddenStudentIds
   return next;
 }
 
+// Copy an exam's planning data (name + student roster) into a new
+// placeholder. Sections can't be copied — a test may belong to only one
+// exam — and the date/hidden list are specific to the original sitting.
+function duplicateExam(examId) {
+  const source = getExam(examId);
+  if (!source) throw Object.assign(new Error('Exam not found'), { status: 404 });
+  return createExam({
+    name: `${source.name} (copy)`,
+    date: null,
+    sections: {},
+    studentIds: source.studentIds || [],
+    hiddenStudentIds: [],
+  });
+}
+
 function deleteExam(examId) {
   const all = load();
   const idx = all.findIndex((e) => e.examId === String(examId));
@@ -204,6 +219,7 @@ module.exports = {
   getExam,
   createExam,
   updateExam,
+  duplicateExam,
   deleteExam,
   getTestSectionMap,
   examCurveKey,

@@ -351,9 +351,14 @@ async function getExamScoreboard(examId) {
       rwScaled,
       mathScaled,
       total,
+      testsCompleted: entry.tests.size,
       date: latestFinished ? new Date(latestFinished * 1000).toISOString().split('T')[0] : null,
     };
-  });
+  })
+    // A single completed section isn't a comparable result — keep the student
+    // off the board until they've done at least two (unless the exam itself
+    // only has one test assigned).
+    .filter((row) => sectionOfTest.size <= 1 || row.testsCompleted >= 2);
 
   // Rank: full totals first (desc), then partials by whatever is scaled,
   // then raw-only rows by combined raw.

@@ -163,6 +163,17 @@ router.get('/:examId/takers', async (req, res, next) => {
   }
 });
 
+// POST /api/exams/:examId/duplicate — new placeholder exam carrying over the
+// source's name ("(copy)" suffix) and student roster. Sections stay empty (a
+// test belongs to one exam) and the date/hidden list reset.
+router.post('/:examId/duplicate', (req, res, next) => {
+  try {
+    res.json({ success: true, data: exams.duplicateExam(req.params.examId) });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // GET /api/exams/:examId/scoreboard
 // Ranked results for one exam: every non-hidden student who took its tests,
 // with raw + scaled section scores and total.

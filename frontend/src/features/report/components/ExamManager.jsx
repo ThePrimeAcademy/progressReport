@@ -13,6 +13,7 @@ import {
   fetchStudents,
   createExam,
   updateExam,
+  duplicateExam,
   deleteExam,
 } from '../api/reportApi.js';
 import ScoringSheetUpload from './ScoringSheetUpload.jsx';
@@ -340,6 +341,20 @@ export default function ExamManager({ onExamsChanged }) {
     }
   }
 
+  // Duplicate carries over the name + student roster, then opens the copy
+  // for editing so the new date/tests can be set immediately.
+  async function handleDuplicate(exam) {
+    setError(null);
+    try {
+      const copy = await duplicateExam(exam.examId);
+      await refresh();
+      openEdit(copy);
+      onExamsChanged?.();
+    } catch (err) {
+      setError(err.response?.data?.error || err.message || 'Failed to duplicate exam');
+    }
+  }
+
   async function handleDelete(exam) {
     // eslint-disable-next-line no-alert
     if (!window.confirm(`Delete exam "${exam.name}" and its scoring sheets?`)) return;
@@ -412,6 +427,7 @@ export default function ExamManager({ onExamsChanged }) {
                     {studentsOpenFor === exam.examId ? 'Close Students' : 'Students'}
                   </button>
                   <button type="button" style={s.btnGhost} onClick={() => openEdit(exam)}>Edit</button>
+                  <button type="button" style={s.btnGhost} onClick={() => handleDuplicate(exam)} title="New exam with the same students — set its own date and tests">Duplicate</button>
                   <button type="button" style={s.btnDanger} onClick={() => handleDelete(exam)}>Delete</button>
                 </div>
                 <div style={s.sectionList}>
