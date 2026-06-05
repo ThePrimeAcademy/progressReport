@@ -248,7 +248,8 @@ function buildSatHistorySection(allScores) {
           ${escapeHtml(s.groupName || 'SAT')}
         </div>
         <div style="font-size:1.4rem;font-weight:700;color:${accent};line-height:1;">${s.total ?? '—'}</div>
-        <div style="font-size:0.7rem;color:var(--muted);margin-top:5px;">RW ${s.english ?? '—'} &middot; M ${s.math ?? '—'} ${s.date ? `&middot; ${escapeHtml(s.date)}` : ''}</div>
+        <div style="font-size:0.7rem;color:var(--muted);margin-top:5px;white-space:nowrap;">RW ${s.english ?? '—'} &middot; M ${s.math ?? '—'}</div>
+        ${s.date ? `<div style="font-size:0.66rem;color:var(--muted);margin-top:2px;white-space:nowrap;">${escapeHtml(s.date)}</div>` : ''}
       </div>`;
   }).join('');
   // Single row — cards shrink to fit however many exams there are.
