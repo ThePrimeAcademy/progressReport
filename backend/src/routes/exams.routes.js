@@ -5,6 +5,7 @@
 const express = require('express');
 const exams = require('../services/exam.service');
 const { listCurves, deleteCurve } = require('../services/scoring-sheet.service');
+const { getKnownTests } = require('../services/classmarker.service');
 const db = require('../services/db.service');
 
 const router = express.Router();
@@ -26,8 +27,10 @@ router.get('/', (req, res, next) => {
 });
 
 // GET /api/exams/available-tests
-// Distinct tests seen in the webhook store, grouped for the picker UI.
-// Marks tests already assigned to an exam so the UI can disable them.
+// Distinct tests for the picker UI, merged from BOTH stores: the webhook
+// store (fresh, per-question detail) and the cached ClassMarker results
+// (covers tests whose attempts predate webhook capture). Marks tests already
+// assigned to an exam so the UI can disable them.
 router.get('/available-tests', async (req, res, next) => {
   try {
     const records = await db.getAllRecords();
@@ -52,6 +55,27 @@ router.get('/available-tests', async (req, res, next) => {
       const received = r.receivedAt || r.received_at || '';
       if (received > t.lastReceivedAt) t.lastReceivedAt = received;
     }
+
+    // Older tests with no webhook records only exist in the API cache.
+    try {
+      for (const t of await getKnownTests()) {
+        if (tests.has(t.testId)) continue;
+        tests.set(t.testId, {
+          testId: t.testId,
+          testName: t.testName,
+          groupId: t.groupId,
+          groupName: t.groupName,
+          attempts: t.attempts,
+          lastReceivedAt: t.lastFinished
+            ? new Date(t.lastFinished * 1000).toISOString()
+            : '',
+        });
+      }
+    } catch (e) {
+      // ClassMarker API unavailable — picker still works from webhook data.
+      console.warn('[exams] Could not merge API-cache tests:', e.message);
+    }
+
     const data = Array.from(tests.values())
       .map((t) => ({
         ...t,

@@ -411,6 +411,32 @@ function clearCache() {
   console.log('Cache cleared (results + category map).');
 }
 
+// Distinct tests from the cached ClassMarker results. Complements the webhook
+// store in the exam-builder picker: tests whose attempts all predate webhook
+// capture (or whose webhooks were never configured) only exist here.
+async function getKnownTests() {
+  const { results, groupMap, testMap } = await fetchAllResults();
+  const tests = new Map();
+  for (const r of results) {
+    if (r.test_id == null) continue;
+    const id = String(r.test_id);
+    if (!tests.has(id)) {
+      tests.set(id, {
+        testId: id,
+        testName: testMap[id] || `Test #${id}`,
+        groupId: r.group_id != null ? String(r.group_id) : null,
+        groupName: groupMap[String(r.group_id)] || null,
+        attempts: 0,
+        lastFinished: 0,
+      });
+    }
+    const t = tests.get(id);
+    t.attempts++;
+    if ((r.time_finished || 0) > t.lastFinished) t.lastFinished = r.time_finished || 0;
+  }
+  return Array.from(tests.values());
+}
+
 // Set of ClassMarker user_ids that have at least one finished test inside
 // the given date range (+ optional day-of-week filter). Reads from the
 // already-cached fetchAllResults, so this is purely an in-memory scan and
@@ -445,6 +471,7 @@ module.exports = {
   clearCache,
   fetchCategoryMap,
   getCategoryName,
+  getKnownTests,
   mergeWebhookResult,
   getDataVersion,
 };
