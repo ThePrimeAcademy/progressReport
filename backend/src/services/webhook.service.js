@@ -1,6 +1,6 @@
 const crypto = require('crypto');
 const db = require('./db.service');
-const { getCategoryName, fetchCategoryMap } = require('./classmarker.service');
+const { getCategoryName, fetchCategoryMap, mergeWebhookResult } = require('./classmarker.service');
 const { deriveTestSection, isSatGroupName } = require('./sat.service');
 
 // Pre-fetch category map on startup
@@ -97,6 +97,10 @@ function verifySignature(rawBodyBuffer, headerSignature) {
 async function upsertWebhookPayload(payload) {
   const record = normalizePayload(payload);
   await db.upsertRecord(record);
+  // Keep the report UI fresh: splice the new result into the cached
+  // ClassMarker results so a page refresh shows it immediately instead of
+  // waiting out the 55-minute API cache TTL.
+  mergeWebhookResult(payload);
   return record;
 }
 

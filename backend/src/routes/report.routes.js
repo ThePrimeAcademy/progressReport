@@ -5,6 +5,7 @@ const {
   getStudentResultsGrouped,
   getLatestTestResult,
   computeCategoryPerformance,
+  getDataVersion,
 } = require('../services/classmarker.service');
 const { getSatScoresForStudent } = require('../services/sat.service');
 const {
@@ -154,7 +155,9 @@ function previewKey({ studentId, startDate, endDate, dayOfWeek }) {
   const days = Array.isArray(dayOfWeek)
     ? dayOfWeek.map(String).sort().join(',')
     : String(dayOfWeek || '');
-  const normalized = [String(studentId), String(startDate), String(endDate), days].join('|');
+  // Include the data version so a preview generated before a webhook landed
+  // doesn't get served from the dedupe cache after new results exist.
+  const normalized = [String(studentId), String(startDate), String(endDate), days, `v${getDataVersion()}`].join('|');
   return crypto.createHash('sha256').update(normalized).digest('hex').slice(0, 24);
 }
 

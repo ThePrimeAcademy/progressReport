@@ -28,7 +28,9 @@ function loadCache() {
 
 function saveCache(data) {
   try {
-    fs.writeFileSync(CACHE_FILE, JSON.stringify({ ...data, cacheTime: Date.now() }));
+    // Keep the original cacheTime when present — webhook merges re-save the
+    // cache but must not push back the 55-min API reconcile window.
+    fs.writeFileSync(CACHE_FILE, JSON.stringify({ cacheTime: Date.now(), ...data }));
     console.log('Cache saved to file.');
   } catch (e) {
     console.error('Failed to save cache:', e.message);
@@ -36,6 +38,14 @@ function saveCache(data) {
 }
 
 let memCache = loadCache();
+
+// Bumped whenever the cached results change (API refresh or webhook merge).
+// Consumers (e.g. the report preview dedupe key) include it so derived caches
+// invalidate as soon as new results exist.
+let dataVersion = 0;
+function getDataVersion() {
+  return dataVersion;
+}
 
 // Category ID → name lookup map, shared with webhook.service
 let categoryMap = {};
@@ -150,9 +160,63 @@ async function fetchAllResults() {
   console.log(`Fetched ${allResults.length} results | ${Object.keys(groupMap).length} groups | ${Object.keys(testMap).length} tests`);
 
   memCache = { results: allResults, groupMap, testMap, cacheTime: Date.now() };
+  dataVersion++;
   saveCache(memCache);
 
   return memCache;
+}
+
+// Splice a just-received webhook result into the cached ClassMarker results so
+// the UI reflects new attempts immediately instead of waiting out the 55-min
+// cache TTL (webhooks arrive seconds after a test finishes). The next interval
+// refresh still reconciles against the API as the source of truth.
+function mergeWebhookResult(payload) {
+  const result = payload?.result;
+  const testId = payload?.test?.test_id;
+  const groupId = payload?.group?.group_id;
+  // No cache yet (cold start, initial fetch in flight) or a link-type payload
+  // without group context — skip; the API fetch will pick the result up.
+  if (!memCache || !result || result.user_id == null || testId == null || groupId == null) {
+    return false;
+  }
+
+  const row = {
+    user_id: result.user_id,
+    first: result.first || '',
+    last: result.last || '',
+    email: result.email || null,
+    test_id: testId,
+    group_id: groupId,
+    points_scored: result.points_scored ?? null,
+    points_available: result.points_available ?? null,
+    percentage: result.percentage ?? null,
+    passed: result.passed ?? null,
+    duration: result.duration || null,
+    time_started: result.time_started ?? null,
+    time_finished: result.time_finished ?? null,
+    category_results: Array.isArray(payload.category_results)
+      ? payload.category_results.map((c) => ({
+          category_id: c.category_id ?? null,
+          category_name: c.category_name || c.name || null,
+          correct: Number(c.points_scored ?? c.correct ?? 0),
+          total: Number(c.points_available ?? c.total ?? 0),
+        }))
+      : null,
+    questions: Array.isArray(payload.questions) ? payload.questions : null,
+  };
+
+  const rowKey = (r) => `${r.user_id}:${r.test_id}:${r.group_id}:${r.time_finished}`;
+  const idx = memCache.results.findIndex((r) => rowKey(r) === rowKey(row));
+  if (idx >= 0) memCache.results[idx] = row;
+  else memCache.results.push(row);
+
+  if (payload.group?.group_name) memCache.groupMap[String(groupId)] = payload.group.group_name;
+  if (payload.test?.test_name) memCache.testMap[String(testId)] = payload.test.test_name;
+
+  dataVersion++;
+  saveCache(memCache);
+  console.log(`[webhook→cache] Merged result for user ${row.user_id} (${memCache.results.length} cached results)`);
+  return true;
 }
 
 async function getAllStudents() {
@@ -374,6 +438,8 @@ module.exports = {
   clearCache,
   fetchCategoryMap,
   getCategoryName,
+  mergeWebhookResult,
+  getDataVersion,
 };
 
 // Pre-warm cache on startup
