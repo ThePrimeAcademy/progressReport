@@ -10,6 +10,7 @@ const studentRoutes = require('./routes/students.routes');
 const reportRoutes = require('./routes/report.routes');
 const webhookRoutes = require('./routes/webhook.routes');
 const scoringSheetsRoutes = require('./routes/scoring-sheets.routes');
+const examsRoutes = require('./routes/exams.routes');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -51,6 +52,7 @@ app.get('/routes', (req, res) => {
 app.use('/api/students', studentRoutes);
 app.use('/api/report', reportRoutes);
 app.use('/api/scoring-sheets', scoringSheetsRoutes);
+app.use('/api/exams', examsRoutes);
 
 // 404 handler
 app.use((req, res) => {

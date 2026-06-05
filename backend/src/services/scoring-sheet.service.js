@@ -25,6 +25,13 @@ const SHEETS_DIR = path.join(DATA_DIR, 'scoring-sheets');
 const VALID_SECTIONS = new Set(['math', 'rw']);
 const VALID_BOUNDS = new Set(['upper', 'lower']);
 
+// Bumped on every curve mutation so derived caches (e.g. the report preview
+// dedupe key) invalidate as soon as scoring changes.
+let version = 0;
+function getCurvesVersion() {
+  return version;
+}
+
 function ensureDir() {
   if (!fs.existsSync(SHEETS_DIR)) fs.mkdirSync(SHEETS_DIR, { recursive: true });
 }
@@ -84,6 +91,7 @@ async function saveCurveFromBase64(groupId, section, base64Data, originalFilenam
     curve,
   };
   fs.writeFileSync(curvePath(groupId, section), JSON.stringify(record, null, 2));
+  version++;
   return record;
 }
 
@@ -100,6 +108,7 @@ function setBound(groupId, section, bound) {
   }
   record.bound = bound;
   fs.writeFileSync(curvePath(groupId, section), JSON.stringify(record, null, 2));
+  version++;
   return record;
 }
 
@@ -144,6 +153,7 @@ function deleteCurve(groupId, section) {
   const p = curvePath(groupId, section);
   if (!fs.existsSync(p)) return false;
   fs.unlinkSync(p);
+  version++;
   return true;
 }
 
@@ -182,6 +192,7 @@ module.exports = {
   deleteCurve,
   gradeUpper,
   gradeScaled,
+  getCurvesVersion,
   VALID_SECTIONS,
   VALID_BOUNDS,
 };

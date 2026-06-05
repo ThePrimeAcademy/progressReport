@@ -12,6 +12,7 @@
 
 const db = require('./db.service');
 const { getCurve, gradeScaled } = require('./scoring-sheet.service');
+const { getTestSectionMap, examCurveKey } = require('./exam.service');
 
 // Only groups whose name contains "SAT" (case-insensitive) participate in SAT
 // score aggregation. Keeps non-SAT classes (e.g. ACT, subject tests, school
@@ -45,9 +46,37 @@ function deriveTestSection(testName, groupName, questions) {
   return null;
 }
 
+// Raw correct count for a record. Prefer counting correct questions when
+// per-question detail is present; otherwise fall back to r.score
+// (ClassMarker's points_scored = raw correct for DSAT, where every question
+// is worth 1 point).
+function rawCorrect(record) {
+  const questions = record.questions || [];
+  return questions.length > 0
+    ? questions.filter((q) => q.correct).length
+    : Number(record.score) || 0;
+}
+
 function gradeRecordsByGroup(records) {
+  const examMap = getTestSectionMap();
   const buckets = {};
+
+  // Tests assigned to an admin-defined exam bucket per EXAM, not per group —
+  // groups now hold more than one exam so group-level summing would mix raw
+  // scores from different exams. Retakes keep only the latest attempt.
+  const latestExamAttempts = new Map(); // testId → latest record
+
   for (const r of records) {
+    const testId = String(r.test?.testId ?? r.test_id ?? '');
+    if (testId && examMap.has(testId)) {
+      const prev = latestExamAttempts.get(testId);
+      if (!prev || (r.timeFinished || 0) > (prev.timeFinished || 0)) {
+        latestExamAttempts.set(testId, r);
+      }
+      continue; // never double count into the legacy group bucket
+    }
+
+    // Legacy path: one group = one exam, tests named "Section N: …".
     const gid = r.group?.groupId ?? r.group_id ?? null;
     const gname = r.group?.groupName ?? r.group_name ?? null;
     if (!gid || !isSatGroupName(gname)) continue;
@@ -66,20 +95,38 @@ function gradeRecordsByGroup(records) {
     }
 
     const testName = r.test?.testName ?? r.testName ?? r.test_name ?? null;
-    const questions = r.questions || [];
-    const section = deriveTestSection(testName, gname, questions);
+    const section = deriveTestSection(testName, gname, r.questions || []);
     if (section == null) continue;
 
-    // Prefer counting correct questions when per-question detail is present;
-    // otherwise fall back to r.score (ClassMarker's points_scored = raw correct
-    // for DSAT, where every question is worth 1 point).
-    const correct = questions.length > 0
-      ? questions.filter((q) => q.correct).length
-      : Number(r.score) || 0;
-
+    const correct = rawCorrect(r);
     if (section === 1 || section === 2) bucket.rwRaw += correct;
     else if (section === 3 || section === 4) bucket.mathRaw += correct;
   }
+
+  // Fold the deduped exam attempts into per-exam buckets. The bucket keeps the
+  // groupId/groupName field names (key = exam:<id>, label = exam name) so
+  // curve lookup and downstream consumers work unchanged.
+  for (const [testId, r] of latestExamAttempts) {
+    const { examId, examName, section } = examMap.get(testId);
+    const key = examCurveKey(examId);
+    if (!buckets[key]) {
+      buckets[key] = {
+        groupId: key,
+        groupName: examName,
+        rwRaw: 0,
+        mathRaw: 0,
+        latestFinished: 0,
+      };
+    }
+    const bucket = buckets[key];
+    if (r.timeFinished && r.timeFinished > bucket.latestFinished) {
+      bucket.latestFinished = r.timeFinished;
+    }
+    const correct = rawCorrect(r);
+    if (section === 1 || section === 2) bucket.rwRaw += correct;
+    else if (section === 3 || section === 4) bucket.mathRaw += correct;
+  }
+
   return Object.values(buckets);
 }
 

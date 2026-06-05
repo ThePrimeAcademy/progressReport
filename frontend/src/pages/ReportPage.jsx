@@ -6,6 +6,7 @@ import DateRangePicker from '../features/report/components/DateRangePicker.jsx';
 import DayPicker from '../features/report/components/DayPicker.jsx';
 import ReportViewer from '../features/report/components/ReportViewer.jsx';
 import BulkSendPanel from '../features/report/components/BulkSendPanel.jsx';
+import ExamManager from '../features/report/components/ExamManager.jsx';
 import Button from '../components/ui/Button.jsx';
 
 const s = {
@@ -165,6 +166,14 @@ export default function ReportPage() {
 
           </div>
         </div>
+
+        <ExamManager
+          onExamsChanged={async () => {
+            await refreshScoringSheets();
+            // Re-run the preview so new exam scores show without reselecting.
+            if (previewData) await handlePreview();
+          }}
+        />
 
         {previewData && (
           <ReportViewer

@@ -70,6 +70,35 @@ export async function setScoringSheetBound({ groupId, section, bound }) {
   return response.data.data;
 }
 
+// ── SAT exams ──────────────────────────────────────────────────
+// An exam maps up to four ClassMarker tests onto DSAT sections 1-4.
+// Curves upload through the scoring-sheet endpoints with groupId = exam.curveKey.
+
+export async function fetchExams() {
+  const response = await apiClient.get('/exams');
+  return response.data.data || [];
+}
+
+export async function fetchAvailableTests() {
+  const response = await apiClient.get('/exams/available-tests');
+  return response.data.data || [];
+}
+
+export async function createExam({ name, sections }) {
+  const response = await apiClient.post('/exams', { name, sections });
+  return response.data.data;
+}
+
+export async function updateExam(examId, { name, sections }) {
+  const response = await apiClient.put(`/exams/${encodeURIComponent(examId)}`, { name, sections });
+  return response.data.data;
+}
+
+export async function deleteExam(examId) {
+  const response = await apiClient.delete(`/exams/${encodeURIComponent(examId)}`);
+  return response.data;
+}
+
 export async function fetchStudentContacts(studentId) {
   const response = await apiClient.get(
     `/students/${encodeURIComponent(studentId)}/contacts`

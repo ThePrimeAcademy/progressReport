@@ -14,6 +14,8 @@ const {
   getWebhookCategoryPerformanceSplit,
 } = require('../services/webhook.service');
 const { computeStats } = require('../services/stats.service');
+const { getCurvesVersion } = require('../services/scoring-sheet.service');
+const { getExamsVersion } = require('../services/exam.service');
 const { generateReportPDF } = require('../services/pdf.service');
 const { sendReportEmail, isConfigured: isEmailConfigured, verifyConnection: verifyEmailConnection } = require('../services/email.service');
 const db = require('../services/db.service');
@@ -155,9 +157,11 @@ function previewKey({ studentId, startDate, endDate, dayOfWeek }) {
   const days = Array.isArray(dayOfWeek)
     ? dayOfWeek.map(String).sort().join(',')
     : String(dayOfWeek || '');
-  // Include the data version so a preview generated before a webhook landed
-  // doesn't get served from the dedupe cache after new results exist.
-  const normalized = [String(studentId), String(startDate), String(endDate), days, `v${getDataVersion()}`].join('|');
+  // Include the data/exam/curve versions so a preview generated before a
+  // webhook landed, an exam was (re)defined, or a curve was uploaded doesn't
+  // get served from the dedupe cache after scoring inputs changed.
+  const version = `v${getDataVersion()}.${getExamsVersion()}.${getCurvesVersion()}`;
+  const normalized = [String(studentId), String(startDate), String(endDate), days, version].join('|');
   return crypto.createHash('sha256').update(normalized).digest('hex').slice(0, 24);
 }
 

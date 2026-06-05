@@ -2,6 +2,7 @@ const crypto = require('crypto');
 const db = require('./db.service');
 const { getCategoryName, fetchCategoryMap, mergeWebhookResult } = require('./classmarker.service');
 const { deriveTestSection, isSatGroupName } = require('./sat.service');
+const { getTestSectionMap } = require('./exam.service');
 
 // Pre-fetch category map on startup
 fetchCategoryMap().catch(() => { });
@@ -108,30 +109,64 @@ async function findMatchingRecords(student, startDate, endDate, dayOfWeek) {
   return db.findMatchingRecords(student, startDate, endDate, dayOfWeek);
 }
 
-// Narrow to records that belong to the LATEST single SAT exam attempt:
+// Narrow to records that belong to the LATEST single SAT exam attempt.
+// Admin-defined exams (exam.service) are the preferred source: a record whose
+// testId is assigned to an exam belongs to that exam, full stop. Records not
+// covered by any exam fall back to the legacy convention:
 //   1. SAT group (matches /sat/i)
 //   2. Test name starts with "Section 1-4:" (real SAT exam section, not concept practice)
 //   3. Same groupId as the latest such record, within a 24h window of its timeFinished
-// Returns [] if no qualifying records exist.
+// Whichever side holds the most recent attempt wins. Returns [] if no
+// qualifying records exist.
 const SAT_SECTION_TEST_RE = /^\s*section\s*[1-4]\s*:/i;
+const SAT_EXAM_WINDOW_SECONDS = 24 * 3600;
+
 function selectLatestSatExamRecords(records) {
-  const candidates = records.filter((r) => {
+  const examMap = getTestSectionMap();
+  const recordTestId = (r) => String(r.test?.testId ?? r.test_id ?? '');
+
+  const examCandidates = records.filter((r) => examMap.has(recordTestId(r)));
+  const legacyCandidates = records.filter((r) => {
+    if (examMap.has(recordTestId(r))) return false;
     const gn = r.group?.groupName ?? r.group_name ?? null;
     const tn = r.test?.testName ?? r.test_name ?? '';
     return isSatGroupName(gn) && SAT_SECTION_TEST_RE.test(String(tn));
   });
-  if (candidates.length === 0) return [];
+  if (examCandidates.length === 0 && legacyCandidates.length === 0) return [];
 
+  const newest = (arr) => arr.reduce(
+    (m, r) => ((r.timeFinished || 0) > (m?.timeFinished || 0) ? r : m),
+    null
+  );
+  const newestExam = newest(examCandidates);
+  const newestLegacy = newest(legacyCandidates);
+
+  if (newestExam && (!newestLegacy || (newestExam.timeFinished || 0) >= (newestLegacy.timeFinished || 0))) {
+    const latestExamId = examMap.get(recordTestId(newestExam)).examId;
+    const latestTs = newestExam.timeFinished || 0;
+    // Same exam, within the window — and only the latest attempt per test so
+    // retakes don't double count in category aggregation.
+    const perTest = new Map();
+    for (const r of examCandidates) {
+      const mapped = examMap.get(recordTestId(r));
+      const ts = r.timeFinished || 0;
+      if (mapped.examId !== latestExamId || (latestTs - ts) > SAT_EXAM_WINDOW_SECONDS || ts > latestTs) continue;
+      const prev = perTest.get(recordTestId(r));
+      if (!prev || ts > (prev.timeFinished || 0)) perTest.set(recordTestId(r), r);
+    }
+    return Array.from(perTest.values());
+  }
+
+  const candidates = legacyCandidates;
   candidates.sort((a, b) => (b.timeFinished || 0) - (a.timeFinished || 0));
   const latest = candidates[0];
   const latestGroupId = String(latest.group?.groupId ?? latest.group_id ?? '');
   const latestTs = latest.timeFinished || 0;
-  const WINDOW = 24 * 3600;
 
   return candidates.filter((r) => {
     const gid = String(r.group?.groupId ?? r.group_id ?? '');
     const ts = r.timeFinished || 0;
-    return gid === latestGroupId && (latestTs - ts) <= WINDOW && ts <= latestTs;
+    return gid === latestGroupId && (latestTs - ts) <= SAT_EXAM_WINDOW_SECONDS && ts <= latestTs;
   });
 }
 
@@ -204,16 +239,19 @@ async function getWebhookCategoryPerformanceSplit(student, startDate, endDate, d
   const maMap = {};
   let hasSectionData = false;
 
-  // Sections 1-2 → English, 3-4 → Math. Derive once per record from the test
-  // name / group name / per-question section. If the section can't be derived,
-  // skip the record entirely rather than misclassifying English categories as
-  // Math (which used to happen via a name-keyword fallback).
+  // Sections 1-2 → English, 3-4 → Math. An admin-defined exam assignment is
+  // authoritative for its tests; otherwise derive once per record from the
+  // test name / group name / per-question section. If the section can't be
+  // determined, skip the record entirely rather than misclassifying English
+  // categories as Math (which used to happen via a name-keyword fallback).
+  const examMap = getTestSectionMap();
   for (const record of records) {
     const testName = record.test?.testName ?? record.test_name ?? null;
     const groupName = record.group?.groupName ?? record.group_name ?? null;
     const testId = record.test?.testId ?? record.test_id ?? '';
     const questions = record.questions || [];
-    const recordSection = deriveTestSection(testName, groupName, questions);
+    const examSection = examMap.get(String(testId))?.section ?? null;
+    const recordSection = examSection ?? deriveTestSection(testName, groupName, questions);
 
     for (const q of questions) {
       const cur = latestCats.get(`${testId}:${q.questionId}`);
@@ -221,7 +259,10 @@ async function getWebhookCategoryPerformanceSplit(student, startDate, endDate, d
       if (!name || name === 'Unknown') continue;
 
       const qSec = Number(q.sectionNumber);
-      const section = (qSec >= 1 && qSec <= 4) ? qSec : recordSection;
+      // Exam mapping wins over the per-question section number — standalone
+      // ClassMarker tests report every question as section 1 regardless of
+      // which DSAT section the test actually represents.
+      const section = examSection ?? ((qSec >= 1 && qSec <= 4) ? qSec : recordSection);
       if (!section) continue;
 
       hasSectionData = true;
