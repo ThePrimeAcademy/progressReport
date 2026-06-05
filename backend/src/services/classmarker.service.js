@@ -444,6 +444,21 @@ async function getKnownTests() {
   return Array.from(tests.values()).map((t) => ({ ...t, groups: Array.from(t.groups.values()) }));
 }
 
+// Per-attempt rows from the cached API results for the given testIds —
+// used to fill scoreboard gaps where attempts never produced a webhook.
+async function getResultsForTests(testIdSet) {
+  const { results } = await fetchAllResults();
+  return results
+    .filter((r) => r.test_id != null && testIdSet.has(String(r.test_id)) && r.user_id != null)
+    .map((r) => ({
+      userId: String(r.user_id),
+      name: `${r.first || ''} ${r.last || ''}`.trim() || r.email || `User ${r.user_id}`,
+      testId: String(r.test_id),
+      correct: Number(r.points_scored) || 0,
+      timeFinished: r.time_finished || 0,
+    }));
+}
+
 // Map of user_id (string) → display name for everyone with at least one
 // cached API result on any of the given testIds. Complements the webhook
 // store for exam-taker lookups.
@@ -496,6 +511,7 @@ module.exports = {
   getCategoryName,
   getKnownTests,
   getTakersForTests,
+  getResultsForTests,
   mergeWebhookResult,
   getDataVersion,
 };

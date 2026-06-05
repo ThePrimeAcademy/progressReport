@@ -3,7 +3,7 @@ import React, { useMemo, useState } from 'react';
 import Button from '../../../components/ui/Button.jsx';
 import DateRangePicker from './DateRangePicker.jsx';
 import DayPicker from './DayPicker.jsx';
-import { emailReport, fetchEmailJobStatus } from '../api/reportApi.js';
+import { emailReport, fetchEmailJobStatus, saveStudentContacts } from '../api/reportApi.js';
 
 const MAX_CONCURRENCY = 3;
 const POLL_INTERVAL_MS = 2000;
@@ -187,12 +187,17 @@ export default function BulkSendPanel({
   const [running, setRunning] = useState(false);
   const [results, setResults] = useState({});
   const [globalError, setGlobalError] = useState(null);
-  // Per-row email overrides for THIS bulk batch only. Keyed by student id.
-  // Effective email = edit > saved contact > ClassMarker registered email
-  // (for the student field). Edits are persisted by the backend's
-  // /email handler as a side effect of a successful send.
+  // Per-row email overrides keyed by student id. Effective email =
+  // edit > saved contact > ClassMarker registered email (student field).
+  // Edits auto-save to student_contacts on blur (and via the Save-all
+  // button) so typed emails survive switching pages/modes — previously they
+  // only persisted as a side effect of a successful send.
   const [rowEdits, setRowEdits] = useState({});
+  // id → 'saving' | 'saved' | 'error:<message>'
+  const [saveStates, setSaveStates] = useState({});
   const contactsLoading = allContactsLoading;
+
+  const EMAIL_RX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
   const sortedStudents = useMemo(
     () => [...(students || [])].sort((a, b) => a.name.localeCompare(b.name)),
@@ -220,6 +225,47 @@ export default function BulkSendPanel({
       ...prev,
       [id]: { ...(prev[id] || {}), [field]: value },
     }));
+    // New keystrokes invalidate any previous saved/error indicator.
+    setSaveStates((prev) => {
+      if (!(id in prev)) return prev;
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+  }
+
+  // Persist one row's contacts. No-ops when nothing was typed or the values
+  // already match the saved contact; skips (with an inline error) when an
+  // email is malformed so a half-typed address never overwrites a good one.
+  async function persistRow(id) {
+    if (!rowEdits[id]) return;
+    const studentEmail = (effectiveEmail(id, 'studentEmail') || '').trim();
+    const parentEmail = (effectiveEmail(id, 'parentEmail') || '').trim();
+    const saved = allContacts[id] || {};
+    if ((saved.studentEmail || '') === studentEmail && (saved.parentEmail || '') === parentEmail) return;
+    if ((studentEmail && !EMAIL_RX.test(studentEmail)) || (parentEmail && !EMAIL_RX.test(parentEmail))) {
+      setSaveStates((prev) => ({ ...prev, [id]: 'error:Invalid email — not saved yet' }));
+      return;
+    }
+    setSaveStates((prev) => ({ ...prev, [id]: 'saving' }));
+    try {
+      await saveStudentContacts(id, { studentEmail, parentEmail });
+      onContactsPersisted?.(id, { studentEmail, parentEmail });
+      // The saved contact now carries the values — drop the local edit.
+      setRowEdits((prev) => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+      setSaveStates((prev) => ({ ...prev, [id]: 'saved' }));
+    } catch (err) {
+      setSaveStates((prev) => ({ ...prev, [id]: `error:${err.message || 'Save failed'}` }));
+    }
+  }
+
+  const dirtyCount = Object.keys(rowEdits).length;
+  async function saveAllDirty() {
+    await Promise.all(Object.keys(rowEdits).map((id) => persistRow(id)));
   }
 
   // Returns one of: 'both' | 'studentOnly' | 'parentOnly' | 'none'
@@ -372,6 +418,11 @@ export default function BulkSendPanel({
           <div style={s.listHeader}>
             <span style={s.label}>Students ({totalSelected} selected · {sendableCount} sendable)</span>
             <div style={s.selectActions}>
+              {dirtyCount > 0 && (
+                <button type="button" onClick={saveAllDirty} style={{ ...s.selectAction, color: '#15803d' }}>
+                  Save contacts ({dirtyCount})
+                </button>
+              )}
               <button type="button" onClick={selectAll} style={s.selectAction}>All</button>
               <button type="button" onClick={selectWithContacts} style={s.selectAction}>With contacts</button>
               <button type="button" onClick={selectNone} style={s.selectAction}>None</button>
@@ -410,6 +461,7 @@ export default function BulkSendPanel({
                           placeholder={stu.email || 'student@example.com'}
                           value={studentEmail}
                           onChange={(e) => setEdit(stu.id, 'studentEmail', e.target.value)}
+                          onBlur={() => persistRow(stu.id)}
                           style={s.emailInput}
                           autoComplete="off"
                           spellCheck={false}
@@ -423,11 +475,23 @@ export default function BulkSendPanel({
                           placeholder="parent@example.com"
                           value={parentEmail}
                           onChange={(e) => setEdit(stu.id, 'parentEmail', e.target.value)}
+                          onBlur={() => persistRow(stu.id)}
                           style={s.emailInput}
                           autoComplete="off"
                           spellCheck={false}
                         />
                       </div>
+                      {saveStates[stu.id] && (
+                        <div style={{
+                          gridColumn: '1 / -1',
+                          fontSize: '0.68rem',
+                          color: saveStates[stu.id].startsWith('error:') ? '#b91c1c' : '#15803d',
+                        }}>
+                          {saveStates[stu.id] === 'saving' && 'Saving…'}
+                          {saveStates[stu.id] === 'saved' && '✓ Contacts saved'}
+                          {saveStates[stu.id].startsWith('error:') && `⚠ ${saveStates[stu.id].slice(6)}`}
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>

@@ -9,6 +9,7 @@ import {
   fetchExams,
   fetchAvailableTests,
   fetchExamTakers,
+  fetchExamScoreboard,
   fetchStudents,
   createExam,
   updateExam,
@@ -60,6 +61,72 @@ const s = {
   rosterChip: { fontSize: '0.68rem', fontWeight: 600, color: 'var(--muted)', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 999, padding: '2px 8px', whiteSpace: 'nowrap' },
   searchInput: { width: '100%', boxSizing: 'border-box', padding: '6px 10px', borderRadius: 8, border: '1.5px solid var(--border)', fontSize: '0.78rem', fontFamily: 'inherit', marginBottom: 8 },
 };
+
+// Ranked results for one exam — name, RW, Math, Total, newest attempt date.
+function ScoreboardPanel({ exam, onError }) {
+  const [board, setBoard] = useState(null); // null = loading
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchExamScoreboard(exam.examId)
+      .then((b) => { if (!cancelled) setBoard(b); })
+      .catch((err) => { if (!cancelled) { setBoard({ rows: [] }); onError?.(err.message || 'Failed to load scoreboard'); } });
+    return () => { cancelled = true; };
+  }, [exam.examId, onError]);
+
+  const cell = { padding: '6px 12px', fontSize: '0.8rem' };
+  const num = { ...cell, textAlign: 'right', fontVariantNumeric: 'tabular-nums' };
+  const header = { ...cell, fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--muted)', textAlign: 'left', background: '#f1f5ff' };
+  const medal = (rank) => (rank === 1 ? '🥇' : rank === 2 ? '🥈' : rank === 3 ? '🥉' : `${rank}`);
+  const fmt = (scaled, raw) => (scaled != null ? scaled : raw != null ? `${raw} raw` : '—');
+
+  return (
+    <div style={s.hiddenPanel}>
+      <div style={s.hiddenTitle}>
+        Scoreboard{board?.date ? ` · ${board.date}` : ''}
+        {board && !(board.hasRwCurve && board.hasMathCurve) && (
+          <span style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>
+            {' '}— upload {!board.hasRwCurve && !board.hasMathCurve ? 'the RW and Math sheets' : !board.hasRwCurve ? 'the RW sheet' : 'the Math sheet'} for scaled scores
+          </span>
+        )}
+      </div>
+      {board === null ? (
+        <div style={s.empty}>Loading scoreboard…</div>
+      ) : board.rows.length === 0 ? (
+        <div style={s.empty}>No results yet for this exam's tests.</div>
+      ) : (
+        <div style={{ maxHeight: 320, overflowY: 'auto', border: '1px solid var(--border)', borderRadius: 8, background: '#fff' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead>
+              <tr>
+                <th style={{ ...header, width: 40 }}>#</th>
+                <th style={header}>Student</th>
+                <th style={{ ...header, textAlign: 'right' }}>RW</th>
+                <th style={{ ...header, textAlign: 'right' }}>Math</th>
+                <th style={{ ...header, textAlign: 'right' }}>Total</th>
+                <th style={{ ...header, textAlign: 'right' }}>Date</th>
+              </tr>
+            </thead>
+            <tbody>
+              {board.rows.map((row, i) => (
+                <tr key={row.studentId} style={{ borderTop: '1px solid var(--border)', background: i % 2 ? '#fafbff' : '#fff' }}>
+                  <td style={{ ...cell, color: 'var(--muted)' }}>{medal(i + 1)}</td>
+                  <td style={{ ...cell, fontWeight: 500 }}>{row.name}</td>
+                  <td style={num}>{fmt(row.rwScaled, row.rwRaw)}</td>
+                  <td style={num}>{fmt(row.mathScaled, row.mathRaw)}</td>
+                  <td style={{ ...num, fontWeight: 700, color: row.total != null ? 'var(--accent)' : 'var(--muted)' }}>
+                    {row.total ?? '—'}
+                  </td>
+                  <td style={{ ...num, color: 'var(--muted)', fontSize: '0.72rem' }}>{row.date || '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
 
 // Per-exam hidden-students editor: lists everyone who took the exam's tests;
 // checked = hidden (their attempts are ignored when scoring this exam).
@@ -151,6 +218,8 @@ export default function ExamManager({ onExamsChanged }) {
   const [saving, setSaving] = useState(false);
   // examId whose hidden-students panel is expanded (one at a time).
   const [studentsOpenFor, setStudentsOpenFor] = useState(null);
+  // examId whose scoreboard is expanded (one at a time).
+  const [scoreboardOpenFor, setScoreboardOpenFor] = useState(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -331,6 +400,13 @@ export default function ExamManager({ onExamsChanged }) {
                   <button
                     type="button"
                     style={s.btnGhost}
+                    onClick={() => setScoreboardOpenFor((cur) => (cur === exam.examId ? null : exam.examId))}
+                  >
+                    {scoreboardOpenFor === exam.examId ? 'Close Scoreboard' : 'Scoreboard'}
+                  </button>
+                  <button
+                    type="button"
+                    style={s.btnGhost}
                     onClick={() => setStudentsOpenFor((cur) => (cur === exam.examId ? null : exam.examId))}
                   >
                     {studentsOpenFor === exam.examId ? 'Close Students' : 'Students'}
@@ -351,6 +427,9 @@ export default function ExamManager({ onExamsChanged }) {
                     );
                   })}
                 </div>
+                {scoreboardOpenFor === exam.examId && (
+                  <ScoreboardPanel exam={exam} onError={setError} />
+                )}
                 {studentsOpenFor === exam.examId && (
                   <HiddenStudentsPanel
                     exam={exam}

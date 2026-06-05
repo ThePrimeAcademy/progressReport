@@ -6,6 +6,7 @@ const express = require('express');
 const exams = require('../services/exam.service');
 const { listCurves, deleteCurve } = require('../services/scoring-sheet.service');
 const { getKnownTests, getTakersForTests } = require('../services/classmarker.service');
+const { getExamScoreboard } = require('../services/sat.service');
 const db = require('../services/db.service');
 
 const router = express.Router();
@@ -157,6 +158,19 @@ router.get('/:examId/takers', async (req, res, next) => {
       .map(([id, name]) => ({ id, name }))
       .sort((a, b) => a.name.localeCompare(b.name));
     res.json({ success: true, data });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/exams/:examId/scoreboard
+// Ranked results for one exam: every non-hidden student who took its tests,
+// with raw + scaled section scores and total.
+router.get('/:examId/scoreboard', async (req, res, next) => {
+  try {
+    const board = await getExamScoreboard(req.params.examId);
+    if (!board) return res.status(404).json({ success: false, error: 'Exam not found' });
+    res.json({ success: true, data: board });
   } catch (err) {
     next(err);
   }

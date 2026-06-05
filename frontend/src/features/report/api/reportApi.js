@@ -126,6 +126,11 @@ export async function fetchExamTakers(examId) {
   return response.data.data || [];
 }
 
+export async function fetchExamScoreboard(examId) {
+  const response = await apiClient.get(`/exams/${encodeURIComponent(examId)}/scoreboard`);
+  return response.data.data;
+}
+
 export async function fetchStudentContacts(studentId) {
   const response = await apiClient.get(
     `/students/${encodeURIComponent(studentId)}/contacts`

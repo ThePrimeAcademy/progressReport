@@ -12,8 +12,8 @@
 
 const db = require('./db.service');
 const { getCurve, gradeScaled } = require('./scoring-sheet.service');
-const { getTestSectionMap, examCurveKey } = require('./exam.service');
-const { getStudentResultsGrouped } = require('./classmarker.service');
+const { getTestSectionMap, examCurveKey, getExam } = require('./exam.service');
+const { getStudentResultsGrouped, getResultsForTests } = require('./classmarker.service');
 
 // Only groups whose name contains "SAT" (case-insensitive) participate in SAT
 // score aggregation. Keeps non-SAT classes (e.g. ACT, subject tests, school
@@ -250,8 +250,104 @@ async function getSatScoresForStudent(student) {
   };
 }
 
+// Scoreboard for one exam: every (non-hidden) student who took any of its
+// tests, with raw + scaled section scores and total, ranked by total.
+// Webhook attempts win per (student, test); attempts that never fired a
+// webhook fall back to the cached API results.
+async function getExamScoreboard(examId) {
+  const exam = getExam(examId);
+  if (!exam) return null;
+  const hidden = new Set(exam.hiddenStudentIds || []);
+  const sectionOfTest = new Map(); // testId → 1|2|3|4
+  for (const key of ['1', '2', '3', '4']) {
+    const s = exam.sections?.[key];
+    if (s?.testId != null) sectionOfTest.set(String(s.testId), Number(key));
+  }
+
+  // uid → { name, tests: Map(testId → { correct, timeFinished, webhook }) }
+  const perStudent = new Map();
+  const entryFor = (uid, name) => {
+    if (!perStudent.has(uid)) perStudent.set(uid, { name, tests: new Map() });
+    return perStudent.get(uid);
+  };
+
+  if (sectionOfTest.size > 0) {
+    for (const r of await db.getAllRecords()) {
+      const tid = String(r.test?.testId ?? r.test_id ?? '');
+      if (!sectionOfTest.has(tid)) continue;
+      const uid = String(r.student?.userId ?? r.user_id ?? '');
+      if (!uid || hidden.has(uid)) continue;
+      const entry = entryFor(uid, r.student?.name || r.name || `User ${uid}`);
+      const prev = entry.tests.get(tid);
+      if (!prev || (r.timeFinished || 0) > prev.timeFinished) {
+        entry.tests.set(tid, { correct: rawCorrect(r), timeFinished: r.timeFinished || 0, webhook: true });
+      }
+    }
+    try {
+      for (const a of await getResultsForTests(new Set(sectionOfTest.keys()))) {
+        if (hidden.has(a.userId)) continue;
+        const entry = entryFor(a.userId, a.name);
+        const prev = entry.tests.get(a.testId);
+        // Webhook data always wins; among API attempts keep the latest.
+        if (prev?.webhook) continue;
+        if (!prev || a.timeFinished > prev.timeFinished) {
+          entry.tests.set(a.testId, { correct: a.correct, timeFinished: a.timeFinished, webhook: false });
+        }
+      }
+    } catch (e) {
+      console.warn('[sat] Scoreboard API fallback unavailable:', e.message);
+    }
+  }
+
+  const rwCurve = getCurve(examCurveKey(examId), 'rw');
+  const mathCurve = getCurve(examCurveKey(examId), 'math');
+
+  const rows = Array.from(perStudent.entries()).map(([uid, entry]) => {
+    let rwRaw = null;
+    let mathRaw = null;
+    let latestFinished = 0;
+    for (const [tid, attempt] of entry.tests) {
+      const section = sectionOfTest.get(tid);
+      if (section <= 2) rwRaw = (rwRaw || 0) + attempt.correct;
+      else mathRaw = (mathRaw || 0) + attempt.correct;
+      if (attempt.timeFinished > latestFinished) latestFinished = attempt.timeFinished;
+    }
+    const rwScaled = rwRaw != null && rwCurve ? gradeScaled(rwCurve, rwRaw) : null;
+    const mathScaled = mathRaw != null && mathCurve ? gradeScaled(mathCurve, mathRaw) : null;
+    const total = rwScaled != null && mathScaled != null ? rwScaled + mathScaled : null;
+    return {
+      studentId: uid,
+      name: entry.name,
+      rwRaw,
+      mathRaw,
+      rwScaled,
+      mathScaled,
+      total,
+      date: latestFinished ? new Date(latestFinished * 1000).toISOString().split('T')[0] : null,
+    };
+  });
+
+  // Rank: full totals first (desc), then partials by whatever is scaled,
+  // then raw-only rows by combined raw.
+  rows.sort((a, b) =>
+    (b.total ?? -1) - (a.total ?? -1) ||
+    ((b.rwScaled ?? 0) + (b.mathScaled ?? 0)) - ((a.rwScaled ?? 0) + (a.mathScaled ?? 0)) ||
+    ((b.rwRaw ?? 0) + (b.mathRaw ?? 0)) - ((a.rwRaw ?? 0) + (a.mathRaw ?? 0))
+  );
+
+  return {
+    examId: exam.examId,
+    name: exam.name,
+    date: exam.date || null,
+    hasRwCurve: Boolean(rwCurve),
+    hasMathCurve: Boolean(mathCurve),
+    rows,
+  };
+}
+
 module.exports = {
   getSatScoresForStudent,
+  getExamScoreboard,
   isSatGroupName,
   deriveTestSection,
 };
