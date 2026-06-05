@@ -49,8 +49,14 @@ router.get('/available-tests', async (req, res, next) => {
       if (groupId == null) return;
       const gid = String(groupId);
       const g = t.groups.get(gid) || { groupId: gid, groupName: groupName || null, lastSeen: '' };
-      if (groupName && !g.groupName) g.groupName = groupName;
-      if (seen > g.lastSeen) g.lastSeen = seen;
+      // Groups get renamed in ClassMarker and webhook payloads are snapshots —
+      // keep the name from the most recent sighting so the current name wins.
+      if (seen >= g.lastSeen) {
+        g.lastSeen = seen;
+        if (groupName) g.groupName = groupName;
+      } else if (groupName && !g.groupName) {
+        g.groupName = groupName;
+      }
       t.groups.set(gid, g);
     };
 
@@ -65,7 +71,9 @@ router.get('/available-tests', async (req, res, next) => {
     }
 
     // Merge the ClassMarker API cache: tests (and group links) with no
-    // webhook records only exist there.
+    // webhook records only exist there. Its group map also carries each
+    // group's CURRENT name — authoritative over stale webhook snapshots.
+    const currentGroupNames = new Map(); // groupId → live name
     try {
       for (const known of await getKnownTests()) {
         const t = entryFor(known.testId, known.testName);
@@ -74,6 +82,7 @@ router.get('/available-tests', async (req, res, next) => {
         if (finished > t.lastReceivedAt) t.lastReceivedAt = finished;
         for (const g of known.groups) {
           addGroup(t, g.groupId, g.groupName, g.lastFinished ? new Date(g.lastFinished * 1000).toISOString() : '');
+          if (g.groupName) currentGroupNames.set(String(g.groupId), g.groupName);
         }
       }
     } catch (e) {
@@ -85,7 +94,10 @@ router.get('/available-tests', async (req, res, next) => {
       .map((t) => {
         const groups = Array.from(t.groups.values())
           .sort((a, b) => String(b.lastSeen).localeCompare(String(a.lastSeen)))
-          .map(({ groupId, groupName }) => ({ groupId, groupName }));
+          .map(({ groupId, groupName }) => ({
+            groupId,
+            groupName: currentGroupNames.get(groupId) || groupName,
+          }));
         return {
           testId: t.testId,
           testName: t.testName,
