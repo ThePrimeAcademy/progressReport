@@ -162,21 +162,24 @@ router.get('/:examId/takers', async (req, res, next) => {
   }
 });
 
-// POST /api/exams — body: { name, sections: { "1": { testId, testName } | null, ... }, hiddenStudentIds? }
+// POST /api/exams — body: { name, date?, sections: { "1": { testId, testName } | null, ... },
+// studentIds?, hiddenStudentIds? }. Sections may all be empty — placeholder
+// exams get created in advance and have tests attached later.
 router.post('/', (req, res, next) => {
   try {
-    const { name, sections, hiddenStudentIds } = req.body || {};
-    res.json({ success: true, data: exams.createExam({ name, sections, hiddenStudentIds }) });
+    const { name, date, sections, studentIds, hiddenStudentIds } = req.body || {};
+    res.json({ success: true, data: exams.createExam({ name, date, sections, studentIds, hiddenStudentIds }) });
   } catch (err) {
     next(err);
   }
 });
 
-// PUT /api/exams/:examId — rename, re-map sections and/or set hidden students.
+// PUT /api/exams/:examId — rename, re-date, re-map sections and/or set
+// student rosters.
 router.put('/:examId', (req, res, next) => {
   try {
-    const { name, sections, hiddenStudentIds } = req.body || {};
-    res.json({ success: true, data: exams.updateExam(req.params.examId, { name, sections, hiddenStudentIds }) });
+    const { name, date, sections, studentIds, hiddenStudentIds } = req.body || {};
+    res.json({ success: true, data: exams.updateExam(req.params.examId, { name, date, sections, studentIds, hiddenStudentIds }) });
   } catch (err) {
     next(err);
   }

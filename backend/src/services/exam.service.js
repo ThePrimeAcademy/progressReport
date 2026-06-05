@@ -6,9 +6,14 @@
 // naming convention.
 //
 // Storage: DATA_DIR/exams.json —
-//   [{ examId, name, sections: { "1": { testId, testName } | null, ... "4" },
-//      hiddenStudentIds: ["<user_id>", ...], createdAt, updatedAt }]
+//   [{ examId, name, date: "YYYY-MM-DD" | null,
+//      sections: { "1": { testId, testName } | null, ... "4" },
+//      studentIds: ["<user_id>", ...], hiddenStudentIds: ["<user_id>", ...],
+//      createdAt, updatedAt }]
 //
+// date / studentIds: planning fields — exams can be created in advance as
+// placeholders (no tests assigned yet) with a scheduled date and the roster
+// of students who will take it. Tests get attached later via update.
 // hiddenStudentIds: per-exam exclusions — these students' attempts on the
 // exam's tests are ignored everywhere the exam is scored (SAT score cards,
 // history, weekly category performance).
@@ -77,14 +82,22 @@ function normalizeHidden(ids) {
   return [...new Set(ids.map((id) => String(id)).filter(Boolean))];
 }
 
+function normalizeDate(value) {
+  const s = String(value || '').trim();
+  if (!s) return null;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+    throw Object.assign(new Error('date must be YYYY-MM-DD'), { status: 400 });
+  }
+  return s;
+}
+
 function validateExam(name, sections, ignoreExamId) {
   if (!name || !String(name).trim()) {
     throw Object.assign(new Error('name is required'), { status: 400 });
   }
+  // Zero assigned sections is allowed — exams can be created in advance as
+  // placeholders and have their tests attached once they exist in ClassMarker.
   const assigned = SECTION_KEYS.map((k) => sections[k]).filter(Boolean);
-  if (assigned.length === 0) {
-    throw Object.assign(new Error('Assign at least one test to a section'), { status: 400 });
-  }
   const ids = assigned.map((s) => s.testId);
   if (new Set(ids).size !== ids.length) {
     throw Object.assign(new Error('The same test cannot fill two sections'), { status: 400 });
@@ -105,14 +118,16 @@ function validateExam(name, sections, ignoreExamId) {
   }
 }
 
-function createExam({ name, sections, hiddenStudentIds }) {
+function createExam({ name, date, sections, studentIds, hiddenStudentIds }) {
   const normalized = normalizeSections(sections);
   validateExam(name, normalized, null);
   const now = new Date().toISOString();
   const exam = {
     examId: crypto.randomUUID(),
     name: String(name).trim(),
+    date: normalizeDate(date),
     sections: normalized,
+    studentIds: normalizeHidden(studentIds),
     hiddenStudentIds: normalizeHidden(hiddenStudentIds),
     createdAt: now,
     updatedAt: now,
@@ -122,14 +137,18 @@ function createExam({ name, sections, hiddenStudentIds }) {
   return exam;
 }
 
-function updateExam(examId, { name, sections, hiddenStudentIds }) {
+function updateExam(examId, { name, date, sections, studentIds, hiddenStudentIds }) {
   const all = load();
   const idx = all.findIndex((e) => e.examId === String(examId));
   if (idx < 0) throw Object.assign(new Error('Exam not found'), { status: 404 });
   const next = {
     ...all[idx],
     name: name != null ? String(name).trim() : all[idx].name,
+    date: date !== undefined ? normalizeDate(date) : (all[idx].date || null),
     sections: sections != null ? normalizeSections(sections) : all[idx].sections,
+    studentIds: studentIds != null
+      ? normalizeHidden(studentIds)
+      : (all[idx].studentIds || []),
     hiddenStudentIds: hiddenStudentIds != null
       ? normalizeHidden(hiddenStudentIds)
       : (all[idx].hiddenStudentIds || []),

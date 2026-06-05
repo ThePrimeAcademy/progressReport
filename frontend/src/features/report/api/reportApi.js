@@ -84,13 +84,15 @@ export async function fetchAvailableTests() {
   return response.data.data || [];
 }
 
-export async function createExam({ name, sections }) {
-  const response = await apiClient.post('/exams', { name, sections });
+// payload: { name, date?, sections?, studentIds?, hiddenStudentIds? } — fields
+// omitted from an update keep their stored value.
+export async function createExam(payload) {
+  const response = await apiClient.post('/exams', payload);
   return response.data.data;
 }
 
-export async function updateExam(examId, { name, sections }) {
-  const response = await apiClient.put(`/exams/${encodeURIComponent(examId)}`, { name, sections });
+export async function updateExam(examId, payload) {
+  const response = await apiClient.put(`/exams/${encodeURIComponent(examId)}`, payload);
   return response.data.data;
 }
 

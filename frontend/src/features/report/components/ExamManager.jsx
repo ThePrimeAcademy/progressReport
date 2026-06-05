@@ -9,6 +9,7 @@ import {
   fetchExams,
   fetchAvailableTests,
   fetchExamTakers,
+  fetchStudents,
   createExam,
   updateExam,
   deleteExam,
@@ -55,6 +56,9 @@ const s = {
   hiddenRow: { display: 'flex', alignItems: 'center', gap: 7, fontSize: '0.8rem', padding: '3px 4px', borderRadius: 6, cursor: 'pointer' },
   hiddenRowOn: { background: '#fff1f2', color: '#b91c1c', textDecoration: 'line-through' },
   hiddenBadge: { fontSize: '0.68rem', fontWeight: 700, color: '#b91c1c', background: '#fff1f2', border: '1px solid #fca5a5', borderRadius: 999, padding: '2px 8px' },
+  dateChip: { fontSize: '0.7rem', fontWeight: 600, color: 'var(--accent)', background: 'var(--accent-dim)', borderRadius: 999, padding: '2px 9px', whiteSpace: 'nowrap' },
+  rosterChip: { fontSize: '0.68rem', fontWeight: 600, color: 'var(--muted)', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 999, padding: '2px 8px', whiteSpace: 'nowrap' },
+  searchInput: { width: '100%', boxSizing: 'border-box', padding: '6px 10px', borderRadius: 8, border: '1.5px solid var(--border)', fontSize: '0.78rem', fontFamily: 'inherit', marginBottom: 8 },
 };
 
 // Per-exam hidden-students editor: lists everyone who took the exam's tests;
@@ -129,12 +133,14 @@ function HiddenStudentsPanel({ exam, onSaved, onError }) {
   );
 }
 
-const EMPTY_FORM = { name: '', sections: { 1: '', 2: '', 3: '', 4: '' } };
+const EMPTY_FORM = { name: '', date: '', sections: { 1: '', 2: '', 3: '', 4: '' }, studentIds: [] };
 
 export default function ExamManager({ onExamsChanged }) {
   const [open, setOpen] = useState(false);
   const [exams, setExams] = useState([]);
   const [tests, setTests] = useState([]);
+  const [roster, setRoster] = useState([]); // full student list for the planning picker
+  const [studentSearch, setStudentSearch] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
@@ -150,9 +156,14 @@ export default function ExamManager({ onExamsChanged }) {
     setLoading(true);
     setError(null);
     try {
-      const [examList, testList] = await Promise.all([fetchExams(), fetchAvailableTests()]);
+      const [examList, testList, students] = await Promise.all([
+        fetchExams(),
+        fetchAvailableTests(),
+        fetchStudents().catch(() => []),
+      ]);
       setExams(examList);
       setTests(testList);
+      setRoster(students || []);
     } catch (err) {
       setError(err.response?.data?.error || err.message || 'Failed to load exams');
     } finally {
@@ -204,22 +215,35 @@ export default function ExamManager({ onExamsChanged }) {
   function openCreate() {
     setForm(EMPTY_FORM);
     setGroupFilter('');
+    setStudentSearch('');
     setFormMode('new');
   }
 
   function openEdit(exam) {
     setForm({
       name: exam.name,
+      date: exam.date || '',
       sections: {
         1: exam.sections?.['1']?.testId || '',
         2: exam.sections?.['2']?.testId || '',
         3: exam.sections?.['3']?.testId || '',
         4: exam.sections?.['4']?.testId || '',
       },
+      studentIds: exam.studentIds || [],
     });
     setGroupFilter('');
+    setStudentSearch('');
     setFormMode(exam.examId);
   }
+
+  const toggleStudent = (id) => {
+    setForm((f) => ({
+      ...f,
+      studentIds: f.studentIds.includes(id)
+        ? f.studentIds.filter((x) => x !== id)
+        : [...f.studentIds, id],
+    }));
+  };
 
   async function handleSave() {
     setSaving(true);
@@ -231,10 +255,11 @@ export default function ExamManager({ onExamsChanged }) {
         const test = tests.find((t) => t.testId === testId);
         sections[key] = testId ? { testId, testName: test?.testName || null } : null;
       }
+      const payload = { name: form.name, date: form.date, sections, studentIds: form.studentIds };
       if (formMode === 'new') {
-        await createExam({ name: form.name, sections });
+        await createExam(payload);
       } else {
-        await updateExam(formMode, { name: form.name, sections });
+        await updateExam(formMode, payload);
       }
       setFormMode(null);
       await refresh();
@@ -259,7 +284,13 @@ export default function ExamManager({ onExamsChanged }) {
     }
   }
 
-  const formValid = form.name.trim() && Object.values(form.sections).some(Boolean);
+  // Placeholders are allowed: name is the only requirement; tests, date and
+  // students can all come later via Edit.
+  const formValid = Boolean(form.name.trim());
+
+  const rosterFiltered = roster.filter(
+    (st) => !studentSearch || st.name.toLowerCase().includes(studentSearch.toLowerCase())
+  );
 
   return (
     <div style={s.card}>
@@ -290,6 +321,10 @@ export default function ExamManager({ onExamsChanged }) {
               <div key={exam.examId} style={s.examRow}>
                 <div style={s.examHead}>
                   <span style={s.examName}>{exam.name}</span>
+                  {exam.date && <span style={s.dateChip}>{exam.date}</span>}
+                  {(exam.studentIds || []).length > 0 && (
+                    <span style={s.rosterChip}>{exam.studentIds.length} student{exam.studentIds.length === 1 ? '' : 's'}</span>
+                  )}
                   {(exam.hiddenStudentIds || []).length > 0 && (
                     <span style={s.hiddenBadge}>{exam.hiddenStudentIds.length} hidden</span>
                   )}
@@ -338,14 +373,26 @@ export default function ExamManager({ onExamsChanged }) {
 
           {formMode !== null ? (
             <div style={s.form}>
-              <div>
-                <span style={s.label}>Exam name</span>
-                <input
-                  style={s.input}
-                  value={form.name}
-                  placeholder="e.g. DSATEN 2025 3B"
-                  onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-                />
+              <div style={s.grid2}>
+                <div>
+                  <span style={s.label}>Exam name</span>
+                  <input
+                    style={s.input}
+                    value={form.name}
+                    placeholder="e.g. DSATEN 2025 3B"
+                    onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+                  />
+                </div>
+                <div>
+                  <span style={s.label}>Exam date <span style={{ fontWeight: 400 }}>· optional</span></span>
+                  <input
+                    type="date"
+                    style={s.input}
+                    value={form.date}
+                    onChange={(e) => setForm((f) => ({ ...f, date: e.target.value }))}
+                  />
+                  <div style={s.hint}>Create the exam ahead of time — sections below can stay empty until the tests exist.</div>
+                </div>
               </div>
 
               <div>
@@ -375,6 +422,34 @@ export default function ExamManager({ onExamsChanged }) {
                     </select>
                   </div>
                 ))}
+              </div>
+
+              <div>
+                <span style={s.label}>
+                  Students taking this exam
+                  <span style={{ fontWeight: 400 }}> · optional · {form.studentIds.length} selected</span>
+                </span>
+                <input
+                  style={s.searchInput}
+                  value={studentSearch}
+                  placeholder="Search students…"
+                  onChange={(e) => setStudentSearch(e.target.value)}
+                />
+                <div style={s.hiddenList}>
+                  {rosterFiltered.map((st) => (
+                    <label key={st.id} style={s.hiddenRow}>
+                      <input
+                        type="checkbox"
+                        checked={form.studentIds.includes(st.id)}
+                        onChange={() => toggleStudent(st.id)}
+                      />
+                      {st.name}
+                    </label>
+                  ))}
+                  {rosterFiltered.length === 0 && (
+                    <span style={{ ...s.hint, gridColumn: '1 / -1' }}>No students match.</span>
+                  )}
+                </div>
               </div>
 
               <div style={s.formActions}>
