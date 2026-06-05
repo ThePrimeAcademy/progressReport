@@ -305,15 +305,44 @@ async function generateReportPDF(student, groups, stats, satScores, startDate, e
   };
 
   const html = renderTemplate(replacements);
+  try {
+    return await renderPdf(html);
+  } catch (err) {
+    // The shared browser may have died between renders (OOM kill, crash) —
+    // relaunch once and retry before giving up.
+    console.warn('[pdf] Render failed, relaunching browser:', err.message);
+    browserPromise = null;
+    return renderPdf(html);
+  }
+}
 
-  const browser = await puppeteer.launch({
+// ── Shared Chromium instance ──────────────────────────────────
+// Launching Chromium per render took several seconds on Railway and is the
+// dominant cost of a PDF job (bulk email even launched several browsers in
+// parallel). Keep one instance alive and give each render its own page.
+let browserPromise = null;
+
+async function getBrowser() {
+  if (browserPromise) {
+    try {
+      const existing = await browserPromise;
+      const alive = typeof existing.isConnected === 'function' ? existing.isConnected() : existing.connected;
+      if (alive) return existing;
+    } catch (_) { /* fall through and relaunch */ }
+    browserPromise = null;
+  }
+  browserPromise = puppeteer.launch({
     headless: 'new',
     executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
     args: ['--no-sandbox', '--disable-setuid-sandbox'],
   });
+  return browserPromise;
+}
 
+async function renderPdf(html) {
+  const browser = await getBrowser();
+  const page = await browser.newPage();
   try {
-    const page = await browser.newPage();
     // Don't wait for full network-idle — the template @imports Google Fonts and
     // a slow/flaky CDN response was causing first-request 500s. Load the DOM,
     // then wait up to 5s for fonts; fall back to the CSS fallback stack if not.
@@ -322,14 +351,13 @@ async function generateReportPDF(student, groups, stats, satScores, startDate, e
       page.evaluate(() => document.fonts && document.fonts.ready),
       new Promise((resolve) => setTimeout(resolve, 5000)),
     ]);
-    const pdfBuffer = await page.pdf({
+    return await page.pdf({
       format: 'A4',
       printBackground: true,
       margin: { top: '0', right: '0', bottom: '0', left: '0' },
     });
-    return pdfBuffer;
   } finally {
-    await browser.close();
+    await page.close().catch(() => { /* browser may already be gone */ });
   }
 }
 

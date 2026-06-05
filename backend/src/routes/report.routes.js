@@ -235,9 +235,21 @@ router.post('/preview', validate, async (req, res, next) => {
   try {
     const { studentId, startDate, endDate, dayOfWeek } = req.body;
     const key = previewKey({ studentId, startDate, endDate, dayOfWeek });
-    const start = startOrReusePreview(key, () =>
-      gatherPreviewData({ studentId, startDate, endDate, dayOfWeek })
-    );
+    const start = startOrReusePreview(key, async () => {
+      const data = await gatherPreviewData({ studentId, startDate, endDate, dayOfWeek });
+      // Pre-warm the PDF for the same inputs (fire and forget) — previewing
+      // a student almost always precedes downloading their report, and the
+      // download POST derives the same job key, so the click joins a render
+      // that is already finished or in flight.
+      startOrReusePdf(`pdf-${key}`, async () => {
+        const pdfBuffer = await generateReportPDF(
+          data.student, data.groups, data.stats, data.satScores,
+          startDate, endDate, data.latestTest, data.categoryPerf, data.categoryPerfSplit
+        );
+        return { buffer: pdfBuffer, filename: `${buildReportFilename(data.student.name)}.pdf` };
+      });
+      return data;
+    });
     res.json({ success: true, data: start });
   } catch (err) {
     next(err);

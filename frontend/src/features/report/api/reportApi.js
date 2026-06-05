@@ -18,15 +18,16 @@ export async function fetchPreviewJobStatus(jobId) {
   return response.data.data;
 }
 
-// PDF download is job-based (the render takes longer than Railway's edge
+// PDF generation is job-based (the render takes longer than Railway's edge
 // allows a single request to live): POST enqueues, we poll until ready, then
-// fetch the finished file. Every step is a short request, so transient
-// network errors get absorbed by the apiClient retry instead of failing the
-// whole download.
-const PDF_POLL_INTERVAL_MS = 2000;
-const PDF_POLL_MAX_ATTEMPTS = 90; // ~3 minutes
+// hand back the file URL — the caller points a browser tab at it and the
+// server streams the PDF inline. Every step is a short request, so transient
+// network errors get absorbed by the apiClient retry. The render is usually
+// pre-warmed by the preview, so polling often succeeds on the first check.
+const PDF_POLL_INTERVAL_MS = 1000;
+const PDF_POLL_MAX_ATTEMPTS = 180; // ~3 minutes
 
-export async function downloadReport(payload) {
+export async function requestReportPdf(payload) {
   const start = await apiClient.post('/report', payload, { timeout: 15000 });
   const { jobId } = start.data.data;
 
@@ -36,16 +37,13 @@ export async function downloadReport(payload) {
     if (job.status === 'ready') break;
     if (job.status === 'failed') throw new Error(job.error || 'PDF generation failed');
     if (attempt === PDF_POLL_MAX_ATTEMPTS - 1) throw new Error('PDF generation timed out — please try again');
-    await new Promise((resolve) => setTimeout(resolve, PDF_POLL_INTERVAL_MS));
+    await new Promise((resolve) => setTimeout(resolve, attempt === 0 ? 250 : PDF_POLL_INTERVAL_MS));
   }
 
-  const response = await apiClient.get(`/report/job/${encodeURIComponent(jobId)}/file`, {
-    responseType: 'arraybuffer',
-  });
-  const disposition = response.headers['content-disposition'] || '';
-  const match = disposition.match(/filename="?([^"]+)"?/);
-  const filename = match ? match[1] : `progress-report.pdf`;
-  return { buffer: response.data, filename };
+  return {
+    jobId,
+    fileUrl: `${apiClient.defaults.baseURL}/report/job/${encodeURIComponent(jobId)}/file`,
+  };
 }
 
 export async function listScoringSheets() {

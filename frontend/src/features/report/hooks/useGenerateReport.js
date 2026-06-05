@@ -4,7 +4,7 @@ import {
   fetchStudents,
   previewReport,
   fetchPreviewJobStatus,
-  downloadReport,
+  requestReportPdf,
   fetchStudentContacts,
   saveStudentContacts,
   fetchAllContacts,
@@ -13,7 +13,6 @@ import {
   emailReport,
   fetchEmailJobStatus,
 } from '../api/reportApi.js';
-import { downloadFile } from '../../../utils/downloadFile.js';
 
 export function useGenerateReport() {
   const [students, setStudents] = useState([]);
@@ -166,16 +165,40 @@ export function useGenerateReport() {
     setDownloadError(null);
     setDownloadSuccess(false);
     setDownloadLoading(true);
+    // Open the tab synchronously, inside the click gesture, so popup blockers
+    // allow it — then navigate it to the PDF once the render finishes.
+    // (Opening after the async wait used to get blocked and fall back to a
+    // literal file download.)
+    let tab = null;
     try {
-      const { buffer, filename } = await downloadReport({
+      tab = window.open('', '_blank');
+      if (tab) {
+        tab.document.write(
+          '<title>Generating report…</title>' +
+          '<body style="margin:0;display:grid;place-items:center;height:100vh;' +
+          'font-family:system-ui,sans-serif;color:#1a56db;background:#f8faff">' +
+          '<div style="text-align:center"><div style="font-size:2rem;margin-bottom:10px">⏳</div>' +
+          'Generating report…</div></body>'
+        );
+      }
+    } catch (_) {
+      tab = null;
+    }
+    try {
+      const { fileUrl } = await requestReportPdf({
         studentId: selectedStudentId,
         startDate,
         endDate,
         dayOfWeek: dayOfWeek || undefined,
       });
-      downloadFile(buffer, filename, 'application/pdf');
+      if (tab && !tab.closed) {
+        tab.location.replace(fileUrl);
+      } else if (!window.open(fileUrl, '_blank')) {
+        throw new Error('Pop-up blocked — allow pop-ups for this site to view the report.');
+      }
       setDownloadSuccess(true);
     } catch (err) {
+      if (tab && !tab.closed) tab.close();
       setDownloadError(err.message);
     } finally {
       setDownloadLoading(false);
