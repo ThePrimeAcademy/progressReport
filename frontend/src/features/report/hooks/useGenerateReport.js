@@ -5,6 +5,8 @@ import {
   previewReport,
   fetchPreviewJobStatus,
   downloadReport,
+  fetchExams,
+  fetchExamTakers,
   fetchStudentContacts,
   saveStudentContacts,
   fetchAllContacts,
@@ -41,6 +43,11 @@ export function useGenerateReport() {
   // first render). When a Set, only students whose id is in the set are
   // shown in the picker/dropdown.
   const [activeStudentIds, setActiveStudentIds] = useState(null);
+  // SAT-exam exclusion filter: '' = off; otherwise an examId whose takers
+  // are removed from the student list.
+  const [excludeExamId, setExcludeExamId] = useState('');
+  const [excludedStudentIds, setExcludedStudentIds] = useState(null);
+  const [examsList, setExamsList] = useState([]);
   const [emailConfigured, setEmailConfigured] = useState(false);
   const [emailLoading, setEmailLoading] = useState(false);
   const [emailError, setEmailError] = useState(null);
@@ -62,6 +69,9 @@ export function useGenerateReport() {
       }
     }
     load();
+    fetchExams()
+      .then((e) => { if (!cancelled) setExamsList(e || []); })
+      .catch(() => { if (!cancelled) setExamsList([]); });
     fetchEmailStatus()
       .then((s) => setEmailConfigured(Boolean(s?.configured)))
       .catch(() => setEmailConfigured(false));
@@ -117,9 +127,25 @@ export function useGenerateReport() {
     return () => { cancelled = true; clearTimeout(timer); };
   }, [startDate, endDate, dayOfWeek]);
 
-  const filteredStudents = activeStudentIds
-    ? students.filter((s) => activeStudentIds.has(s.id))
-    : students;
+  // Optional exclusion: hide students who already took a given SAT exam
+  // (e.g. when assigning a make-up exam to everyone who hasn't taken it).
+  useEffect(() => {
+    if (!excludeExamId) {
+      setExcludedStudentIds(null);
+      return;
+    }
+    let cancelled = false;
+    fetchExamTakers(excludeExamId)
+      .then((ids) => { if (!cancelled) setExcludedStudentIds(new Set(ids.map(String))); })
+      .catch(() => { if (!cancelled) setExcludedStudentIds(null); });
+    return () => { cancelled = true; };
+  }, [excludeExamId]);
+
+  const filteredStudents = students.filter((s) => {
+    if (activeStudentIds && !activeStudentIds.has(s.id)) return false;
+    if (excludedStudentIds && excludedStudentIds.has(String(s.id))) return false;
+    return true;
+  });
 
   const handlePreview = useCallback(async () => {
     setPreviewError(null);
@@ -284,6 +310,7 @@ export function useGenerateReport() {
     students, studentsLoading, studentsError, setStudents,
     filteredStudents,
     activeStudentIds,
+    examsList, excludeExamId, setExcludeExamId,
     selectedStudentId, setSelectedStudentId,
     startDate, setStartDate,
     endDate, setEndDate,

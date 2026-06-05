@@ -5,7 +5,7 @@
 const express = require('express');
 const exams = require('../services/exam.service');
 const { listCurves, deleteCurve } = require('../services/scoring-sheet.service');
-const { getKnownTests } = require('../services/classmarker.service');
+const { getKnownTests, getTakersForTests } = require('../services/classmarker.service');
 const db = require('../services/db.service');
 
 const router = express.Router();
@@ -116,6 +116,38 @@ router.get('/available-tests', async (req, res, next) => {
         String(a.testName).localeCompare(String(b.testName))
       );
     res.json({ success: true, data });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/exams/:examId/takers
+// ClassMarker user_ids of every student with at least one attempt on any of
+// the exam's tests (webhook store + API cache). Used by the report page to
+// exclude students who already took an exam.
+router.get('/:examId/takers', async (req, res, next) => {
+  try {
+    const exam = exams.getExam(req.params.examId);
+    if (!exam) return res.status(404).json({ success: false, error: 'Exam not found' });
+
+    const testIds = new Set(
+      Object.values(exam.sections || {}).filter(Boolean).map((s) => String(s.testId))
+    );
+    const ids = new Set();
+
+    for (const r of await db.getAllRecords()) {
+      const tid = String(r.test?.testId ?? r.test_id ?? '');
+      if (!testIds.has(tid)) continue;
+      const uid = r.student?.userId ?? r.user_id;
+      if (uid != null) ids.add(String(uid));
+    }
+    try {
+      for (const uid of await getTakersForTests(testIds)) ids.add(uid);
+    } catch (e) {
+      console.warn('[exams] API-cache takers unavailable:', e.message);
+    }
+
+    res.json({ success: true, data: Array.from(ids) });
   } catch (err) {
     next(err);
   }

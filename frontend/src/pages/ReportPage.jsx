@@ -55,6 +55,13 @@ const s = {
   cardBody: { padding: '24px', display: 'flex', flexDirection: 'column', gap: 20 },
   divider: { height: '1px', background: 'var(--border)' },
   error: { padding: '12px 16px', background: '#fff1f2', border: '1.5px solid #fca5a5', borderRadius: 8, color: '#b91c1c', fontSize: '0.85rem' },
+  excludeBar: {
+    display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+    background: 'var(--bg)', border: '1.5px solid var(--border)', borderRadius: 12,
+    padding: '10px 16px', marginBottom: 20, boxShadow: 'var(--shadow)',
+  },
+  excludeLabel: { fontSize: '0.74rem', fontWeight: 600, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.06em' },
+  excludeSelect: { padding: '6px 10px', borderRadius: 8, border: '1.5px solid var(--border)', fontSize: '0.8rem', background: '#fff', fontFamily: 'inherit', minWidth: 220 },
 };
 
 export default function ReportPage() {
@@ -68,6 +75,7 @@ export default function ReportPage() {
     previewData, previewLoading, previewError,
     downloadLoading, downloadError, downloadSuccess,
     handlePreview, handleDownload,
+    examsList, excludeExamId, setExcludeExamId,
     contacts, updateContacts, saveContacts,
     allContacts, allContactsLoading, noteContactsSaved,
     emailConfigured, emailLoading, emailError, emailSuccess,
@@ -111,6 +119,32 @@ export default function ReportPage() {
           <h1 style={s.title}>Student Performance</h1>
           <p style={s.sub}>Select a student, date range, and optionally filter by day to generate a detailed report.</p>
         </header>
+
+        {examsList.length > 0 && (
+          <div style={s.excludeBar}>
+            <span style={s.excludeLabel}>Hide students who took</span>
+            <select
+              style={s.excludeSelect}
+              value={excludeExamId}
+              onChange={(e) => setExcludeExamId(e.target.value)}
+              aria-label="Hide students who took a specific SAT exam"
+            >
+              <option value="">— no exam filter —</option>
+              {examsList.map((exam) => (
+                <option key={exam.examId} value={exam.examId}>{exam.name}</option>
+              ))}
+            </select>
+            {excludeExamId && (
+              <button
+                type="button"
+                style={{ ...s.modePill, border: '1px solid var(--border)' }}
+                onClick={() => setExcludeExamId('')}
+              >
+                Clear
+              </button>
+            )}
+          </div>
+        )}
 
         {bulkMode ? (
           <BulkSendPanel

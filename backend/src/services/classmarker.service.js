@@ -444,6 +444,19 @@ async function getKnownTests() {
   return Array.from(tests.values()).map((t) => ({ ...t, groups: Array.from(t.groups.values()) }));
 }
 
+// user_ids (as strings) with at least one cached API result on any of the
+// given testIds. Complements the webhook store for exam-taker lookups.
+async function getTakersForTests(testIdSet) {
+  const { results } = await fetchAllResults();
+  const ids = new Set();
+  for (const r of results) {
+    if (r.test_id != null && testIdSet.has(String(r.test_id)) && r.user_id != null) {
+      ids.add(String(r.user_id));
+    }
+  }
+  return ids;
+}
+
 // Set of ClassMarker user_ids that have at least one finished test inside
 // the given date range (+ optional day-of-week filter). Reads from the
 // already-cached fetchAllResults, so this is purely an in-memory scan and
@@ -479,6 +492,7 @@ module.exports = {
   fetchCategoryMap,
   getCategoryName,
   getKnownTests,
+  getTakersForTests,
   mergeWebhookResult,
   getDataVersion,
 };

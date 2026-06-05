@@ -200,22 +200,28 @@ async function getSatScoresForStudent(student) {
   if (buckets.length === 0) return empty;
 
   // Latest = most recently finished group with AT LEAST ONE section graded.
-  // Math/RW cards populate independently as soon as their respective curve
-  // is uploaded; the total score still requires both curves to be present.
+  // Each card falls back independently to the most recent exam that HAS that
+  // score — a missing math section shows the previous math score instead of
+  // an em dash.
   const anyGraded = buckets.filter((b) => b.mathScaled != null || b.rwScaled != null);
-  const latest = anyGraded.sort((a, b) => b.latestFinished - a.latestFinished)[0] || null;
+  anyGraded.sort((a, b) => b.latestFinished - a.latestFinished);
+  const latest = anyGraded[0] || null;
+  const latestWith = (key) => anyGraded.find((b) => b[key] != null) || null;
+  const latestRw = latestWith('rwScaled');
+  const latestMath = latestWith('mathScaled');
+  const latestTotal = latestWith('total');
 
   // Super score = best RW ever + best Math ever (independent groups OK).
   const bestRw = buckets.reduce((m, b) => Math.max(m, b.rwScaled || 0), 0);
   const bestMath = buckets.reduce((m, b) => Math.max(m, b.mathScaled || 0), 0);
   const superScore = bestRw > 0 && bestMath > 0 ? bestRw + bestMath : null;
 
-  // Full per-attempt history, newest first. Only include buckets that have at
-  // least one section graded — otherwise an empty SAT group would render a
-  // ghost card with all dashes.
+  // Full per-attempt history, OLDEST FIRST (reads left → right in the UI and
+  // PDF). Only include buckets that have at least one section graded —
+  // otherwise an empty SAT group would render a ghost card with all dashes.
   const allScores = anyGraded
     .slice()
-    .sort((a, b) => b.latestFinished - a.latestFinished)
+    .sort((a, b) => a.latestFinished - b.latestFinished)
     .map((b) => ({
       groupId: b.groupId,
       groupName: b.groupName,
@@ -230,9 +236,9 @@ async function getSatScoresForStudent(student) {
 
   return {
     latestTestLabel: latest?.groupName ?? null,
-    latestTestScore: latest?.total ?? null,
-    latestEnglishScore: latest?.rwScaled ?? null,
-    latestMathScore: latest?.mathScaled ?? null,
+    latestTestScore: latestTotal?.total ?? null,
+    latestEnglishScore: latestRw?.rwScaled ?? null,
+    latestMathScore: latestMath?.mathScaled ?? null,
     superScore,
     source: latest || superScore ? 'curve' : null,
     allScores,

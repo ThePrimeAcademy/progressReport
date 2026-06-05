@@ -99,6 +99,11 @@ export async function deleteExam(examId) {
   return response.data;
 }
 
+export async function fetchExamTakers(examId) {
+  const response = await apiClient.get(`/exams/${encodeURIComponent(examId)}/takers`);
+  return response.data.data || [];
+}
+
 export async function fetchStudentContacts(studentId) {
   const response = await apiClient.get(
     `/students/${encodeURIComponent(studentId)}/contacts`

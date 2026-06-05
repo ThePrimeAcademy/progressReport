@@ -218,9 +218,9 @@ function buildWeeklySection(categoryPerfSplit, categoryPerf) {
     .slice(0, TOP);
 
   return `
-    <div style="margin-bottom:10px;">
+    <div style="margin-bottom:12px;">
       <div class="section-title">Weekly Performance</div>
-      <div style="display:flex;flex-direction:column;gap:10px;">
+      <div style="display:flex;flex-direction:column;gap:14px;">
         ${buildSubjectBox('English', '#1a56db', '#eff6ff', topN(enCats), botN(enCats))}
         ${buildSubjectBox('Math', '#1a56db', '#eff6ff', topN(maCats), botN(maCats))}
       </div>
@@ -243,15 +243,15 @@ function buildSatHistorySection(allScores) {
   const cards = allScores.map((s) => {
     const accent = s.total != null ? '#1a56db' : '#6b7280';
     return `
-      <div style="flex:1;min-width:140px;background:#fafbff;border:1px solid var(--border);border-radius:10px;padding:8px 12px;">
-        <div style="font-size:0.68rem;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:0.07em;margin-bottom:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+      <div style="flex:1;min-width:150px;background:#fafbff;border:1px solid var(--border);border-radius:10px;padding:12px 14px;">
+        <div style="font-size:0.7rem;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:0.07em;margin-bottom:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
           ${escapeHtml(s.groupName || 'SAT')}
         </div>
-        <div style="font-size:1.15rem;font-weight:700;color:${accent};line-height:1;">${s.total ?? '—'}</div>
-        <div style="font-size:0.68rem;color:var(--muted);margin-top:4px;">RW ${s.english ?? '—'} &middot; M ${s.math ?? '—'} ${s.date ? `&middot; ${escapeHtml(s.date)}` : ''}</div>
+        <div style="font-size:1.4rem;font-weight:700;color:${accent};line-height:1;">${s.total ?? '—'}</div>
+        <div style="font-size:0.7rem;color:var(--muted);margin-top:5px;">RW ${s.english ?? '—'} &middot; M ${s.math ?? '—'} ${s.date ? `&middot; ${escapeHtml(s.date)}` : ''}</div>
       </div>`;
   }).join('');
-  return `<div style="display:flex;gap:8px;flex-wrap:wrap;margin:0 0 14px;">${cards}</div>`;
+  return `<div style="display:flex;gap:10px;flex-wrap:wrap;margin:0 0 18px;">${cards}</div>`;
 }
 
 function buildTestRows(groups) {

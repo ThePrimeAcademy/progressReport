@@ -198,7 +198,10 @@ async function getLatestQuestionCategories() {
 }
 
 async function getWebhookCategoryPerformance(student, startDate, endDate, dayOfWeek) {
-  const allRecords = await findMatchingRecords(student, startDate, endDate, dayOfWeek);
+  // Like the SAT score cards, the category breakdown reflects the student's
+  // LATEST SAT exam — even when it falls outside the report's date range
+  // (reports usually cover the past week; exams are often older).
+  const allRecords = await findMatchingRecords(student, '1970-01-01', '2999-12-31', null);
   const records = selectLatestSatExamRecords(allRecords);
   // Resolve names from the live ClassMarker category map so renames are
   // reflected without requiring students to retake tests.
@@ -223,7 +226,9 @@ async function getWebhookCategoryPerformance(student, startDate, endDate, dayOfW
 }
 
 async function getWebhookCategoryPerformanceSplit(student, startDate, endDate, dayOfWeek) {
-  const allRecords = await findMatchingRecords(student, startDate, endDate, dayOfWeek);
+  // Wide window for the same reason as getWebhookCategoryPerformance: the
+  // weekly report should always show the latest SAT exam's breakdown.
+  const allRecords = await findMatchingRecords(student, '1970-01-01', '2999-12-31', null);
   const records = selectLatestSatExamRecords(allRecords);
   // Resolve names from the live ClassMarker category map so renames are
   // reflected without requiring students to retake tests.
