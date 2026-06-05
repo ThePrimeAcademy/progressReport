@@ -21,7 +21,7 @@ const apiClient = axios.create({
 //     retried request reuses the in-flight job instead of duplicating work
 // Retries trigger on connection-level failures (no response) and 502/503/504.
 const RETRYABLE_STATUS = new Set([502, 503, 504]);
-const DEDUPED_POSTS = [/^\/report\/preview$/, /^\/report\/email$/];
+const DEDUPED_POSTS = [/^\/report$/, /^\/report\/preview$/, /^\/report\/email$/];
 const MAX_RETRIES = 4;
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 

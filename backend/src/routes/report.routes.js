@@ -261,40 +261,106 @@ router.get('/preview/job/:jobId', (req, res) => {
   });
 });
 
-// POST /api/report — PDF
-router.post('/', validate, async (req, res, next) => {
+// ── PDF download — async job (same pattern as /preview and /email) ────────
+// The synchronous version blocked on data gather + Puppeteer render, which
+// routinely exceeds Railway's ~30s edge timeout and surfaced as a "network
+// error" in the browser. POST now enqueues and returns a jobId; the frontend
+// polls GET /job/:jobId, then downloads GET /job/:jobId/file.
+const PDF_TTL_MS = 5 * 60 * 1000;
+const pdfJobs = new Map();
+
+function readPdfJob(key) {
+  const job = pdfJobs.get(key);
+  if (!job) return null;
+  if (job.status !== 'pending' && job.finishedAt && Date.now() - job.finishedAt > PDF_TTL_MS) {
+    pdfJobs.delete(key);
+    return null;
+  }
+  return job;
+}
+
+function startOrReusePdf(key, doWork) {
+  const existing = readPdfJob(key);
+  if (existing) return { jobId: key, status: existing.status };
+  pdfJobs.set(key, { status: 'pending', startedAt: Date.now() });
+  (async () => {
+    try {
+      const result = await doWork();
+      pdfJobs.set(key, {
+        status: 'ready',
+        startedAt: pdfJobs.get(key)?.startedAt || Date.now(),
+        finishedAt: Date.now(),
+        result,
+      });
+    } catch (err) {
+      console.error(`[pdf job ${key}] FAILED:`, err.message);
+      pdfJobs.set(key, {
+        status: 'failed',
+        startedAt: pdfJobs.get(key)?.startedAt || Date.now(),
+        finishedAt: Date.now(),
+        error: err.message,
+      });
+    } finally {
+      if (pdfJobs.size > 50) {
+        const cutoff = Date.now() - PDF_TTL_MS;
+        for (const [k, v] of pdfJobs.entries()) {
+          if (v.status !== 'pending' && v.finishedAt && v.finishedAt < cutoff) pdfJobs.delete(k);
+        }
+      }
+    }
+  })();
+  return { jobId: key, status: 'pending' };
+}
+
+// POST /api/report — enqueue the PDF render, return { jobId, status }.
+router.post('/', validate, (req, res, next) => {
   try {
     const { studentId, startDate, endDate, dayOfWeek } = req.body;
-
-    const student = await resolveStudent(studentId);
-    const [groups, apiLatestTest, satScores, webhookLatestTest, webhookCategoryPerf, webhookCategorySplit] = await Promise.all([
-      studentId.startsWith("sheets:") ? Promise.resolve([]) : getStudentResultsGrouped(studentId, startDate, endDate, dayOfWeek),
-      studentId.startsWith("sheets:") ? Promise.resolve(null) : getLatestTestResult(studentId, startDate, endDate, dayOfWeek),
-      getSatScoresForStudent(student),
-      getLatestWebhookTestResult(student, startDate, endDate, dayOfWeek),
-      getWebhookCategoryPerformance(student, startDate, endDate, dayOfWeek),
-      getWebhookCategoryPerformanceSplit(student, startDate, endDate, dayOfWeek),
-    ]);
-
-    const allResults = groups.flatMap((g) => g.results);
-    const stats = computeStats(allResults);
-    const categoryPerf = webhookCategoryPerf.length
-      ? webhookCategoryPerf
-      : computeCategoryPerformance(groups);
-    const latestTest = webhookLatestTest || apiLatestTest;
-
-    const pdfBuffer = await generateReportPDF(student, groups, stats, satScores, startDate, endDate, latestTest, categoryPerf, webhookCategorySplit);
-
-    const filename = `${buildReportFilename(student.name)}.pdf`;
-    res.set({
-      'Content-Type': 'application/pdf',
-      'Content-Disposition': `inline; filename="${filename}"`,
-      'Content-Length': pdfBuffer.length,
+    // previewKey already mixes in the data/exam/curve versions, so a PDF job
+    // never outlives a scoring change. Prefix keeps the job maps distinct.
+    const key = `pdf-${previewKey({ studentId, startDate, endDate, dayOfWeek })}`;
+    const start = startOrReusePdf(key, async () => {
+      const data = await gatherPreviewData({ studentId, startDate, endDate, dayOfWeek });
+      const pdfBuffer = await generateReportPDF(
+        data.student, data.groups, data.stats, data.satScores,
+        startDate, endDate, data.latestTest, data.categoryPerf, data.categoryPerfSplit
+      );
+      return { buffer: pdfBuffer, filename: `${buildReportFilename(data.student.name)}.pdf` };
     });
-    res.send(pdfBuffer);
+    res.json({ success: true, data: start });
   } catch (err) {
     next(err);
   }
+});
+
+// GET /api/report/job/:jobId — poll target for the PDF job.
+router.get('/job/:jobId', (req, res) => {
+  const job = readPdfJob(req.params.jobId);
+  if (!job) {
+    return res.status(404).json({ success: false, error: 'PDF job not found (it may have expired).' });
+  }
+  res.json({
+    success: true,
+    data: {
+      status: job.status,
+      error: job.error,
+      durationMs: (job.finishedAt || Date.now()) - job.startedAt,
+    },
+  });
+});
+
+// GET /api/report/job/:jobId/file — the finished PDF.
+router.get('/job/:jobId/file', (req, res) => {
+  const job = readPdfJob(req.params.jobId);
+  if (!job) return res.status(404).json({ success: false, error: 'PDF job not found (it may have expired).' });
+  if (job.status === 'pending') return res.status(409).json({ success: false, error: 'PDF still rendering.' });
+  if (job.status === 'failed') return res.status(500).json({ success: false, error: job.error || 'PDF generation failed.' });
+  res.set({
+    'Content-Type': 'application/pdf',
+    'Content-Disposition': `inline; filename="${job.result.filename}"`,
+    'Content-Length': job.result.buffer.length,
+  });
+  res.send(job.result.buffer);
 });
 
 // GET /api/report/email/status — lets the UI know if email sending is wired up
