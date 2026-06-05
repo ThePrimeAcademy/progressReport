@@ -413,7 +413,9 @@ function clearCache() {
 
 // Distinct tests from the cached ClassMarker results. Complements the webhook
 // store in the exam-builder picker: tests whose attempts all predate webhook
-// capture (or whose webhooks were never configured) only exist here.
+// capture (or whose webhooks were never configured) only exist here. A test
+// can be linked to several groups, so each entry carries ALL groups it was
+// attempted under.
 async function getKnownTests() {
   const { results, groupMap, testMap } = await fetchAllResults();
   const tests = new Map();
@@ -424,17 +426,22 @@ async function getKnownTests() {
       tests.set(id, {
         testId: id,
         testName: testMap[id] || `Test #${id}`,
-        groupId: r.group_id != null ? String(r.group_id) : null,
-        groupName: groupMap[String(r.group_id)] || null,
         attempts: 0,
         lastFinished: 0,
+        groups: new Map(), // groupId → { groupId, groupName, lastFinished }
       });
     }
     const t = tests.get(id);
     t.attempts++;
     if ((r.time_finished || 0) > t.lastFinished) t.lastFinished = r.time_finished || 0;
+    if (r.group_id != null) {
+      const gid = String(r.group_id);
+      const g = t.groups.get(gid) || { groupId: gid, groupName: groupMap[gid] || null, lastFinished: 0 };
+      if ((r.time_finished || 0) > g.lastFinished) g.lastFinished = r.time_finished || 0;
+      t.groups.set(gid, g);
+    }
   }
-  return Array.from(tests.values());
+  return Array.from(tests.values()).map((t) => ({ ...t, groups: Array.from(t.groups.values()) }));
 }
 
 // Set of ClassMarker user_ids that have at least one finished test inside

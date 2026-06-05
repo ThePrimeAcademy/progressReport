@@ -13,6 +13,7 @@
 const db = require('./db.service');
 const { getCurve, gradeScaled } = require('./scoring-sheet.service');
 const { getTestSectionMap, examCurveKey } = require('./exam.service');
+const { getStudentResultsGrouped } = require('./classmarker.service');
 
 // Only groups whose name contains "SAT" (case-insensitive) participate in SAT
 // score aggregation. Keeps non-SAT classes (e.g. ACT, subject tests, school
@@ -158,8 +159,42 @@ async function getSatScoresForStudent(student) {
     '1970-01-01',
     '2999-12-31',
     null
-  );
-  if (!records || records.length === 0) return empty;
+  ) || [];
+
+  // Attempts that never produced a webhook (group link without webhooks
+  // enabled, or taken before webhooks were configured) still exist in the
+  // ClassMarker API cache. For exam-mapped tests the raw score is enough to
+  // grade, so fill the gaps with pseudo-records (points_scored = raw correct
+  // for DSAT, where every question is worth 1 point). Tests with ANY webhook
+  // record stay webhook-only to avoid double counting.
+  const examMap = getTestSectionMap();
+  if (examMap.size > 0 && student.id && !String(student.id).startsWith('sheets:')) {
+    const covered = new Set();
+    for (const r of records) {
+      const tid = String(r.test?.testId ?? r.test_id ?? '');
+      if (tid && examMap.has(tid)) covered.add(tid);
+    }
+    try {
+      const apiGroups = await getStudentResultsGrouped(String(student.id), '1970-01-01', '2999-12-31', null);
+      for (const g of apiGroups) {
+        for (const r of g.results) {
+          const tid = String(r.testId ?? '');
+          if (!tid || !examMap.has(tid) || covered.has(tid)) continue;
+          records.push({
+            test: { testId: tid, testName: r.testName },
+            group: { groupId: g.groupId, groupName: g.groupName },
+            timeFinished: r.timeFinished,
+            score: r.score,
+            questions: [],
+          });
+        }
+      }
+    } catch (e) {
+      console.warn('[sat] API-cache fallback unavailable:', e.message);
+    }
+  }
+
+  if (records.length === 0) return empty;
 
   const buckets = gradeRecordsByGroup(records).map(applyCurves);
   if (buckets.length === 0) return empty;

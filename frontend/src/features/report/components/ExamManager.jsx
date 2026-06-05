@@ -83,13 +83,24 @@ export default function ExamManager({ onExamsChanged }) {
     if (open) refresh();
   }, [open, refresh]);
 
+  // A test can be linked to several ClassMarker groups — offer every group
+  // any test appears under, and match the filter against all of them.
   const groups = useMemo(() => {
-    const seen = new Map();
+    const seen = new Set();
     for (const t of tests) {
-      if (t.groupName && !seen.has(t.groupName)) seen.set(t.groupName, true);
+      for (const g of t.groups || []) {
+        if (g.groupName) seen.add(g.groupName);
+      }
+      if (t.groupName) seen.add(t.groupName);
     }
-    return Array.from(seen.keys()).sort();
+    return Array.from(seen).sort();
   }, [tests]);
+
+  const inGroup = useCallback((t, groupName) => {
+    if (!groupName) return true;
+    if ((t.groups || []).some((g) => g.groupName === groupName)) return true;
+    return t.groupName === groupName;
+  }, []);
 
   const editingExamId = formMode && formMode !== 'new' ? formMode : null;
 
@@ -102,12 +113,12 @@ export default function ExamManager({ onExamsChanged }) {
         .map(([, v]) => v)
     );
     return tests.filter((t) => {
-      if (groupFilter && t.groupName !== groupFilter) return false;
+      if (!inGroup(t, groupFilter)) return false;
       if (chosenElsewhere.has(t.testId)) return false;
       if (t.assignedToExamId && t.assignedToExamId !== editingExamId) return false;
       return true;
     });
-  }, [tests, form.sections, groupFilter, editingExamId]);
+  }, [tests, form.sections, groupFilter, editingExamId, inGroup]);
 
   function openCreate() {
     setForm(EMPTY_FORM);

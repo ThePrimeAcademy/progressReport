@@ -29,47 +29,52 @@ router.get('/', (req, res, next) => {
 // GET /api/exams/available-tests
 // Distinct tests for the picker UI, merged from BOTH stores: the webhook
 // store (fresh, per-question detail) and the cached ClassMarker results
-// (covers tests whose attempts predate webhook capture). Marks tests already
-// assigned to an exam so the UI can disable them.
+// (covers tests whose attempts predate webhook capture or whose group links
+// never had webhooks enabled). A test linked to several groups carries ALL
+// of them so the group filter matches any. Marks tests already assigned to
+// an exam so the UI can disable them.
 router.get('/available-tests', async (req, res, next) => {
   try {
     const records = await db.getAllRecords();
     const assigned = exams.getTestSectionMap();
-    const tests = new Map(); // testId → summary
+    const tests = new Map(); // testId → summary (groups: Map gid → {groupId, groupName, lastSeen})
+
+    const entryFor = (id, testName) => {
+      if (!tests.has(id)) {
+        tests.set(id, { testId: id, testName, attempts: 0, lastReceivedAt: '', groups: new Map() });
+      }
+      return tests.get(id);
+    };
+    const addGroup = (t, groupId, groupName, seen) => {
+      if (groupId == null) return;
+      const gid = String(groupId);
+      const g = t.groups.get(gid) || { groupId: gid, groupName: groupName || null, lastSeen: '' };
+      if (groupName && !g.groupName) g.groupName = groupName;
+      if (seen > g.lastSeen) g.lastSeen = seen;
+      t.groups.set(gid, g);
+    };
+
     for (const r of records) {
       const testId = r.test?.testId ?? r.test_id;
       if (testId == null) continue;
-      const id = String(testId);
-      if (!tests.has(id)) {
-        tests.set(id, {
-          testId: id,
-          testName: r.test?.testName ?? r.test_name ?? `Test #${id}`,
-          groupId: r.group?.groupId ?? r.group_id ?? null,
-          groupName: r.group?.groupName ?? r.group_name ?? null,
-          attempts: 0,
-          lastReceivedAt: '',
-        });
-      }
-      const t = tests.get(id);
+      const t = entryFor(String(testId), r.test?.testName ?? r.test_name ?? `Test #${testId}`);
       t.attempts++;
       const received = r.receivedAt || r.received_at || '';
       if (received > t.lastReceivedAt) t.lastReceivedAt = received;
+      addGroup(t, r.group?.groupId ?? r.group_id, r.group?.groupName ?? r.group_name, received);
     }
 
-    // Older tests with no webhook records only exist in the API cache.
+    // Merge the ClassMarker API cache: tests (and group links) with no
+    // webhook records only exist there.
     try {
-      for (const t of await getKnownTests()) {
-        if (tests.has(t.testId)) continue;
-        tests.set(t.testId, {
-          testId: t.testId,
-          testName: t.testName,
-          groupId: t.groupId,
-          groupName: t.groupName,
-          attempts: t.attempts,
-          lastReceivedAt: t.lastFinished
-            ? new Date(t.lastFinished * 1000).toISOString()
-            : '',
-        });
+      for (const known of await getKnownTests()) {
+        const t = entryFor(known.testId, known.testName);
+        t.attempts = Math.max(t.attempts, known.attempts);
+        const finished = known.lastFinished ? new Date(known.lastFinished * 1000).toISOString() : '';
+        if (finished > t.lastReceivedAt) t.lastReceivedAt = finished;
+        for (const g of known.groups) {
+          addGroup(t, g.groupId, g.groupName, g.lastFinished ? new Date(g.lastFinished * 1000).toISOString() : '');
+        }
       }
     } catch (e) {
       // ClassMarker API unavailable — picker still works from webhook data.
@@ -77,11 +82,23 @@ router.get('/available-tests', async (req, res, next) => {
     }
 
     const data = Array.from(tests.values())
-      .map((t) => ({
-        ...t,
-        assignedTo: assigned.get(t.testId)?.examName || null,
-        assignedToExamId: assigned.get(t.testId)?.examId || null,
-      }))
+      .map((t) => {
+        const groups = Array.from(t.groups.values())
+          .sort((a, b) => String(b.lastSeen).localeCompare(String(a.lastSeen)))
+          .map(({ groupId, groupName }) => ({ groupId, groupName }));
+        return {
+          testId: t.testId,
+          testName: t.testName,
+          attempts: t.attempts,
+          lastReceivedAt: t.lastReceivedAt,
+          groups,
+          // Primary group (most recent attempt) — kept for display fallback.
+          groupId: groups[0]?.groupId ?? null,
+          groupName: groups[0]?.groupName ?? null,
+          assignedTo: assigned.get(t.testId)?.examName || null,
+          assignedToExamId: assigned.get(t.testId)?.examId || null,
+        };
+      })
       .sort((a, b) =>
         String(a.groupName || '').localeCompare(String(b.groupName || '')) ||
         String(a.testName).localeCompare(String(b.testName))
