@@ -39,7 +39,7 @@ function deriveTestSection(testName, groupName, questions) {
   }
   const gn = String(groupName || '');
   if (/\bmath\b/i.test(gn)) return 3;
-  if (/\b(en|english|rw|reading|verbal|writing)\b/i.test(gn)) return 1;
+  if (/\b(en|english|rw|reading|verbal|writing|vocab)\b/i.test(gn)) return 1;
   for (const q of (questions || [])) {
     const sec = Number(q.sectionNumber);
     if (sec >= 1 && sec <= 4) return sec;

@@ -199,12 +199,25 @@ async function getLatestQuestionCategories() {
   return computeLatestQuestionCategories(await db.getAllRecords());
 }
 
+// When a student has no SAT exam on file, Weekly Performance falls back to
+// their assignments inside the report's date range (concept practice,
+// quizzes…). Exam-mapped tests are excluded — they're exam attempts, not
+// assignments, and if any counted the SAT selection would have used them.
+async function assignmentFallbackRecords(student, startDate, endDate, dayOfWeek) {
+  const examMap = getTestSectionMap();
+  const records = await findMatchingRecords(student, startDate, endDate, dayOfWeek);
+  return records.filter((r) => !examMap.has(String(r.test?.testId ?? r.test_id ?? '')));
+}
+
 async function getWebhookCategoryPerformance(student, startDate, endDate, dayOfWeek) {
   // Like the SAT score cards, the category breakdown reflects the student's
   // LATEST SAT exam — even when it falls outside the report's date range
   // (reports usually cover the past week; exams are often older).
   const allRecords = await findMatchingRecords(student, '1970-01-01', '2999-12-31', null);
-  const records = selectLatestSatExamRecords(allRecords);
+  let records = selectLatestSatExamRecords(allRecords);
+  if (records.length === 0) {
+    records = await assignmentFallbackRecords(student, startDate, endDate, dayOfWeek);
+  }
   // Resolve names from the live ClassMarker category map so renames are
   // reflected without requiring students to retake tests.
   await fetchCategoryMap();
@@ -229,9 +242,13 @@ async function getWebhookCategoryPerformance(student, startDate, endDate, dayOfW
 
 async function getWebhookCategoryPerformanceSplit(student, startDate, endDate, dayOfWeek) {
   // Wide window for the same reason as getWebhookCategoryPerformance: the
-  // weekly report should always show the latest SAT exam's breakdown.
+  // weekly report should always show the latest SAT exam's breakdown. With
+  // no SAT exam on file, fall back to the report window's assignments.
   const allRecords = await findMatchingRecords(student, '1970-01-01', '2999-12-31', null);
-  const records = selectLatestSatExamRecords(allRecords);
+  let records = selectLatestSatExamRecords(allRecords);
+  if (records.length === 0) {
+    records = await assignmentFallbackRecords(student, startDate, endDate, dayOfWeek);
+  }
   // Resolve names from the live ClassMarker category map so renames are
   // reflected without requiring students to retake tests.
   await fetchCategoryMap();
