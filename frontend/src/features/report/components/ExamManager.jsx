@@ -546,7 +546,7 @@ export default function ExamManager({ onExamsChanged }) {
                         onClick={() => !editing && setSectionEditing({ examId: exam.examId, key })}
                         title="Click to change this section's test"
                       >
-                        <span style={s.sectionLabel}>{label} · {hint}</span>
+                        <span style={s.sectionLabel}>{label}</span>
                         {editing ? (
                           <select
                             style={s.select}
@@ -564,7 +564,7 @@ export default function ExamManager({ onExamsChanged }) {
                             ))}
                           </select>
                         ) : assigned
-                          ? <span>{label}</span>
+                          ? <span>{assigned.testName || `Test #${assigned.testId}`}</span>
                           : <span style={s.sectionEmpty}>not assigned</span>}
                       </div>
                     );
