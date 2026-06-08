@@ -425,6 +425,25 @@ export default function ExamManager({ onExamsChanged }) {
     });
   }
 
+  // Group name of a given test (for pre-selecting the drill-down) — a test can
+  // appear under several groups; the first is enough to land the user there.
+  function testGroup(testId) {
+    if (!testId) return '';
+    const t = tests.find((x) => x.testId === testId);
+    return t?.groups?.[0]?.groupName || t?.groupName || '';
+  }
+
+  // Distinct groups that still have an assignable test for this section slot —
+  // the first step of the inline "browse group, then test" picker.
+  function groupsForSlot(exam, sectionKey) {
+    const set = new Set();
+    for (const t of sectionOptions(exam, sectionKey)) {
+      for (const g of t.groups || []) if (g.groupName) set.add(g.groupName);
+      if (t.groupName) set.add(t.groupName);
+    }
+    return Array.from(set).sort();
+  }
+
   function setSection(exam, sectionKey, testId) {
     const sections = {};
     for (const d of SECTION_DEFS) {
@@ -546,26 +565,42 @@ export default function ExamManager({ onExamsChanged }) {
                       <div
                         key={key}
                         style={{ ...s.sectionChip, cursor: 'pointer' }}
-                        onClick={() => !editing && setSectionEditing({ examId: exam.examId, key })}
+                        onClick={() => !editing && setSectionEditing({ examId: exam.examId, key, group: testGroup(assigned?.testId) })}
                         title="Click to change this section's test"
                       >
                         <span style={s.sectionLabel}>{label}</span>
                         {editing ? (
-                          <select
-                            style={s.select}
-                            autoFocus
-                            value={assigned?.testId || ''}
-                            onChange={(e) => setSection(exam, key, e.target.value)}
-                            onBlur={() => setSectionEditing(null)}
+                          <div
+                            style={{ display: 'grid', gap: 4 }}
                             onClick={(e) => e.stopPropagation()}
+                            onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setSectionEditing(null); }}
                           >
-                            <option value="">— none —</option>
-                            {sectionOptions(exam, key).map((t) => (
-                              <option key={t.testId} value={t.testId}>
-                                {t.testName} ({t.attempts} attempt{t.attempts === 1 ? '' : 's'})
-                              </option>
-                            ))}
-                          </select>
+                            <select
+                              style={s.select}
+                              autoFocus
+                              value={sectionEditing.group || ''}
+                              onChange={(e) => setSectionEditing((cur) => ({ ...cur, group: e.target.value }))}
+                            >
+                              <option value="">All groups</option>
+                              {groupsForSlot(exam, key).map((g) => (
+                                <option key={g} value={g}>{g}</option>
+                              ))}
+                            </select>
+                            <select
+                              style={s.select}
+                              value={assigned?.testId || ''}
+                              onChange={(e) => setSection(exam, key, e.target.value)}
+                            >
+                              <option value="">— none —</option>
+                              {sectionOptions(exam, key)
+                                .filter((t) => inGroup(t, sectionEditing.group))
+                                .map((t) => (
+                                  <option key={t.testId} value={t.testId}>
+                                    {t.testName} ({t.attempts} attempt{t.attempts === 1 ? '' : 's'})
+                                  </option>
+                                ))}
+                            </select>
+                          </div>
                         ) : assigned
                           ? <span>{assigned.testName || `Test #${assigned.testId}`}</span>
                           : <span style={s.sectionEmpty}>not assigned</span>}
