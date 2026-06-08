@@ -564,7 +564,7 @@ export default function ExamManager({ onExamsChanged }) {
                             ))}
                           </select>
                         ) : assigned
-                          ? <span>{assigned.testName || `Test #${assigned.testId}`}</span>
+                          ? <span>{label}</span>
                           : <span style={s.sectionEmpty}>not assigned</span>}
                       </div>
                     );
