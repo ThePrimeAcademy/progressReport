@@ -306,13 +306,25 @@ async function getExamTakenDates() {
   const examMap = getTestSectionMap(); // testId → { examId, section, hidden }
   if (examMap.size === 0) return {};
   const perExam = new Map(); // examId → [date, ...]
-  for (const r of await db.getAllRecords()) {
-    const tid = String(r.test?.testId ?? r.test_id ?? '');
-    const info = examMap.get(tid);
-    if (!info || !r.timeFinished) continue;
-    const date = new Date(r.timeFinished * 1000).toISOString().split('T')[0];
+  const push = (testId, timeFinished) => {
+    const info = examMap.get(String(testId ?? ''));
+    if (!info || !timeFinished) return;
+    const date = new Date(timeFinished * 1000).toISOString().split('T')[0];
     if (!perExam.has(info.examId)) perExam.set(info.examId, []);
     perExam.get(info.examId).push(date);
+  };
+  // Webhook store …
+  for (const r of await db.getAllRecords()) {
+    push(r.test?.testId ?? r.test_id, r.timeFinished);
+  }
+  // … plus the ClassMarker API cache, so exams whose attempts predate webhook
+  // capture (e.g. older diagnostics) still resolve a date.
+  try {
+    for (const a of await getResultsForTests(new Set(examMap.keys()))) {
+      push(a.testId, a.timeFinished);
+    }
+  } catch (e) {
+    console.warn('[sat] Taken-date API fallback unavailable:', e.message);
   }
   const out = {};
   for (const [examId, dates] of perExam) out[examId] = modeDate(dates);
