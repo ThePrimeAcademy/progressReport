@@ -280,6 +280,45 @@ async function getSatScoresForStudent(student) {
 
 // Scoreboard for one exam: every (non-hidden) student who took any of its
 // tests, with raw + scaled section scores and total, ranked by total.
+// Most common date in a list of YYYY-MM-DD strings. Ties break to the
+// earlier date — the original sitting, not a later makeup/retake.
+function modeDate(dates) {
+  const counts = new Map();
+  for (const d of dates) {
+    if (d) counts.set(d, (counts.get(d) || 0) + 1);
+  }
+  let best = null;
+  let bestCount = -1;
+  for (const [d, c] of counts) {
+    if (c > bestCount || (c === bestCount && d < best)) {
+      best = d;
+      bestCount = c;
+    }
+  }
+  return best;
+}
+
+// "The day the exam was taken" for every exam, derived from webhook attempt
+// records — the modal finished-date across attempts on the exam's tests. Used
+// to default an exam's date when no date was set by hand; one cheap DB read
+// covers all exams so the list endpoint stays fast. Returns { examId: date }.
+async function getExamTakenDates() {
+  const examMap = getTestSectionMap(); // testId → { examId, section, hidden }
+  if (examMap.size === 0) return {};
+  const perExam = new Map(); // examId → [date, ...]
+  for (const r of await db.getAllRecords()) {
+    const tid = String(r.test?.testId ?? r.test_id ?? '');
+    const info = examMap.get(tid);
+    if (!info || !r.timeFinished) continue;
+    const date = new Date(r.timeFinished * 1000).toISOString().split('T')[0];
+    if (!perExam.has(info.examId)) perExam.set(info.examId, []);
+    perExam.get(info.examId).push(date);
+  }
+  const out = {};
+  for (const [examId, dates] of perExam) out[examId] = modeDate(dates);
+  return out;
+}
+
 // Webhook attempts win per (student, test); attempts that never fired a
 // webhook fall back to the cached API results.
 async function getExamScoreboard(examId) {
@@ -371,7 +410,7 @@ async function getExamScoreboard(examId) {
   return {
     examId: exam.examId,
     name: exam.name,
-    date: exam.date || null,
+    date: exam.date || modeDate(rows.map((r) => r.date)) || null,
     hasRwCurve: Boolean(rwCurve),
     hasMathCurve: Boolean(mathCurve),
     rows,
@@ -381,6 +420,7 @@ async function getExamScoreboard(examId) {
 module.exports = {
   getSatScoresForStudent,
   getExamScoreboard,
+  getExamTakenDates,
   isSatGroupName,
   deriveTestSection,
 };

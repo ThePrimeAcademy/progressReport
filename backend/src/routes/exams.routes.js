@@ -6,18 +6,22 @@ const express = require('express');
 const exams = require('../services/exam.service');
 const { listCurves, deleteCurve } = require('../services/scoring-sheet.service');
 const { getKnownTests, getTakersForTests } = require('../services/classmarker.service');
-const { getExamScoreboard } = require('../services/sat.service');
+const { getExamScoreboard, getExamTakenDates } = require('../services/sat.service');
 const db = require('../services/db.service');
 
 const router = express.Router();
 router.use(express.json());
 
 // GET /api/exams — all exams with their curve upload status merged in.
-router.get('/', (req, res, next) => {
+router.get('/', async (req, res, next) => {
   try {
     const curves = listCurves();
+    // Derived from attempts — the day each exam was actually taken. The UI
+    // defaults the exam's date to this when none was set by hand.
+    const takenDates = await getExamTakenDates();
     const data = exams.listExams().map((exam) => ({
       ...exam,
+      takenDate: takenDates[exam.examId] || null,
       curveKey: exams.examCurveKey(exam.examId),
       sheets: curves[exams.examCurveKey(exam.examId)] || {},
     }));

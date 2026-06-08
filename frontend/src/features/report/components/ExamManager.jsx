@@ -402,8 +402,11 @@ export default function ExamManager({ onExamsChanged }) {
   }
 
   function changeDate(exam) {
+    // Default to the day the exam was actually taken (derived from attempts)
+    // when no date was set by hand — confirming the prompt sets it for real.
+    const suggested = exam.date || exam.takenDate || '';
     // eslint-disable-next-line no-alert
-    const date = window.prompt('Exam date (YYYY-MM-DD — leave empty to clear)', exam.date || '');
+    const date = window.prompt('Exam date (YYYY-MM-DD — leave empty to clear)', suggested);
     if (date == null || date.trim() === (exam.date || '')) return;
     patchExam(exam.examId, { date: date.trim() });
   }
@@ -502,11 +505,11 @@ export default function ExamManager({ onExamsChanged }) {
                     {exam.name}
                   </span>
                   <span
-                    style={{ ...s.dateChip, cursor: 'pointer' }}
+                    style={{ ...s.dateChip, cursor: 'pointer', ...(exam.date ? null : exam.takenDate ? { opacity: 0.7 } : null) }}
                     onClick={() => changeDate(exam)}
-                    title="Click to change the exam date"
+                    title={exam.date ? 'Click to change the exam date' : exam.takenDate ? 'Date the exam was taken — click to confirm or change' : 'Click to set the exam date'}
                   >
-                    {exam.date || 'set date'}
+                    {exam.date || exam.takenDate || 'set date'}
                   </span>
                   <span
                     style={{ ...s.rosterChip, cursor: 'pointer' }}
