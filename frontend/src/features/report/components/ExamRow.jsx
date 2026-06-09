@@ -1,9 +1,11 @@
 // features/report/components/ExamRow.jsx
-// One SAT exam: inline click-to-edit name/date, the four DSAT section chips
-// (browse group → pick test), a "move to program" selector, and the
-// scoreboard / hidden-students / roster panels plus scoring-sheet upload.
-// Self-contained — owns its own open-panel state and saves each edit through
-// the API, then calls onChanged() so the parent re-fetches.
+// One SAT exam. Collapsible (configured exams collapse to a one-line header to
+// save space; brand-new/unconfigured ones open expanded so you can set them up
+// without scrolling). Inline-editable name, the four DSAT section chips
+// (browse group → pick test), a "move to program" selector, a drag handle to
+// reorder within the program, and the scoreboard / hidden-students panels plus
+// scoring-sheet upload. Self-contained — saves each edit through the API, then
+// calls onChanged() so the parent re-fetches.
 import React, { useCallback, useState } from 'react';
 import { updateExam, duplicateExam, deleteExam } from '../api/reportApi.js';
 import ScoringSheetUpload from './ScoringSheetUpload.jsx';
@@ -19,7 +21,16 @@ export const SECTION_DEFS = [
   { key: '4', label: 'Section 4', hint: 'Math · Module 2' },
 ];
 
-export default function ExamRow({ exam, tests, roster, programs, onChanged, onError }) {
+export default function ExamRow({
+  exam, tests, roster, programs, onChanged, onError,
+  onDragStart, onDragOver, onDrop, dragging,
+}) {
+  const assignedCount = SECTION_DEFS.filter((d) => exam.sections?.[d.key]?.testId).length;
+  // Unconfigured exams (no tests yet) open expanded so a freshly created one is
+  // ready to edit; configured ones start collapsed.
+  const [expanded, setExpanded] = useState(assignedCount === 0);
+  const [editingName, setEditingName] = useState(false);
+  const [nameDraft, setNameDraft] = useState(exam.name);
   const [scoreboardOpen, setScoreboardOpen] = useState(false);
   const [hiddenOpen, setHiddenOpen] = useState(false);
   const [rosterOpen, setRosterOpen] = useState(false);
@@ -27,6 +38,7 @@ export default function ExamRow({ exam, tests, roster, programs, onChanged, onEr
   const [sectionEditing, setSectionEditing] = useState(null);
 
   const grouped = Boolean(exam.programId);
+  const stop = (e) => e.stopPropagation();
 
   const inGroup = useCallback((t, groupName) => {
     if (!groupName) return true;
@@ -44,11 +56,12 @@ export default function ExamRow({ exam, tests, roster, programs, onChanged, onEr
     }
   }
 
-  function renameExam() {
-    // eslint-disable-next-line no-alert
-    const name = window.prompt('Exam name', exam.name);
-    if (name == null || !name.trim() || name.trim() === exam.name) return;
-    patchExam({ name: name.trim() });
+  // Inline name edit (no prompt) — Enter/blur saves, Esc cancels.
+  function commitName() {
+    setEditingName(false);
+    const v = nameDraft.trim();
+    if (!v || v === exam.name) { setNameDraft(exam.name); return; }
+    patchExam({ name: v });
   }
 
   function changeDate() {
@@ -124,29 +137,69 @@ export default function ExamRow({ exam, tests, roster, programs, onChanged, onEr
     }
   }
 
+  const handleStyle = { cursor: 'grab', color: 'var(--muted)', fontSize: '0.9rem', lineHeight: 1, padding: '0 2px', userSelect: 'none' };
+
   return (
-    <div style={s.examRow}>
-      <div style={s.examHead}>
+    <div
+      style={{ ...s.examRow, ...(dragging ? { opacity: 0.4 } : null) }}
+      onDragOver={onDragOver}
+      onDrop={onDrop}
+    >
+      <div
+        style={{ ...s.examHead, cursor: 'pointer' }}
+        onClick={() => setExpanded((v) => !v)}
+        role="button"
+        aria-expanded={expanded}
+        title={expanded ? 'Click to collapse' : 'Click to expand'}
+      >
         <span
-          style={{ ...s.examName, cursor: 'pointer' }}
-          onClick={renameExam}
-          title="Click to rename"
+          draggable
+          onDragStart={onDragStart}
+          onClick={stop}
+          style={handleStyle}
+          title="Drag to reorder within the program"
         >
-          {exam.name}
+          ⠿
         </span>
+        <span style={s.chevron}>{expanded ? '▾' : '▸'}</span>
+        {editingName ? (
+          <input
+            autoFocus
+            value={nameDraft}
+            onClick={stop}
+            onChange={(e) => setNameDraft(e.target.value)}
+            onBlur={commitName}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') commitName();
+              if (e.key === 'Escape') { setNameDraft(exam.name); setEditingName(false); }
+            }}
+            style={{ ...s.input, flex: 1, padding: '4px 8px', fontSize: '0.88rem', fontWeight: 600 }}
+          />
+        ) : (
+          <span
+            style={{ ...s.examName, cursor: 'text' }}
+            onClick={(e) => { stop(e); setNameDraft(exam.name); setEditingName(true); }}
+            title="Click to rename"
+          >
+            {exam.name}
+          </span>
+        )}
+        {!expanded && (
+          <span style={s.count}>{assignedCount}/4 sections</span>
+        )}
         <span
           style={{ ...s.dateChip, cursor: 'pointer', ...(exam.date ? null : exam.takenDate ? { opacity: 0.7 } : null) }}
-          onClick={changeDate}
+          onClick={(e) => { stop(e); changeDate(); }}
           title={exam.date ? 'Click to change the exam date' : exam.takenDate ? 'Date the exam was taken — click to confirm or change' : 'Click to set the exam date'}
         >
           {exam.date || exam.takenDate || 'set date'}
         </span>
-        {/* Ungrouped exams keep their own roster chip; grouped exams inherit the
-            program roster, so there's nothing to edit per-exam. */}
+        {/* Ungrouped (legacy) exams keep their own roster chip; grouped exams
+            inherit the program roster. */}
         {!grouped && (
           <span
             style={{ ...s.rosterChip, cursor: 'pointer' }}
-            onClick={() => setRosterOpen((v) => !v)}
+            onClick={(e) => { stop(e); setRosterOpen((v) => !v); }}
             title="Click to pick the students taking this exam"
           >
             {(exam.studentIds || []).length} student{(exam.studentIds || []).length === 1 ? '' : 's'}
@@ -158,6 +211,7 @@ export default function ExamRow({ exam, tests, roster, programs, onChanged, onEr
         <select
           style={s.moveSelect}
           value={exam.programId || ''}
+          onClick={stop}
           onChange={(e) => { if (e.target.value) patchExam({ programId: e.target.value }); }}
           title="Move this exam to another program"
         >
@@ -166,68 +220,18 @@ export default function ExamRow({ exam, tests, roster, programs, onChanged, onEr
             <option key={p.programId} value={p.programId}>{p.name}</option>
           ))}
         </select>
-        <button type="button" style={s.btnGhost} onClick={() => setScoreboardOpen((v) => !v)}>
+        <button type="button" style={s.btnGhost} onClick={(e) => { stop(e); setScoreboardOpen((v) => !v); }}>
           {scoreboardOpen ? 'Close Scoreboard' : 'Scoreboard'}
         </button>
-        <button type="button" style={s.btnGhost} onClick={() => setHiddenOpen((v) => !v)}>
+        <button type="button" style={s.btnGhost} onClick={(e) => { stop(e); setHiddenOpen((v) => !v); }}>
           {hiddenOpen ? 'Close Hidden' : 'Hidden'}
         </button>
-        <button type="button" style={s.btnGhost} onClick={handleDuplicate} title="New exam with the same students — set its own date and tests">Duplicate</button>
-        <button type="button" style={s.btnDanger} onClick={handleDelete}>Delete</button>
+        <button type="button" style={s.btnGhost} onClick={(e) => { stop(e); handleDuplicate(); }} title="New exam with the same students — set its own date and tests">Duplicate</button>
+        <button type="button" style={s.btnDanger} onClick={(e) => { stop(e); handleDelete(); }}>Delete</button>
       </div>
 
-      <div style={s.sectionList}>
-        {SECTION_DEFS.map(({ key, label }) => {
-          const assigned = exam.sections?.[key];
-          const editing = sectionEditing?.key === key;
-          return (
-            <div
-              key={key}
-              style={{ ...s.sectionChip, cursor: 'pointer' }}
-              onClick={() => !editing && setSectionEditing({ key, group: testGroup(assigned?.testId) })}
-              title="Click to change this section's test"
-            >
-              <span style={s.sectionLabel}>{label}</span>
-              {editing ? (
-                <div
-                  style={{ display: 'grid', gap: 4 }}
-                  onClick={(e) => e.stopPropagation()}
-                  onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setSectionEditing(null); }}
-                >
-                  <select
-                    style={s.select}
-                    autoFocus
-                    value={sectionEditing.group || ''}
-                    onChange={(e) => setSectionEditing((cur) => ({ ...cur, group: e.target.value }))}
-                  >
-                    <option value="">All groups</option>
-                    {groupsForSlot(key).map((g) => (
-                      <option key={g} value={g}>{g}</option>
-                    ))}
-                  </select>
-                  <select
-                    style={s.select}
-                    value={assigned?.testId || ''}
-                    onChange={(e) => setSection(key, e.target.value)}
-                  >
-                    <option value="">— none —</option>
-                    {sectionOptions(key)
-                      .filter((t) => inGroup(t, sectionEditing.group))
-                      .map((t) => (
-                        <option key={t.testId} value={t.testId}>
-                          {t.testName} ({t.attempts} attempt{t.attempts === 1 ? '' : 's'})
-                        </option>
-                      ))}
-                  </select>
-                </div>
-              ) : assigned
-                ? <span>{assigned.testName || `Test #${assigned.testId}`}</span>
-                : <span style={s.sectionEmpty}>not assigned</span>}
-            </div>
-          );
-        })}
-      </div>
-
+      {/* Scoreboard / hidden panels open regardless of expand so you can use
+          them from a collapsed row. */}
       {!grouped && rosterOpen && (
         <RosterPanel
           exam={exam}
@@ -244,11 +248,67 @@ export default function ExamRow({ exam, tests, roster, programs, onChanged, onEr
           onSaved={async () => { setHiddenOpen(false); await onChanged?.(); }}
         />
       )}
-      <ScoringSheetUpload
-        groupId={exam.curveKey}
-        sheets={exam.sheets}
-        onChanged={onChanged}
-      />
+
+      {expanded && (
+        <>
+          <div style={s.sectionList}>
+            {SECTION_DEFS.map(({ key, label }) => {
+              const assigned = exam.sections?.[key];
+              const editing = sectionEditing?.key === key;
+              return (
+                <div
+                  key={key}
+                  style={{ ...s.sectionChip, cursor: 'pointer' }}
+                  onClick={() => !editing && setSectionEditing({ key, group: testGroup(assigned?.testId) })}
+                  title="Click to change this section's test"
+                >
+                  <span style={s.sectionLabel}>{label}</span>
+                  {editing ? (
+                    <div
+                      style={{ display: 'grid', gap: 4 }}
+                      onClick={(e) => e.stopPropagation()}
+                      onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setSectionEditing(null); }}
+                    >
+                      <select
+                        style={s.select}
+                        autoFocus
+                        value={sectionEditing.group || ''}
+                        onChange={(e) => setSectionEditing((cur) => ({ ...cur, group: e.target.value }))}
+                      >
+                        <option value="">All groups</option>
+                        {groupsForSlot(key).map((g) => (
+                          <option key={g} value={g}>{g}</option>
+                        ))}
+                      </select>
+                      <select
+                        style={s.select}
+                        value={assigned?.testId || ''}
+                        onChange={(e) => setSection(key, e.target.value)}
+                      >
+                        <option value="">— none —</option>
+                        {sectionOptions(key)
+                          .filter((t) => inGroup(t, sectionEditing.group))
+                          .map((t) => (
+                            <option key={t.testId} value={t.testId}>
+                              {t.testName} ({t.attempts} attempt{t.attempts === 1 ? '' : 's'})
+                            </option>
+                          ))}
+                      </select>
+                    </div>
+                  ) : assigned
+                    ? <span>{assigned.testName || `Test #${assigned.testId}`}</span>
+                    : <span style={s.sectionEmpty}>not assigned</span>}
+                </div>
+              );
+            })}
+          </div>
+          <ScoringSheetUpload
+            groupId={exam.curveKey}
+            sheets={exam.sheets}
+            onChanged={onChanged}
+          />
+        </>
+      )}
     </div>
   );
 }

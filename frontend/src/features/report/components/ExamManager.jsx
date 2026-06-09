@@ -16,6 +16,7 @@ import {
   fetchStudents,
   fetchPrograms,
   createExam,
+  reorderExams,
   createProgram,
   updateProgram,
   deleteProgram,
@@ -45,6 +46,7 @@ export default function ExamManager({ onExamsChanged }) {
   const [programFormName, setProgramFormName] = useState(null); // null = closed
   const [programSaving, setProgramSaving] = useState(false);
   const [rosterOpenFor, setRosterOpenFor] = useState(null); // programId
+  const [dragExamId, setDragExamId] = useState(null); // exam being dragged
   // Which programs are expanded to show their exams. Collapsed by default so
   // the panel stays compact — click a program to reveal its exams.
   const [openPrograms, setOpenPrograms] = useState(() => new Set());
@@ -213,6 +215,27 @@ export default function ExamManager({ onExamsChanged }) {
     (e) => !e.programId || !programs.some((p) => p.programId === e.programId)
   );
   const examsOf = (programId) => exams.filter((e) => e.programId === programId);
+
+  // Drag-to-reorder: drop the dragged exam at the target exam's position within
+  // the same program, then persist the new order.
+  async function handleDropOnExam(programId, targetId) {
+    const fromId = dragExamId;
+    setDragExamId(null);
+    if (!fromId || fromId === targetId) return;
+    const ids = examsOf(programId).map((e) => e.examId);
+    const from = ids.indexOf(fromId);
+    const to = ids.indexOf(targetId);
+    if (from < 0 || to < 0) return; // different program — ignore cross-program drops
+    ids.splice(from, 1);
+    ids.splice(to, 0, fromId);
+    setError(null);
+    try {
+      await reorderExams(programId, ids);
+      await refreshAndNotify();
+    } catch (err) {
+      setError(err.response?.data?.error || err.message || 'Failed to reorder exams');
+    }
+  }
 
   const rowProps = (exam) => ({
     exam,
@@ -385,7 +408,16 @@ export default function ExamManager({ onExamsChanged }) {
                     {members.length === 0 ? (
                       <div style={s.programEmpty}>No exams in this program yet — use “+ Exam”, or move an exam in from the list below.</div>
                     ) : (
-                      members.map((exam) => <ExamRow key={exam.examId} {...rowProps(exam)} />)
+                      members.map((exam) => (
+                        <ExamRow
+                          key={exam.examId}
+                          {...rowProps(exam)}
+                          dragging={dragExamId === exam.examId}
+                          onDragStart={(e) => { setDragExamId(exam.examId); e.dataTransfer.effectAllowed = 'move'; }}
+                          onDragOver={(e) => { if (dragExamId && dragExamId !== exam.examId) e.preventDefault(); }}
+                          onDrop={(e) => { e.preventDefault(); handleDropOnExam(program.programId, exam.examId); }}
+                        />
+                      ))
                     )}
                     {/* Creating an exam for this program shows the form right
                         here, inside the program it'll belong to. */}

@@ -159,9 +159,33 @@ function createExam({ name, date, programId, sections, studentIds, hiddenStudent
     createdAt: now,
     updatedAt: now,
   };
-  load().push(exam);
+  // New exams go to the front so they appear at the top of their program —
+  // no scrolling to find the one you just made.
+  load().unshift(exam);
   save();
   return exam;
+}
+
+// Reorder the exams within a program to match `orderedIds`. Exam array order
+// is the display order, so this rewrites the program's slots in the global
+// array (other programs' exams keep their positions). Unlisted program exams
+// keep their relative order, appended after the listed ones.
+function reorderExams(programId, orderedIds) {
+  const all = load();
+  const pid = String(programId);
+  const idOrder = (orderedIds || []).map(String);
+  const inProgram = all.filter((e) => e.programId === pid);
+  const byId = new Map(inProgram.map((e) => [e.examId, e]));
+  const ordered = [];
+  for (const id of idOrder) {
+    const e = byId.get(id);
+    if (e) { ordered.push(e); byId.delete(id); }
+  }
+  for (const e of inProgram) if (byId.has(e.examId)) ordered.push(e);
+  let i = 0;
+  exams = all.map((e) => (e.programId === pid ? ordered[i++] : e));
+  save();
+  return ordered.map((e) => e.examId);
 }
 
 function updateExam(examId, { name, date, programId, sections, studentIds, hiddenStudentIds }) {
@@ -254,6 +278,7 @@ module.exports = {
   updateExam,
   duplicateExam,
   deleteExam,
+  reorderExams,
   getTestSectionMap,
   examCurveKey,
   getExamsVersion,

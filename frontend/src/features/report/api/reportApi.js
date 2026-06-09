@@ -119,6 +119,12 @@ export async function deleteExam(examId) {
   return response.data;
 }
 
+// orderedIds: examIds in the desired display order within the program.
+export async function reorderExams(programId, orderedIds) {
+  const response = await apiClient.post('/exams/reorder', { programId, orderedIds });
+  return response.data.data;
+}
+
 export async function duplicateExam(examId) {
   const response = await apiClient.post(`/exams/${encodeURIComponent(examId)}/duplicate`);
   return response.data.data;

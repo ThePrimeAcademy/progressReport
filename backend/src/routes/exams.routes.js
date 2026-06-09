@@ -197,6 +197,20 @@ router.get('/:examId/scoreboard', async (req, res, next) => {
   }
 });
 
+// POST /api/exams/reorder — body: { programId, orderedIds: [examId, ...] }.
+// Sets the display order of exams within a program (drag-to-reorder).
+router.post('/reorder', (req, res, next) => {
+  try {
+    const { programId, orderedIds } = req.body || {};
+    if (!programId) {
+      return res.status(400).json({ success: false, error: 'programId is required' });
+    }
+    res.json({ success: true, data: exams.reorderExams(programId, orderedIds) });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // POST /api/exams — body: { name, date?, sections: { "1": { testId, testName } | null, ... },
 // studentIds?, hiddenStudentIds? }. Sections may all be empty — placeholder
 // exams get created in advance and have tests attached later.
