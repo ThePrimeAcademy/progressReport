@@ -6,10 +6,16 @@
 // naming convention.
 //
 // Storage: DATA_DIR/exams.json —
-//   [{ examId, name, date: "YYYY-MM-DD" | null,
+//   [{ examId, name, date: "YYYY-MM-DD" | null, programId: "<id>" | null,
 //      sections: { "1": { testId, testName } | null, ... "4" },
 //      studentIds: ["<user_id>", ...], hiddenStudentIds: ["<user_id>", ...],
 //      createdAt, updatedAt }]
+//
+// programId: optional link to a program (see program.service). When set, the
+// program owns the roster — the exam's score is gated by program enrollment,
+// not by exam.studentIds — and all of the program's exams auto-appear for
+// enrolled students. An exam with no programId is "ungrouped" and behaves as
+// it always has (rostered individually via studentIds, visible to any taker).
 //
 // date / studentIds: planning fields — exams can be created in advance as
 // placeholders (no tests assigned yet) with a scheduled date and the roster
@@ -82,6 +88,11 @@ function normalizeHidden(ids) {
   return [...new Set(ids.map((id) => String(id)).filter(Boolean))];
 }
 
+function normalizeProgramId(value) {
+  const s = String(value ?? '').trim();
+  return s || null;
+}
+
 function normalizeDate(value) {
   const s = String(value || '').trim();
   if (!s) return null;
@@ -118,7 +129,7 @@ function validateExam(name, sections, ignoreExamId) {
   }
 }
 
-function createExam({ name, date, sections, studentIds, hiddenStudentIds }) {
+function createExam({ name, date, programId, sections, studentIds, hiddenStudentIds }) {
   const normalized = normalizeSections(sections);
   validateExam(name, normalized, null);
   const now = new Date().toISOString();
@@ -126,6 +137,7 @@ function createExam({ name, date, sections, studentIds, hiddenStudentIds }) {
     examId: crypto.randomUUID(),
     name: String(name).trim(),
     date: normalizeDate(date),
+    programId: normalizeProgramId(programId),
     sections: normalized,
     studentIds: normalizeHidden(studentIds),
     hiddenStudentIds: normalizeHidden(hiddenStudentIds),
@@ -137,7 +149,7 @@ function createExam({ name, date, sections, studentIds, hiddenStudentIds }) {
   return exam;
 }
 
-function updateExam(examId, { name, date, sections, studentIds, hiddenStudentIds }) {
+function updateExam(examId, { name, date, programId, sections, studentIds, hiddenStudentIds }) {
   const all = load();
   const idx = all.findIndex((e) => e.examId === String(examId));
   if (idx < 0) throw Object.assign(new Error('Exam not found'), { status: 404 });
@@ -145,6 +157,10 @@ function updateExam(examId, { name, date, sections, studentIds, hiddenStudentIds
     ...all[idx],
     name: name != null ? String(name).trim() : all[idx].name,
     date: date !== undefined ? normalizeDate(date) : (all[idx].date || null),
+    // programId === undefined → leave as-is; null/'' → clear; string → set.
+    programId: programId !== undefined
+      ? normalizeProgramId(programId)
+      : (all[idx].programId || null),
     sections: sections != null ? normalizeSections(sections) : all[idx].sections,
     studentIds: studentIds != null
       ? normalizeHidden(studentIds)
@@ -169,10 +185,29 @@ function duplicateExam(examId) {
   return createExam({
     name: `${source.name} (copy)`,
     date: null,
+    programId: source.programId || null,
     sections: {},
     studentIds: source.studentIds || [],
     hiddenStudentIds: [],
   });
+}
+
+// Detach every exam from a program — called when that program is deleted so
+// its exams survive as ungrouped rather than pointing at a missing program.
+// Returns the count of exams that were detached.
+function clearProgram(programId) {
+  const all = load();
+  const pid = String(programId);
+  let changed = 0;
+  for (const exam of all) {
+    if (exam.programId === pid) {
+      exam.programId = null;
+      exam.updatedAt = new Date().toISOString();
+      changed++;
+    }
+  }
+  if (changed) save();
+  return changed;
 }
 
 function deleteExam(examId) {
@@ -221,6 +256,7 @@ module.exports = {
   updateExam,
   duplicateExam,
   deleteExam,
+  clearProgram,
   getTestSectionMap,
   examCurveKey,
   getExamsVersion,

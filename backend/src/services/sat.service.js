@@ -13,6 +13,7 @@
 const db = require('./db.service');
 const { getCurve, gradeScaled } = require('./scoring-sheet.service');
 const { getTestSectionMap, examCurveKey, getExam, listExams } = require('./exam.service');
+const { getProgram } = require('./program.service');
 const { getStudentResultsGrouped, getResultsForTests } = require('./classmarker.service');
 
 // Only groups whose name contains "SAT" (case-insensitive) participate in SAT
@@ -144,6 +145,35 @@ function applyCurves(bucket) {
   return { ...bucket, mathScaled, rwScaled, total };
 }
 
+// Program roster for an exam, or null when the exam isn't program-gated. An
+// exam linked to a missing program is treated as ungrouped (null) so a stale
+// link never hides scores.
+function programRosterFor(exam) {
+  if (!exam?.programId) return null;
+  const program = getProgram(exam.programId);
+  return program ? new Set(program.studentIds || []) : null;
+}
+
+// Should this graded exam show in the student's SAT report? Program-grouped
+// exams are gated by program enrollment; ungrouped exams stay visible to
+// anyone who took them (legacy behaviour). Per-exam hidden students are
+// already dropped upstream in gradeRecordsByGroup.
+function examScoreVisible(exam, sid) {
+  const roster = programRosterFor(exam);
+  return roster === null ? true : roster.has(sid);
+}
+
+// Should an UNTAKEN exam appear as an upcoming placeholder for this student?
+// Program-grouped exams auto-appear for everyone the program enrolls;
+// ungrouped exams only for students individually rostered via studentIds.
+// Hidden students never get a placeholder.
+function examRosteredForPlaceholder(exam, sid) {
+  if ((exam.hiddenStudentIds || []).includes(sid)) return false;
+  const roster = programRosterFor(exam);
+  if (roster !== null) return roster.has(sid);
+  return (exam.studentIds || []).includes(sid);
+}
+
 // Empty history cards for exams the student is rostered on but has no
 // graded score for yet — upcoming/placeholder exams appear on the report
 // with their scheduled date and dashes, so families see what's coming.
@@ -154,8 +184,7 @@ function rosterPlaceholders(student, gradedKeys) {
   for (const exam of listExams()) {
     const key = examCurveKey(exam.examId);
     if (gradedKeys.has(key)) continue;
-    if (!(exam.studentIds || []).includes(sid)) continue;
-    if ((exam.hiddenStudentIds || []).includes(sid)) continue;
+    if (!examRosteredForPlaceholder(exam, sid)) continue;
     placeholders.push({
       groupId: key,
       groupName: exam.name,
@@ -226,7 +255,18 @@ async function getSatScoresForStudent(student) {
 
   if (records.length === 0) return empty;
 
-  const buckets = gradeRecordsByGroup(records).map(applyCurves);
+  // Program gate: a graded exam only counts toward this student's scores if
+  // they're enrolled in its program. Legacy group buckets (no "exam:" prefix)
+  // and ungrouped exams pass through unchanged.
+  const sid = String(student.id);
+  const buckets = gradeRecordsByGroup(records)
+    .map(applyCurves)
+    .filter((b) => {
+      const m = /^exam:(.+)$/.exec(String(b.groupId));
+      if (!m) return true;
+      const exam = getExam(m[1]);
+      return !exam || examScoreVisible(exam, sid);
+    });
   if (buckets.length === 0) return empty;
 
   // Latest = most recently finished group with AT LEAST ONE section graded.

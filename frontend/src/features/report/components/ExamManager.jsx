@@ -1,302 +1,66 @@
 // features/report/components/ExamManager.jsx
 //
-// Admin panel for SAT exams: pick the ClassMarker tests that make up an exam,
-// assign each to a DSAT section (1-2 = Reading & Writing, 3-4 = Math), and
-// upload the exam's scoring sheets. Replaces the old assumption that a group
-// holds exactly one exam named "Section N: …".
+// Admin panel for SAT exams, grouped by program. A program (e.g. a summer
+// program "GA SAT 2026") owns the student roster for every exam inside it —
+// enrolling a student makes all of that program's exams appear in their SAT
+// report; students not in the program never see them. Exams can also stay
+// ungrouped (visible to anyone who took them, rostered individually).
+//
+// This component is the orchestrator: it loads exams, tests, students and
+// programs, then renders each program with its exams nested underneath, the
+// loose ungrouped exams below, and the create-exam / create-program forms.
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   fetchExams,
   fetchAvailableTests,
-  fetchExamTakers,
-  fetchExamScoreboard,
   fetchStudents,
+  fetchPrograms,
   createExam,
-  updateExam,
-  duplicateExam,
-  deleteExam,
+  createProgram,
+  updateProgram,
+  deleteProgram,
 } from '../api/reportApi.js';
-import ScoringSheetUpload from './ScoringSheetUpload.jsx';
+import ExamRow, { SECTION_DEFS } from './ExamRow.jsx';
+import ProgramRosterPanel from './ProgramRosterPanel.jsx';
+import s from './examManagerStyles.js';
 
-const SECTION_DEFS = [
-  { key: '1', label: 'Section 1', hint: 'Reading & Writing · Module 1' },
-  { key: '2', label: 'Section 2', hint: 'Reading & Writing · Module 2' },
-  { key: '3', label: 'Section 3', hint: 'Math · Module 1' },
-  { key: '4', label: 'Section 4', hint: 'Math · Module 2' },
-];
-
-const s = {
-  card: { background: 'var(--bg)', borderRadius: 16, boxShadow: 'var(--shadow-lg)', border: '1.5px solid var(--border)', overflow: 'hidden', marginTop: 24 },
-  head: { padding: '18px 24px', display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', userSelect: 'none' },
-  dot: { width: 8, height: 8, borderRadius: '50%', background: 'var(--accent)' },
-  title: { fontSize: '0.85rem', fontWeight: 600, color: 'var(--ink)', flex: 1 },
-  count: { fontSize: '0.72rem', color: 'var(--muted)', fontWeight: 500 },
-  chevron: { fontSize: '0.8rem', color: 'var(--muted)' },
-  body: { borderTop: '1px solid var(--border)', padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 16 },
-  examRow: { border: '1.5px solid var(--border)', borderRadius: 12, overflow: 'hidden' },
-  examHead: { display: 'flex', alignItems: 'center', gap: 10, padding: '12px 16px', background: '#fafbff' },
-  examName: { fontWeight: 600, fontSize: '0.88rem', color: 'var(--ink)', flex: 1 },
-  sectionList: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 8, padding: '12px 16px' },
-  sectionChip: { fontSize: '0.74rem', border: '1px solid var(--border)', borderRadius: 8, padding: '8px 10px', background: '#fff' },
-  sectionLabel: { fontWeight: 700, fontSize: '0.66rem', letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--muted)', display: 'block', marginBottom: 3 },
-  sectionEmpty: { color: 'var(--muted)', fontStyle: 'italic' },
-  btn: { appearance: 'none', border: '1px solid var(--accent)', background: 'var(--accent)', color: '#fff', padding: '7px 16px', borderRadius: 8, cursor: 'pointer', fontSize: '0.78rem', fontWeight: 600 },
-  btnGhost: { appearance: 'none', border: '1px solid var(--border)', background: '#fff', color: 'var(--ink)', padding: '5px 12px', borderRadius: 6, cursor: 'pointer', fontSize: '0.72rem', fontWeight: 500 },
-  btnDanger: { appearance: 'none', border: '1px solid #fca5a5', background: '#fff', color: '#b91c1c', padding: '5px 12px', borderRadius: 6, cursor: 'pointer', fontSize: '0.72rem', fontWeight: 500 },
-  form: { border: '1.5px dashed var(--border)', borderRadius: 12, padding: '16px', display: 'flex', flexDirection: 'column', gap: 12, background: '#fafbff' },
-  label: { fontSize: '0.7rem', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 4, display: 'block' },
-  input: { width: '100%', boxSizing: 'border-box', padding: '8px 10px', borderRadius: 8, border: '1.5px solid var(--border)', fontSize: '0.85rem', fontFamily: 'inherit' },
-  select: { width: '100%', boxSizing: 'border-box', padding: '8px 10px', borderRadius: 8, border: '1.5px solid var(--border)', fontSize: '0.8rem', background: '#fff', fontFamily: 'inherit' },
-  hint: { fontSize: '0.68rem', color: 'var(--muted)', marginTop: 2 },
-  grid2: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 12 },
-  formActions: { display: 'flex', gap: 8, justifyContent: 'flex-end' },
-  error: { padding: '10px 14px', background: '#fff1f2', border: '1.5px solid #fca5a5', borderRadius: 8, color: '#b91c1c', fontSize: '0.8rem' },
-  empty: { fontSize: '0.82rem', color: 'var(--muted)', textAlign: 'center', padding: '12px 0' },
-  hiddenPanel: { borderTop: '1px dashed var(--border)', background: '#fafbff', padding: '12px 16px' },
-  hiddenTitle: { fontSize: '0.7rem', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 8 },
-  hiddenList: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))', gap: 4, maxHeight: 220, overflowY: 'auto', marginBottom: 10 },
-  hiddenRow: { display: 'flex', alignItems: 'center', gap: 7, fontSize: '0.8rem', padding: '3px 4px', borderRadius: 6, cursor: 'pointer' },
-  hiddenRowOn: { background: '#fff1f2', color: '#b91c1c', textDecoration: 'line-through' },
-  hiddenBadge: { fontSize: '0.68rem', fontWeight: 700, color: '#b91c1c', background: '#fff1f2', border: '1px solid #fca5a5', borderRadius: 999, padding: '2px 8px' },
-  dateChip: { fontSize: '0.7rem', fontWeight: 600, color: 'var(--accent)', background: 'var(--accent-dim)', borderRadius: 999, padding: '2px 9px', whiteSpace: 'nowrap' },
-  rosterChip: { fontSize: '0.68rem', fontWeight: 600, color: 'var(--muted)', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 999, padding: '2px 8px', whiteSpace: 'nowrap' },
-  searchInput: { width: '100%', boxSizing: 'border-box', padding: '6px 10px', borderRadius: 8, border: '1.5px solid var(--border)', fontSize: '0.78rem', fontFamily: 'inherit', marginBottom: 8 },
-};
-
-// Ranked results for one exam — name, RW, Math, Total, newest attempt date.
-function ScoreboardPanel({ exam, onError }) {
-  const [board, setBoard] = useState(null); // null = loading
-
-  useEffect(() => {
-    let cancelled = false;
-    fetchExamScoreboard(exam.examId)
-      .then((b) => { if (!cancelled) setBoard(b); })
-      .catch((err) => { if (!cancelled) { setBoard({ rows: [] }); onError?.(err.message || 'Failed to load scoreboard'); } });
-    return () => { cancelled = true; };
-  }, [exam.examId, onError]);
-
-  const cell = { padding: '6px 12px', fontSize: '0.8rem' };
-  const num = { ...cell, textAlign: 'right', fontVariantNumeric: 'tabular-nums' };
-  const header = { ...cell, fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--muted)', textAlign: 'left', background: '#f1f5ff' };
-  const medal = (rank) => (rank === 1 ? '🥇' : rank === 2 ? '🥈' : rank === 3 ? '🥉' : `${rank}`);
-  const fmt = (scaled, raw) => (scaled != null ? scaled : raw != null ? `${raw} raw` : '—');
-
-  return (
-    <div style={s.hiddenPanel}>
-      <div style={s.hiddenTitle}>
-        Scoreboard{board?.date ? ` · ${board.date}` : ''}
-        {board && !(board.hasRwCurve && board.hasMathCurve) && (
-          <span style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>
-            {' '}— upload {!board.hasRwCurve && !board.hasMathCurve ? 'the RW and Math sheets' : !board.hasRwCurve ? 'the RW sheet' : 'the Math sheet'} for scaled scores
-          </span>
-        )}
-      </div>
-      {board === null ? (
-        <div style={s.empty}>Loading scoreboard…</div>
-      ) : board.rows.length === 0 ? (
-        <div style={s.empty}>No results yet for this exam's tests.</div>
-      ) : (
-        <div style={{ maxHeight: 320, overflowY: 'auto', border: '1px solid var(--border)', borderRadius: 8, background: '#fff' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead>
-              <tr>
-                <th style={{ ...header, width: 40 }}>#</th>
-                <th style={header}>Student</th>
-                <th style={{ ...header, textAlign: 'right' }}>RW</th>
-                <th style={{ ...header, textAlign: 'right' }}>Math</th>
-                <th style={{ ...header, textAlign: 'right' }}>Total</th>
-                <th style={{ ...header, textAlign: 'right' }}>Date</th>
-              </tr>
-            </thead>
-            <tbody>
-              {board.rows.map((row, i) => (
-                <tr key={row.studentId} style={{ borderTop: '1px solid var(--border)', background: i % 2 ? '#fafbff' : '#fff' }}>
-                  <td style={{ ...cell, color: 'var(--muted)' }}>{medal(i + 1)}</td>
-                  <td style={{ ...cell, fontWeight: 500 }}>{row.name}</td>
-                  <td style={num}>{fmt(row.rwScaled, row.rwRaw)}</td>
-                  <td style={num}>{fmt(row.mathScaled, row.mathRaw)}</td>
-                  <td style={{ ...num, fontWeight: 700, color: row.total != null ? 'var(--accent)' : 'var(--muted)' }}>
-                    {row.total ?? '—'}
-                  </td>
-                  <td style={{ ...num, color: 'var(--muted)', fontSize: '0.72rem' }}>{row.date || '—'}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// Per-exam roster editor — pick the students taking this exam from the full
-// student list. Opens from the "N students" chip on the exam row.
-function RosterPanel({ exam, roster, onSaved, onError }) {
-  const [selected, setSelected] = useState(() => new Set(exam.studentIds || []));
-  const [search, setSearch] = useState('');
-  const [saving, setSaving] = useState(false);
-
-  const filtered = roster.filter(
-    (st) => !search || st.name.toLowerCase().includes(search.toLowerCase())
-  );
-
-  const toggle = (id) => {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
-
-  async function handleSave() {
-    setSaving(true);
-    try {
-      await updateExam(exam.examId, { studentIds: Array.from(selected) });
-      onSaved?.();
-    } catch (err) {
-      onError?.(err.message || 'Failed to save students');
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  return (
-    <div style={s.hiddenPanel}>
-      <div style={s.hiddenTitle}>Students taking this exam — {selected.size} selected</div>
-      <input
-        style={s.searchInput}
-        value={search}
-        placeholder="Search students…"
-        onChange={(e) => setSearch(e.target.value)}
-      />
-      <div style={s.hiddenList}>
-        {filtered.map((st) => (
-          <label key={st.id} style={s.hiddenRow}>
-            <input type="checkbox" checked={selected.has(st.id)} onChange={() => toggle(st.id)} />
-            {st.name}
-          </label>
-        ))}
-        {filtered.length === 0 && <span style={{ ...s.hint, gridColumn: '1 / -1' }}>No students match.</span>}
-      </div>
-      <div style={s.formActions}>
-        <button type="button" style={s.btn} disabled={saving} onClick={handleSave}>
-          {saving ? 'Saving…' : 'Save Students'}
-        </button>
-      </div>
-    </div>
-  );
-}
-
-// Per-exam hidden-students editor: lists everyone who took the exam's tests;
-// checked = hidden (their attempts are ignored when scoring this exam).
-function HiddenStudentsPanel({ exam, onSaved, onError }) {
-  const [takers, setTakers] = useState(null); // null = loading
-  const [hidden, setHidden] = useState(new Set(exam.hiddenStudentIds || []));
-  const [saving, setSaving] = useState(false);
-
-  useEffect(() => {
-    let cancelled = false;
-    fetchExamTakers(exam.examId)
-      .then((list) => { if (!cancelled) setTakers(list); })
-      .catch((err) => { if (!cancelled) { setTakers([]); onError?.(err.message || 'Failed to load students'); } });
-    return () => { cancelled = true; };
-  }, [exam.examId, onError]);
-
-  const toggle = (id) => {
-    setHidden((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
-
-  async function handleSave() {
-    setSaving(true);
-    try {
-      await updateExam(exam.examId, { hiddenStudentIds: Array.from(hidden) });
-      onSaved?.();
-    } catch (err) {
-      onError?.(err.message || 'Failed to save hidden students');
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  const dirty =
-    hidden.size !== (exam.hiddenStudentIds || []).length ||
-    (exam.hiddenStudentIds || []).some((id) => !hidden.has(id));
-
-  return (
-    <div style={s.hiddenPanel}>
-      <div style={s.hiddenTitle}>Hide students — checked students' attempts don't count for this exam</div>
-      {takers === null ? (
-        <div style={s.empty}>Loading students…</div>
-      ) : takers.length === 0 ? (
-        <div style={s.empty}>No one has taken this exam's tests yet.</div>
-      ) : (
-        <>
-          <div style={s.hiddenList}>
-            {takers.map((t) => (
-              <label key={t.id} style={{ ...s.hiddenRow, ...(hidden.has(t.id) ? s.hiddenRowOn : {}) }}>
-                <input
-                  type="checkbox"
-                  checked={hidden.has(t.id)}
-                  onChange={() => toggle(t.id)}
-                />
-                {t.name}
-              </label>
-            ))}
-          </div>
-          <div style={s.formActions}>
-            <button type="button" style={s.btn} disabled={saving || !dirty} onClick={handleSave}>
-              {saving ? 'Saving…' : 'Save Hidden Students'}
-            </button>
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
-
-const EMPTY_FORM = { name: '', date: '', sections: { 1: '', 2: '', 3: '', 4: '' }, studentIds: [] };
+const EMPTY_FORM = { name: '', date: '', programId: '', sections: { 1: '', 2: '', 3: '', 4: '' }, studentIds: [] };
 
 export default function ExamManager({ onExamsChanged }) {
   const [open, setOpen] = useState(false);
   const [exams, setExams] = useState([]);
   const [tests, setTests] = useState([]);
-  const [roster, setRoster] = useState([]); // full student list for the planning picker
+  const [roster, setRoster] = useState([]); // full student list for the pickers
+  const [programs, setPrograms] = useState([]);
   const [studentSearch, setStudentSearch] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
-  // null = closed, 'new' = creating, otherwise the examId being edited.
+  // Exam create form: null = closed, 'new' = creating.
   const [formMode, setFormMode] = useState(null);
   const [form, setForm] = useState(EMPTY_FORM);
   const [groupFilter, setGroupFilter] = useState('');
   const [saving, setSaving] = useState(false);
-  // examId whose hidden-students panel is expanded (one at a time).
-  const [studentsOpenFor, setStudentsOpenFor] = useState(null);
-  // examId whose scoreboard is expanded (one at a time).
-  const [scoreboardOpenFor, setScoreboardOpenFor] = useState(null);
-  // examId whose roster panel is expanded (one at a time).
-  const [rosterOpenFor, setRosterOpenFor] = useState(null);
-  // { examId, key } of the section chip currently showing its inline select.
-  const [sectionEditing, setSectionEditing] = useState(null);
+
+  // Program create form + which program's roster panel is open.
+  const [programFormName, setProgramFormName] = useState(null); // null = closed
+  const [programSaving, setProgramSaving] = useState(false);
+  const [rosterOpenFor, setRosterOpenFor] = useState(null); // programId
 
   const refresh = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const [examList, testList, students] = await Promise.all([
+      const [examList, testList, students, programList] = await Promise.all([
         fetchExams(),
         fetchAvailableTests(),
         fetchStudents().catch(() => []),
+        fetchPrograms().catch(() => []),
       ]);
       setExams(examList);
       setTests(testList);
       setRoster(students || []);
+      setPrograms(programList || []);
     } catch (err) {
       setError(err.response?.data?.error || err.message || 'Failed to load exams');
     } finally {
@@ -308,14 +72,16 @@ export default function ExamManager({ onExamsChanged }) {
     if (open) refresh();
   }, [open, refresh]);
 
-  // A test can be linked to several ClassMarker groups — offer every group
-  // any test appears under, and match the filter against all of them.
+  const refreshAndNotify = useCallback(async () => {
+    await refresh();
+    onExamsChanged?.();
+  }, [refresh, onExamsChanged]);
+
+  // Distinct group names across all tests, for the create-form group filter.
   const groups = useMemo(() => {
     const seen = new Set();
     for (const t of tests) {
-      for (const g of t.groups || []) {
-        if (g.groupName) seen.add(g.groupName);
-      }
+      for (const g of t.groups || []) if (g.groupName) seen.add(g.groupName);
       if (t.groupName) seen.add(t.groupName);
     }
     return Array.from(seen).sort();
@@ -327,8 +93,8 @@ export default function ExamManager({ onExamsChanged }) {
     return t.groupName === groupName;
   }, []);
 
-  // Tests available for a given section slot of the CREATE form: not assigned
-  // to another exam and not already chosen in a different slot.
+  // Tests available for a section slot of the CREATE form: not assigned to
+  // another exam and not already chosen in a different slot.
   const optionsForSection = useCallback((sectionKey) => {
     const chosenElsewhere = new Set(
       Object.entries(form.sections)
@@ -343,8 +109,8 @@ export default function ExamManager({ onExamsChanged }) {
     });
   }, [tests, form.sections, groupFilter, inGroup]);
 
-  function openCreate() {
-    setForm(EMPTY_FORM);
+  function openCreate(programId = '') {
+    setForm({ ...EMPTY_FORM, programId });
     setGroupFilter('');
     setStudentSearch('');
     setFormMode('new');
@@ -369,10 +135,17 @@ export default function ExamManager({ onExamsChanged }) {
         const test = tests.find((t) => t.testId === testId);
         sections[key] = testId ? { testId, testName: test?.testName || null } : null;
       }
-      await createExam({ name: form.name, date: form.date, sections, studentIds: form.studentIds });
+      await createExam({
+        name: form.name,
+        date: form.date,
+        programId: form.programId || '',
+        sections,
+        // Grouped exams inherit the program roster — only send a per-exam
+        // roster for ungrouped exams.
+        studentIds: form.programId ? [] : form.studentIds,
+      });
       setFormMode(null);
-      await refresh();
-      onExamsChanged?.();
+      await refreshAndNotify();
     } catch (err) {
       setError(err.response?.data?.error || err.message || 'Failed to save exam');
     } finally {
@@ -380,125 +153,74 @@ export default function ExamManager({ onExamsChanged }) {
     }
   }
 
-  // ── Inline click-to-edit (no edit form): every element on an exam row
-  // saves itself — title and date via prompt, section chips via an inline
-  // select, roster via its panel.
-  async function patchExam(examId, patch) {
+  // ── Program actions ──────────────────────────────────────────
+  async function handleCreateProgram() {
+    if (!programFormName?.trim()) return;
+    setProgramSaving(true);
     setError(null);
     try {
-      await updateExam(examId, patch);
-      await refresh();
-      onExamsChanged?.();
+      await createProgram({ name: programFormName.trim() });
+      setProgramFormName(null);
+      await refreshAndNotify();
     } catch (err) {
-      setError(err.response?.data?.error || err.message || 'Failed to update exam');
+      setError(err.response?.data?.error || err.message || 'Failed to create program');
+    } finally {
+      setProgramSaving(false);
     }
   }
 
-  function renameExam(exam) {
+  async function renameProgram(program) {
     // eslint-disable-next-line no-alert
-    const name = window.prompt('Exam name', exam.name);
-    if (name == null || !name.trim() || name.trim() === exam.name) return;
-    patchExam(exam.examId, { name: name.trim() });
-  }
-
-  function changeDate(exam) {
-    // Default to the day the exam was actually taken (derived from attempts)
-    // when no date was set by hand — confirming the prompt sets it for real.
-    const suggested = exam.date || exam.takenDate || '';
-    // eslint-disable-next-line no-alert
-    const date = window.prompt('Exam date (YYYY-MM-DD — leave empty to clear)', suggested);
-    if (date == null || date.trim() === (exam.date || '')) return;
-    patchExam(exam.examId, { date: date.trim() });
-  }
-
-  // Options for one exam's section chip: unassigned tests + the exam's own.
-  function sectionOptions(exam, sectionKey) {
-    const usedElsewhereInExam = new Set(
-      SECTION_DEFS.filter((d) => d.key !== sectionKey)
-        .map((d) => exam.sections?.[d.key]?.testId)
-        .filter(Boolean)
-    );
-    return tests.filter((t) => {
-      if (usedElsewhereInExam.has(t.testId)) return false;
-      if (t.assignedToExamId && t.assignedToExamId !== exam.examId) return false;
-      return true;
-    });
-  }
-
-  // Group name of a given test (for pre-selecting the drill-down) — a test can
-  // appear under several groups; the first is enough to land the user there.
-  function testGroup(testId) {
-    if (!testId) return '';
-    const t = tests.find((x) => x.testId === testId);
-    return t?.groups?.[0]?.groupName || t?.groupName || '';
-  }
-
-  // Distinct groups that still have an assignable test for this section slot —
-  // the first step of the inline "browse group, then test" picker.
-  function groupsForSlot(exam, sectionKey) {
-    const set = new Set();
-    for (const t of sectionOptions(exam, sectionKey)) {
-      for (const g of t.groups || []) if (g.groupName) set.add(g.groupName);
-      if (t.groupName) set.add(t.groupName);
-    }
-    return Array.from(set).sort();
-  }
-
-  function setSection(exam, sectionKey, testId) {
-    const sections = {};
-    for (const d of SECTION_DEFS) {
-      const cur = exam.sections?.[d.key];
-      sections[d.key] = cur ? { testId: cur.testId, testName: cur.testName } : null;
-    }
-    const test = tests.find((t) => t.testId === testId);
-    sections[sectionKey] = testId ? { testId, testName: test?.testName || null } : null;
-    setSectionEditing(null);
-    patchExam(exam.examId, { sections });
-  }
-
-  async function handleDuplicate(exam) {
+    const name = window.prompt('Program name', program.name);
+    if (name == null || !name.trim() || name.trim() === program.name) return;
     setError(null);
     try {
-      await duplicateExam(exam.examId);
-      await refresh();
-      onExamsChanged?.();
+      await updateProgram(program.programId, { name: name.trim() });
+      await refreshAndNotify();
     } catch (err) {
-      setError(err.response?.data?.error || err.message || 'Failed to duplicate exam');
+      setError(err.response?.data?.error || err.message || 'Failed to rename program');
     }
   }
 
-  async function handleDelete(exam) {
+  async function handleDeleteProgram(program) {
     // eslint-disable-next-line no-alert
-    if (!window.confirm(`Delete exam "${exam.name}" and its scoring sheets?`)) return;
+    if (!window.confirm(`Delete program "${program.name}"? Its ${program.examCount} exam${program.examCount === 1 ? '' : 's'} will become ungrouped (not deleted).`)) return;
     setError(null);
     try {
-      await deleteExam(exam.examId);
-      await refresh();
-      onExamsChanged?.();
+      await deleteProgram(program.programId);
+      if (rosterOpenFor === program.programId) setRosterOpenFor(null);
+      await refreshAndNotify();
     } catch (err) {
-      setError(err.response?.data?.error || err.message || 'Failed to delete exam');
+      setError(err.response?.data?.error || err.message || 'Failed to delete program');
     }
   }
 
-  // Placeholders are allowed: name is the only requirement; tests, date and
-  // students can all come later via Edit.
   const formValid = Boolean(form.name.trim());
-
   const rosterFiltered = roster.filter(
     (st) => !studentSearch || st.name.toLowerCase().includes(studentSearch.toLowerCase())
   );
 
+  const ungroupedExams = exams.filter(
+    (e) => !e.programId || !programs.some((p) => p.programId === e.programId)
+  );
+  const examsOf = (programId) => exams.filter((e) => e.programId === programId);
+
+  const rowProps = (exam) => ({
+    exam,
+    tests,
+    roster,
+    programs,
+    onChanged: refreshAndNotify,
+    onError: setError,
+  });
+
   return (
     <div style={s.card}>
-      <div
-        style={s.head}
-        onClick={() => setOpen((v) => !v)}
-        role="button"
-        aria-expanded={open}
-      >
+      <div style={s.head} onClick={() => setOpen((v) => !v)} role="button" aria-expanded={open}>
         <div style={s.dot} />
         <span style={s.title}>SAT Exams</span>
-        {exams.length > 0 && <span style={s.count}>{exams.length} exam{exams.length === 1 ? '' : 's'}</span>}
+        {programs.length > 0 && <span style={s.count}>{programs.length} program{programs.length === 1 ? '' : 's'}</span>}
+        {exams.length > 0 && <span style={s.count}>· {exams.length} exam{exams.length === 1 ? '' : 's'}</span>}
         <span style={s.chevron}>{open ? '▾' : '▸'}</span>
       </div>
 
@@ -506,144 +228,68 @@ export default function ExamManager({ onExamsChanged }) {
         <div style={s.body}>
           {error && <div style={s.error}>⚠ {error}</div>}
 
-          {loading && exams.length === 0 ? (
+          {loading && exams.length === 0 && programs.length === 0 ? (
             <div style={s.empty}>Loading…</div>
-          ) : exams.length === 0 && formMode === null ? (
+          ) : exams.length === 0 && programs.length === 0 && formMode === null && programFormName === null ? (
             <div style={s.empty}>
-              No exams defined yet. Create one to map tests onto SAT sections and upload its scoring sheets.
+              No programs or exams yet. Create a program to group exams into a cohort, or add a standalone exam.
             </div>
-          ) : (
-            exams.map((exam) => (
-              <div key={exam.examId} style={s.examRow}>
-                <div style={s.examHead}>
+          ) : null}
+
+          {/* ── Programs, each with its exams nested underneath ── */}
+          {programs.map((program) => {
+            const members = examsOf(program.programId);
+            const count = (program.studentIds || []).length;
+            return (
+              <div key={program.programId} style={s.programCard}>
+                <div style={s.programHead}>
+                  <span style={s.programBadge}>Program</span>
                   <span
-                    style={{ ...s.examName, cursor: 'pointer' }}
-                    onClick={() => renameExam(exam)}
-                    title="Click to rename"
+                    style={{ ...s.programName, cursor: 'pointer' }}
+                    onClick={() => renameProgram(program)}
+                    title="Click to rename this program"
                   >
-                    {exam.name}
-                  </span>
-                  <span
-                    style={{ ...s.dateChip, cursor: 'pointer', ...(exam.date ? null : exam.takenDate ? { opacity: 0.7 } : null) }}
-                    onClick={() => changeDate(exam)}
-                    title={exam.date ? 'Click to change the exam date' : exam.takenDate ? 'Date the exam was taken — click to confirm or change' : 'Click to set the exam date'}
-                  >
-                    {exam.date || exam.takenDate || 'set date'}
+                    {program.name}
                   </span>
                   <span
                     style={{ ...s.rosterChip, cursor: 'pointer' }}
-                    onClick={() => setRosterOpenFor((cur) => (cur === exam.examId ? null : exam.examId))}
-                    title="Click to pick the students taking this exam"
+                    onClick={() => setRosterOpenFor((cur) => (cur === program.programId ? null : program.programId))}
+                    title="Click to enroll students — they'll see every exam in this program"
                   >
-                    {(exam.studentIds || []).length} student{(exam.studentIds || []).length === 1 ? '' : 's'}
+                    {count} enrolled
                   </span>
-                  {(exam.hiddenStudentIds || []).length > 0 && (
-                    <span style={s.hiddenBadge}>{exam.hiddenStudentIds.length} hidden</span>
-                  )}
-                  <button
-                    type="button"
-                    style={s.btnGhost}
-                    onClick={() => setScoreboardOpenFor((cur) => (cur === exam.examId ? null : exam.examId))}
-                  >
-                    {scoreboardOpenFor === exam.examId ? 'Close Scoreboard' : 'Scoreboard'}
-                  </button>
-                  <button
-                    type="button"
-                    style={s.btnGhost}
-                    onClick={() => setStudentsOpenFor((cur) => (cur === exam.examId ? null : exam.examId))}
-                  >
-                    {studentsOpenFor === exam.examId ? 'Close Hidden' : 'Hidden'}
-                  </button>
-                  <button type="button" style={s.btnGhost} onClick={() => handleDuplicate(exam)} title="New exam with the same students — set its own date and tests">Duplicate</button>
-                  <button type="button" style={s.btnDanger} onClick={() => handleDelete(exam)}>Delete</button>
+                  <button type="button" style={s.btnGhost} onClick={() => openCreate(program.programId)}>+ Exam</button>
+                  <button type="button" style={s.btnDanger} onClick={() => handleDeleteProgram(program)}>Delete</button>
                 </div>
-                <div style={s.sectionList}>
-                  {SECTION_DEFS.map(({ key, label, hint }) => {
-                    const assigned = exam.sections?.[key];
-                    const editing = sectionEditing?.examId === exam.examId && sectionEditing?.key === key;
-                    return (
-                      <div
-                        key={key}
-                        style={{ ...s.sectionChip, cursor: 'pointer' }}
-                        onClick={() => !editing && setSectionEditing({ examId: exam.examId, key, group: testGroup(assigned?.testId) })}
-                        title="Click to change this section's test"
-                      >
-                        <span style={s.sectionLabel}>{label}</span>
-                        {editing ? (
-                          <div
-                            style={{ display: 'grid', gap: 4 }}
-                            onClick={(e) => e.stopPropagation()}
-                            onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setSectionEditing(null); }}
-                          >
-                            <select
-                              style={s.select}
-                              autoFocus
-                              value={sectionEditing.group || ''}
-                              onChange={(e) => setSectionEditing((cur) => ({ ...cur, group: e.target.value }))}
-                            >
-                              <option value="">All groups</option>
-                              {groupsForSlot(exam, key).map((g) => (
-                                <option key={g} value={g}>{g}</option>
-                              ))}
-                            </select>
-                            <select
-                              style={s.select}
-                              value={assigned?.testId || ''}
-                              onChange={(e) => setSection(exam, key, e.target.value)}
-                            >
-                              <option value="">— none —</option>
-                              {sectionOptions(exam, key)
-                                .filter((t) => inGroup(t, sectionEditing.group))
-                                .map((t) => (
-                                  <option key={t.testId} value={t.testId}>
-                                    {t.testName} ({t.attempts} attempt{t.attempts === 1 ? '' : 's'})
-                                  </option>
-                                ))}
-                            </select>
-                          </div>
-                        ) : assigned
-                          ? <span>{assigned.testName || `Test #${assigned.testId}`}</span>
-                          : <span style={s.sectionEmpty}>not assigned</span>}
-                      </div>
-                    );
-                  })}
-                </div>
-                {rosterOpenFor === exam.examId && (
-                  <RosterPanel
-                    exam={exam}
+                {rosterOpenFor === program.programId && (
+                  <ProgramRosterPanel
+                    program={program}
                     roster={roster}
                     onError={setError}
-                    onSaved={async () => {
-                      setRosterOpenFor(null);
-                      await refresh();
-                      onExamsChanged?.();
-                    }}
+                    onSaved={async () => { setRosterOpenFor(null); await refreshAndNotify(); }}
                   />
                 )}
-                {scoreboardOpenFor === exam.examId && (
-                  <ScoreboardPanel exam={exam} onError={setError} />
-                )}
-                {studentsOpenFor === exam.examId && (
-                  <HiddenStudentsPanel
-                    exam={exam}
-                    onError={setError}
-                    onSaved={async () => {
-                      setStudentsOpenFor(null);
-                      await refresh();
-                      onExamsChanged?.();
-                    }}
-                  />
-                )}
-                <ScoringSheetUpload
-                  groupId={exam.curveKey}
-                  sheets={exam.sheets}
-                  onChanged={async () => { await refresh(); onExamsChanged?.(); }}
-                />
+                <div style={s.programBody}>
+                  {members.length === 0 ? (
+                    <div style={s.programEmpty}>No exams in this program yet — use “+ Exam”, or move an exam in from the list below.</div>
+                  ) : (
+                    members.map((exam) => <ExamRow key={exam.examId} {...rowProps(exam)} />)
+                  )}
+                </div>
               </div>
-            ))
+            );
+          })}
+
+          {/* ── Ungrouped exams ── */}
+          {ungroupedExams.length > 0 && (
+            <>
+              {programs.length > 0 && <div style={s.ungroupedLabel}>Ungrouped exams</div>}
+              {ungroupedExams.map((exam) => <ExamRow key={exam.examId} {...rowProps(exam)} />)}
+            </>
           )}
 
-          {formMode !== null ? (
+          {/* ── Create-exam form ── */}
+          {formMode !== null && (
             <div style={s.form}>
               <div style={s.grid2}>
                 <div>
@@ -651,7 +297,7 @@ export default function ExamManager({ onExamsChanged }) {
                   <input
                     style={s.input}
                     value={form.name}
-                    placeholder="e.g. DSATEN 2025 3B"
+                    placeholder="e.g. Diagnostic, Test 1"
                     onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
                   />
                 </div>
@@ -664,6 +310,23 @@ export default function ExamManager({ onExamsChanged }) {
                     onChange={(e) => setForm((f) => ({ ...f, date: e.target.value }))}
                   />
                   <div style={s.hint}>Create the exam ahead of time — sections below can stay empty until the tests exist.</div>
+                </div>
+              </div>
+
+              <div>
+                <span style={s.label}>Program <span style={{ fontWeight: 400 }}>· optional</span></span>
+                <select
+                  style={s.select}
+                  value={form.programId}
+                  onChange={(e) => setForm((f) => ({ ...f, programId: e.target.value }))}
+                >
+                  <option value="">No program (ungrouped)</option>
+                  {programs.map((p) => <option key={p.programId} value={p.programId}>{p.name}</option>)}
+                </select>
+                <div style={s.hint}>
+                  {form.programId
+                    ? 'This exam inherits the program’s enrolled students.'
+                    : 'Ungrouped exams are rostered individually below.'}
                 </div>
               </div>
 
@@ -696,33 +359,35 @@ export default function ExamManager({ onExamsChanged }) {
                 ))}
               </div>
 
-              <div>
-                <span style={s.label}>
-                  Students taking this exam
-                  <span style={{ fontWeight: 400 }}> · optional · {form.studentIds.length} selected</span>
-                </span>
-                <input
-                  style={s.searchInput}
-                  value={studentSearch}
-                  placeholder="Search students…"
-                  onChange={(e) => setStudentSearch(e.target.value)}
-                />
-                <div style={s.hiddenList}>
-                  {rosterFiltered.map((st) => (
-                    <label key={st.id} style={s.hiddenRow}>
-                      <input
-                        type="checkbox"
-                        checked={form.studentIds.includes(st.id)}
-                        onChange={() => toggleStudent(st.id)}
-                      />
-                      {st.name}
-                    </label>
-                  ))}
-                  {rosterFiltered.length === 0 && (
-                    <span style={{ ...s.hint, gridColumn: '1 / -1' }}>No students match.</span>
-                  )}
+              {!form.programId && (
+                <div>
+                  <span style={s.label}>
+                    Students taking this exam
+                    <span style={{ fontWeight: 400 }}> · optional · {form.studentIds.length} selected</span>
+                  </span>
+                  <input
+                    style={s.searchInput}
+                    value={studentSearch}
+                    placeholder="Search students…"
+                    onChange={(e) => setStudentSearch(e.target.value)}
+                  />
+                  <div style={s.hiddenList}>
+                    {rosterFiltered.map((st) => (
+                      <label key={st.id} style={s.hiddenRow}>
+                        <input
+                          type="checkbox"
+                          checked={form.studentIds.includes(st.id)}
+                          onChange={() => toggleStudent(st.id)}
+                        />
+                        {st.name}
+                      </label>
+                    ))}
+                    {rosterFiltered.length === 0 && (
+                      <span style={{ ...s.hint, gridColumn: '1 / -1' }}>No students match.</span>
+                    )}
+                  </div>
                 </div>
-              </div>
+              )}
 
               <div style={s.formActions}>
                 <button type="button" style={s.btnGhost} disabled={saving} onClick={() => setFormMode(null)}>Cancel</button>
@@ -731,9 +396,37 @@ export default function ExamManager({ onExamsChanged }) {
                 </button>
               </div>
             </div>
-          ) : (
-            <div style={{ textAlign: 'right' }}>
-              <button type="button" style={s.btn} onClick={openCreate}>+ New Exam</button>
+          )}
+
+          {/* ── Create-program form ── */}
+          {programFormName !== null && (
+            <div style={s.form}>
+              <div>
+                <span style={s.label}>Program name</span>
+                <input
+                  style={s.input}
+                  autoFocus
+                  value={programFormName}
+                  placeholder="e.g. GA SAT 2026"
+                  onChange={(e) => setProgramFormName(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') handleCreateProgram(); }}
+                />
+                <div style={s.hint}>Group your diagnostics and tests under one cohort, then enroll students into it.</div>
+              </div>
+              <div style={s.formActions}>
+                <button type="button" style={s.btnGhost} disabled={programSaving} onClick={() => setProgramFormName(null)}>Cancel</button>
+                <button type="button" style={s.btn} disabled={programSaving || !programFormName.trim()} onClick={handleCreateProgram}>
+                  {programSaving ? 'Creating…' : 'Create Program'}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* ── Action buttons ── */}
+          {formMode === null && programFormName === null && (
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button type="button" style={s.btnGhost} onClick={() => setProgramFormName('')}>+ New Program</button>
+              <button type="button" style={s.btn} onClick={() => openCreate('')}>+ New Exam</button>
             </div>
           )}
         </div>

@@ -196,8 +196,8 @@ router.get('/:examId/scoreboard', async (req, res, next) => {
 // exams get created in advance and have tests attached later.
 router.post('/', (req, res, next) => {
   try {
-    const { name, date, sections, studentIds, hiddenStudentIds } = req.body || {};
-    res.json({ success: true, data: exams.createExam({ name, date, sections, studentIds, hiddenStudentIds }) });
+    const { name, date, programId, sections, studentIds, hiddenStudentIds } = req.body || {};
+    res.json({ success: true, data: exams.createExam({ name, date, programId, sections, studentIds, hiddenStudentIds }) });
   } catch (err) {
     next(err);
   }
@@ -207,8 +207,8 @@ router.post('/', (req, res, next) => {
 // student rosters.
 router.put('/:examId', (req, res, next) => {
   try {
-    const { name, date, sections, studentIds, hiddenStudentIds } = req.body || {};
-    res.json({ success: true, data: exams.updateExam(req.params.examId, { name, date, sections, studentIds, hiddenStudentIds }) });
+    const { name, date, programId, sections, studentIds, hiddenStudentIds } = req.body || {};
+    res.json({ success: true, data: exams.updateExam(req.params.examId, { name, date, programId, sections, studentIds, hiddenStudentIds }) });
   } catch (err) {
     next(err);
   }

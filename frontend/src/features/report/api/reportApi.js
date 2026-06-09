@@ -134,6 +134,32 @@ export async function fetchExamScoreboard(examId) {
   return response.data.data;
 }
 
+// ── SAT programs ───────────────────────────────────────────────
+// A program groups exams into a cohort and owns the student roster for every
+// exam inside it. Enrolling a student makes all the program's exams appear in
+// their SAT report; non-enrolled students never see them. Exams are linked to
+// a program via updateExam(examId, { programId }).
+
+export async function fetchPrograms() {
+  const response = await apiClient.get('/programs');
+  return response.data.data || [];
+}
+
+export async function createProgram(payload) {
+  const response = await apiClient.post('/programs', payload);
+  return response.data.data;
+}
+
+export async function updateProgram(programId, payload) {
+  const response = await apiClient.put(`/programs/${encodeURIComponent(programId)}`, payload);
+  return response.data.data;
+}
+
+export async function deleteProgram(programId) {
+  const response = await apiClient.delete(`/programs/${encodeURIComponent(programId)}`);
+  return response.data;
+}
+
 export async function fetchStudentContacts(studentId) {
   const response = await apiClient.get(
     `/students/${encodeURIComponent(studentId)}/contacts`
