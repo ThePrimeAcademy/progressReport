@@ -46,6 +46,18 @@ export default function ExamManager({ onExamsChanged }) {
   const [programFormName, setProgramFormName] = useState(null); // null = closed
   const [programSaving, setProgramSaving] = useState(false);
   const [rosterOpenFor, setRosterOpenFor] = useState(null); // programId
+  // Which programs are expanded to show their exams. Collapsed by default so
+  // the panel stays compact — click a program to reveal its exams.
+  const [openPrograms, setOpenPrograms] = useState(() => new Set());
+
+  const toggleProgram = (id) => {
+    setOpenPrograms((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -114,6 +126,8 @@ export default function ExamManager({ onExamsChanged }) {
     setGroupFilter('');
     setStudentSearch('');
     setFormMode('new');
+    // Expand the target program so the new exam is visible once created.
+    if (programId) setOpenPrograms((prev) => new Set(prev).add(programId));
   }
 
   const toggleStudent = (id) => {
@@ -159,9 +173,12 @@ export default function ExamManager({ onExamsChanged }) {
     setProgramSaving(true);
     setError(null);
     try {
-      await createProgram({ name: programFormName.trim() });
+      const created = await createProgram({ name: programFormName.trim() });
       setProgramFormName(null);
       await refreshAndNotify();
+      // Program-first flow: jump straight to enrolling students into the
+      // program you just made.
+      if (created?.programId) setRosterOpenFor(created.programId);
     } catch (err) {
       setError(err.response?.data?.error || err.message || 'Failed to create program');
     } finally {
@@ -240,27 +257,41 @@ export default function ExamManager({ onExamsChanged }) {
           {programs.map((program) => {
             const members = examsOf(program.programId);
             const count = (program.studentIds || []).length;
+            const expanded = openPrograms.has(program.programId);
+            const stop = (e) => e.stopPropagation();
             return (
               <div key={program.programId} style={s.programCard}>
-                <div style={s.programHead}>
+                {/* Click the header to expand/collapse the program's exams. The
+                    name, enroll chip, +Exam and Delete keep their own actions. */}
+                <div
+                  style={{ ...s.programHead, cursor: 'pointer' }}
+                  onClick={() => toggleProgram(program.programId)}
+                  role="button"
+                  aria-expanded={expanded}
+                  title={expanded ? 'Click to collapse' : 'Click to show this program’s exams'}
+                >
+                  <span style={s.chevron}>{expanded ? '▾' : '▸'}</span>
                   <span style={s.programBadge}>Program</span>
                   <span
-                    style={{ ...s.programName, cursor: 'pointer' }}
-                    onClick={() => renameProgram(program)}
+                    style={s.programName}
+                    onClick={(e) => { stop(e); renameProgram(program); }}
                     title="Click to rename this program"
                   >
                     {program.name}
                   </span>
+                  <span style={s.count}>{members.length} exam{members.length === 1 ? '' : 's'}</span>
                   <span
                     style={{ ...s.rosterChip, cursor: 'pointer' }}
-                    onClick={() => setRosterOpenFor((cur) => (cur === program.programId ? null : program.programId))}
+                    onClick={(e) => { stop(e); setRosterOpenFor((cur) => (cur === program.programId ? null : program.programId)); }}
                     title="Click to enroll students — they'll see every exam in this program"
                   >
                     {count} enrolled
                   </span>
-                  <button type="button" style={s.btnGhost} onClick={() => openCreate(program.programId)}>+ Exam</button>
-                  <button type="button" style={s.btnDanger} onClick={() => handleDeleteProgram(program)}>Delete</button>
+                  <button type="button" style={s.btnGhost} onClick={(e) => { stop(e); openCreate(program.programId); }}>+ Exam</button>
+                  <button type="button" style={s.btnDanger} onClick={(e) => { stop(e); handleDeleteProgram(program); }}>Delete</button>
                 </div>
+                {/* Enrollment opens independently of expand so you can roster a
+                    collapsed program. */}
                 {rosterOpenFor === program.programId && (
                   <ProgramRosterPanel
                     program={program}
@@ -269,13 +300,15 @@ export default function ExamManager({ onExamsChanged }) {
                     onSaved={async () => { setRosterOpenFor(null); await refreshAndNotify(); }}
                   />
                 )}
-                <div style={s.programBody}>
-                  {members.length === 0 ? (
-                    <div style={s.programEmpty}>No exams in this program yet — use “+ Exam”, or move an exam in from the list below.</div>
-                  ) : (
-                    members.map((exam) => <ExamRow key={exam.examId} {...rowProps(exam)} />)
-                  )}
-                </div>
+                {expanded && (
+                  <div style={s.programBody}>
+                    {members.length === 0 ? (
+                      <div style={s.programEmpty}>No exams in this program yet — use “+ Exam”, or move an exam in from the list below.</div>
+                    ) : (
+                      members.map((exam) => <ExamRow key={exam.examId} {...rowProps(exam)} />)
+                    )}
+                  </div>
+                )}
               </div>
             );
           })}
@@ -425,8 +458,8 @@ export default function ExamManager({ onExamsChanged }) {
           {/* ── Action buttons ── */}
           {formMode === null && programFormName === null && (
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-              <button type="button" style={s.btnGhost} onClick={() => setProgramFormName('')}>+ New Program</button>
-              <button type="button" style={s.btn} onClick={() => openCreate('')}>+ New Exam</button>
+              <button type="button" style={s.btnGhost} onClick={() => openCreate('')}>+ New Exam</button>
+              <button type="button" style={s.btn} onClick={() => setProgramFormName('')}>+ New Program</button>
             </div>
           )}
         </div>
