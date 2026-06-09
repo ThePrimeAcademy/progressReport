@@ -23,7 +23,7 @@ export const SECTION_DEFS = [
 
 export default function ExamRow({
   exam, tests, roster, programs, onChanged, onError,
-  onDragStart, onDragOver, onDrop, dragging,
+  onDragStart, onDragEnd, onDragOver, onDrop, dragging,
 }) {
   const assignedCount = SECTION_DEFS.filter((d) => exam.sections?.[d.key]?.testId).length;
   // Unconfigured exams (no tests yet) open expanded so a freshly created one is
@@ -141,7 +141,10 @@ export default function ExamRow({
 
   return (
     <div
-      style={{ ...s.examRow, ...(dragging ? { opacity: 0.4 } : null) }}
+      style={{
+        ...s.examRow,
+        ...(dragging ? { opacity: 0.55, boxShadow: 'var(--shadow-lg)', borderColor: 'var(--accent)', transform: 'scale(0.99)' } : null),
+      }}
       onDragOver={onDragOver}
       onDrop={onDrop}
     >
@@ -155,8 +158,9 @@ export default function ExamRow({
         <span
           draggable
           onDragStart={onDragStart}
+          onDragEnd={onDragEnd}
           onClick={stop}
-          style={handleStyle}
+          style={{ ...handleStyle, cursor: dragging ? 'grabbing' : 'grab' }}
           title="Drag to reorder within the program"
         >
           ⠿

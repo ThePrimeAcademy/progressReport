@@ -10,7 +10,7 @@ export const s = {
   count: { fontSize: '0.72rem', color: 'var(--muted)', fontWeight: 500 },
   chevron: { fontSize: '0.8rem', color: 'var(--muted)' },
   body: { borderTop: '1px solid var(--border)', padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 16 },
-  examRow: { border: '1.5px solid var(--border)', borderRadius: 12, overflow: 'hidden' },
+  examRow: { border: '1.5px solid var(--border)', borderRadius: 12, overflow: 'hidden', transition: 'box-shadow 150ms ease, opacity 150ms ease, transform 150ms ease, border-color 150ms ease' },
   examHead: { display: 'flex', alignItems: 'center', gap: 10, padding: '12px 16px', background: '#fafbff', flexWrap: 'wrap' },
   examName: { fontWeight: 600, fontSize: '0.88rem', color: 'var(--ink)', flex: 1 },
   sectionList: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 8, padding: '12px 16px' },

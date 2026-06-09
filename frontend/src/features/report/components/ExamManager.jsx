@@ -9,7 +9,7 @@
 // This component is the orchestrator: it loads exams, tests, students and
 // programs, then renders each program with its exams nested underneath, the
 // loose ungrouped exams below, and the create-exam / create-program forms.
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   fetchExams,
   fetchAvailableTests,
@@ -46,7 +46,12 @@ export default function ExamManager({ onExamsChanged }) {
   const [programFormName, setProgramFormName] = useState(null); // null = closed
   const [programSaving, setProgramSaving] = useState(false);
   const [rosterOpenFor, setRosterOpenFor] = useState(null); // programId
-  const [dragExamId, setDragExamId] = useState(null); // exam being dragged
+  const [dragExamId, setDragExamId] = useState(null); // exam being dragged (for styling)
+  // The dragged id mirrored in a ref so dragover/drop guards read it
+  // synchronously — state hasn't committed yet within a fast drag gesture.
+  const dragIdRef = useRef(null);
+  const dragMovedRef = useRef(false); // did the live preview actually reorder?
+  const dragOrderRef = useRef(null); // { programId, ids } settled by the preview
   // Inline program rename: which program's name is being edited, and its draft.
   const [editingProgramId, setEditingProgramId] = useState(null);
   const [programNameDraft, setProgramNameDraft] = useState('');
@@ -226,21 +231,61 @@ export default function ExamManager({ onExamsChanged }) {
   );
   const examsOf = (programId) => exams.filter((e) => e.programId === programId);
 
-  // Drag-to-reorder: drop the dragged exam at the target exam's position within
-  // the same program, then persist the new order.
-  async function handleDropOnExam(programId, targetId) {
-    const fromId = dragExamId;
-    setDragExamId(null);
-    if (!fromId || fromId === targetId) return;
-    const ids = examsOf(programId).map((e) => e.examId);
-    const from = ids.indexOf(fromId);
-    const to = ids.indexOf(targetId);
-    if (from < 0 || to < 0) return; // different program — ignore cross-program drops
+  // Drag-to-reorder with a LIVE preview. The authoritative order lives in
+  // dragOrderRef and is updated synchronously on every dragover — independent of
+  // React's batched state, so persistOrder always reads the settled order even
+  // when drop fires in the same tick. setExams only mirrors it for the visuals.
+  function startDrag(programId, examId, e) {
+    dragIdRef.current = examId;
+    dragMovedRef.current = false;
+    dragOrderRef.current = { programId, ids: examsOf(programId).map((x) => x.examId) };
+    setDragExamId(examId);
+    e.dataTransfer.effectAllowed = 'move';
+    // Firefox/Safari won't begin a drag unless data is set.
+    e.dataTransfer.setData('text/plain', examId);
+  }
+
+  function previewMove(targetId) {
+    const order = dragOrderRef.current;
+    const fromId = dragIdRef.current;
+    if (!order || !fromId || fromId === targetId) return;
+    const from = order.ids.indexOf(fromId);
+    const to = order.ids.indexOf(targetId);
+    if (from < 0 || to < 0 || from === to) return; // cross-program / no-op
+    const ids = [...order.ids];
     ids.splice(from, 1);
     ids.splice(to, 0, fromId);
+    dragOrderRef.current = { programId: order.programId, ids };
+    dragMovedRef.current = true;
+    applyOrder(order.programId, ids);
+  }
+
+  // Reorder a program's exams in local state to match the given id order, leaving
+  // every other program untouched.
+  function applyOrder(programId, ids) {
+    const pos = new Map(ids.map((id, i) => [id, i]));
+    setExams((prev) => {
+      const inProgram = prev
+        .filter((e) => e.programId === programId)
+        .sort((a, b) => pos.get(a.examId) - pos.get(b.examId));
+      let i = 0;
+      return prev.map((e) => (e.programId === programId ? inProgram[i++] : e));
+    });
+  }
+
+  // Fires on both drop and dragend (whichever the browser delivers); guarded by
+  // the ref so it persists exactly once and skips clicks / no-op drags.
+  async function persistOrder() {
+    const moved = dragMovedRef.current;
+    const order = dragOrderRef.current;
+    dragMovedRef.current = false;
+    dragOrderRef.current = null;
+    dragIdRef.current = null;
+    setDragExamId(null);
+    if (!moved || !order) return;
     setError(null);
     try {
-      await reorderExams(programId, ids);
+      await reorderExams(order.programId, order.ids);
       await refreshAndNotify();
     } catch (err) {
       setError(err.response?.data?.error || err.message || 'Failed to reorder exams');
@@ -438,14 +483,14 @@ export default function ExamManager({ onExamsChanged }) {
                           key={exam.examId}
                           {...rowProps(exam)}
                           dragging={dragExamId === exam.examId}
-                          onDragStart={(e) => {
-                            setDragExamId(exam.examId);
-                            e.dataTransfer.effectAllowed = 'move';
-                            // Firefox/Safari won't begin a drag unless data is set.
-                            e.dataTransfer.setData('text/plain', exam.examId);
+                          onDragStart={(e) => startDrag(program.programId, exam.examId, e)}
+                          onDragEnd={persistOrder}
+                          onDragOver={(e) => {
+                            if (!dragIdRef.current || dragIdRef.current === exam.examId) return;
+                            e.preventDefault();
+                            previewMove(exam.examId);
                           }}
-                          onDragOver={(e) => { if (dragExamId && dragExamId !== exam.examId) e.preventDefault(); }}
-                          onDrop={(e) => { e.preventDefault(); handleDropOnExam(program.programId, exam.examId); }}
+                          onDrop={(e) => { e.preventDefault(); persistOrder(); }}
                         />
                       ))
                     )}
