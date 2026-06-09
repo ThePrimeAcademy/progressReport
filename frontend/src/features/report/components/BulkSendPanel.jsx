@@ -1,9 +1,15 @@
 // features/report/components/BulkSendPanel.jsx
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import Button from '../../../components/ui/Button.jsx';
 import DateRangePicker from './DateRangePicker.jsx';
 import DayPicker from './DayPicker.jsx';
-import { emailReport, fetchEmailJobStatus, saveStudentContacts } from '../api/reportApi.js';
+import {
+  emailReport,
+  fetchEmailJobStatus,
+  saveStudentContacts,
+  fetchPrograms,
+  fetchStudents,
+} from '../api/reportApi.js';
 
 const MAX_CONCURRENCY = 3;
 const POLL_INTERVAL_MS = 2000;
@@ -197,12 +203,51 @@ export default function BulkSendPanel({
   const [saveStates, setSaveStates] = useState({});
   const contactsLoading = allContactsLoading;
 
+  // Program scoping: '' = all active students (the date-filtered list passed
+  // in), otherwise a programId — the list then becomes that program's enrolled
+  // roster, all pre-selected so you send to the whole cohort and uncheck to
+  // omit anyone. Programs + the full student roster (id/name/email) are loaded
+  // here so a rostered student shows even if they weren't active this week.
+  const [scope, setScope] = useState('');
+  const [programs, setPrograms] = useState([]);
+  const [fullRoster, setFullRoster] = useState([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([fetchPrograms().catch(() => []), fetchStudents().catch(() => [])])
+      .then(([programList, roster]) => {
+        if (cancelled) return;
+        setPrograms(programList || []);
+        setFullRoster(roster || []);
+      });
+    return () => { cancelled = true; };
+  }, []);
+
   const EMAIL_RX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-  const sortedStudents = useMemo(
-    () => [...(students || [])].sort((a, b) => a.name.localeCompare(b.name)),
-    [students]
+  const activeProgram = useMemo(
+    () => programs.find((p) => p.programId === scope) || null,
+    [programs, scope]
   );
+
+  // Students shown in the list. For a program scope, map each enrolled id to
+  // its full-roster entry (falling back to a bare row so nobody is silently
+  // dropped); otherwise use the active-students list as before.
+  const sortedStudents = useMemo(() => {
+    const base = activeProgram
+      ? (activeProgram.studentIds || []).map(
+          (id) => fullRoster.find((st) => st.id === id) || { id, name: `User ${id}`, email: '' }
+        )
+      : (students || []);
+    return [...base].sort((a, b) => a.name.localeCompare(b.name));
+  }, [activeProgram, fullRoster, students]);
+
+  // Switching to a program pre-selects its whole roster (omit by unchecking);
+  // switching back to "all students" clears the selection.
+  useEffect(() => {
+    if (activeProgram) setSelectedIds(new Set(activeProgram.studentIds || []));
+    else setSelectedIds(new Set());
+  }, [activeProgram]);
 
   // Effective email for a student row. Priority:
   //   1. user's edit in this batch
@@ -410,6 +455,30 @@ export default function BulkSendPanel({
             style={{ ...s.input, marginTop: 6 }}
             autoComplete="off"
           />
+        </div>
+
+        <div style={s.divider} />
+
+        <div>
+          <label style={s.label} htmlFor="bulk-scope">Send to</label>
+          <select
+            id="bulk-scope"
+            value={scope}
+            onChange={(e) => setScope(e.target.value)}
+            style={{ ...s.input, marginTop: 6 }}
+          >
+            <option value="">All active students</option>
+            {programs.map((p) => (
+              <option key={p.programId} value={p.programId}>
+                {p.name} — {(p.studentIds || []).length} enrolled
+              </option>
+            ))}
+          </select>
+          {activeProgram && (
+            <div style={{ marginTop: 6, fontSize: '0.78rem', color: 'var(--muted)' }}>
+              Showing the {activeProgram.name} roster — everyone’s pre-selected; uncheck to omit before sending.
+            </div>
+          )}
         </div>
 
         <div style={s.divider} />
