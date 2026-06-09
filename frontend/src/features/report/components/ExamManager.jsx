@@ -32,7 +32,6 @@ export default function ExamManager({ onExamsChanged }) {
   const [tests, setTests] = useState([]);
   const [roster, setRoster] = useState([]); // full student list for the pickers
   const [programs, setPrograms] = useState([]);
-  const [studentSearch, setStudentSearch] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
@@ -124,20 +123,10 @@ export default function ExamManager({ onExamsChanged }) {
   function openCreate(programId = '') {
     setForm({ ...EMPTY_FORM, programId });
     setGroupFilter('');
-    setStudentSearch('');
     setFormMode('new');
     // Expand the target program so the new exam is visible once created.
     if (programId) setOpenPrograms((prev) => new Set(prev).add(programId));
   }
-
-  const toggleStudent = (id) => {
-    setForm((f) => ({
-      ...f,
-      studentIds: f.studentIds.includes(id)
-        ? f.studentIds.filter((x) => x !== id)
-        : [...f.studentIds, id],
-    }));
-  };
 
   async function handleSave() {
     setSaving(true);
@@ -154,9 +143,8 @@ export default function ExamManager({ onExamsChanged }) {
         date: form.date,
         programId: form.programId || '',
         sections,
-        // Grouped exams inherit the program roster — only send a per-exam
-        // roster for ungrouped exams.
-        studentIds: form.programId ? [] : form.studentIds,
+        // The program owns the roster — exams never carry their own.
+        studentIds: [],
       });
       setFormMode(null);
       await refreshAndNotify();
@@ -200,8 +188,14 @@ export default function ExamManager({ onExamsChanged }) {
   }
 
   async function handleDeleteProgram(program) {
+    // Exams must belong to a program, so a non-empty program can't be deleted —
+    // move or delete its exams first.
+    if (program.examCount > 0) {
+      setError(`Move or delete ${program.name}'s ${program.examCount} exam${program.examCount === 1 ? '' : 's'} before deleting the program.`);
+      return;
+    }
     // eslint-disable-next-line no-alert
-    if (!window.confirm(`Delete program "${program.name}"? Its ${program.examCount} exam${program.examCount === 1 ? '' : 's'} will become ungrouped (not deleted).`)) return;
+    if (!window.confirm(`Delete program "${program.name}"?`)) return;
     setError(null);
     try {
       await deleteProgram(program.programId);
@@ -212,10 +206,8 @@ export default function ExamManager({ onExamsChanged }) {
     }
   }
 
-  const formValid = Boolean(form.name.trim());
-  const rosterFiltered = roster.filter(
-    (st) => !studentSearch || st.name.toLowerCase().includes(studentSearch.toLowerCase())
-  );
+  // An exam must have a name and belong to a program.
+  const formValid = Boolean(form.name.trim()) && Boolean(form.programId);
 
   const ungroupedExams = exams.filter(
     (e) => !e.programId || !programs.some((p) => p.programId === e.programId)
@@ -235,7 +227,7 @@ export default function ExamManager({ onExamsChanged }) {
     <div style={s.card}>
       <div style={s.head} onClick={() => setOpen((v) => !v)} role="button" aria-expanded={open}>
         <div style={s.dot} />
-        <span style={s.title}>SAT Exams</span>
+        <span style={s.title}>Programs</span>
         {programs.length > 0 && <span style={s.count}>{programs.length} program{programs.length === 1 ? '' : 's'}</span>}
         {exams.length > 0 && <span style={s.count}>· {exams.length} exam{exams.length === 1 ? '' : 's'}</span>}
         <span style={s.chevron}>{open ? '▾' : '▸'}</span>
@@ -249,7 +241,7 @@ export default function ExamManager({ onExamsChanged }) {
             <div style={s.empty}>Loading…</div>
           ) : exams.length === 0 && programs.length === 0 && formMode === null && programFormName === null ? (
             <div style={s.empty}>
-              No programs or exams yet. Create a program to group exams into a cohort, or add a standalone exam.
+              No programs yet. Create a program (e.g. “GA SAT 2026”), enroll students, then add its exams.
             </div>
           ) : null}
 
@@ -347,19 +339,17 @@ export default function ExamManager({ onExamsChanged }) {
               </div>
 
               <div>
-                <span style={s.label}>Program <span style={{ fontWeight: 400 }}>· optional</span></span>
+                <span style={s.label}>Program <span style={{ fontWeight: 400 }}>· required</span></span>
                 <select
                   style={s.select}
                   value={form.programId}
                   onChange={(e) => setForm((f) => ({ ...f, programId: e.target.value }))}
                 >
-                  <option value="">No program (ungrouped)</option>
+                  <option value="">{programs.length ? 'Select a program…' : 'No programs yet — create one first'}</option>
                   {programs.map((p) => <option key={p.programId} value={p.programId}>{p.name}</option>)}
                 </select>
                 <div style={s.hint}>
-                  {form.programId
-                    ? 'This exam inherits the program’s enrolled students.'
-                    : 'Ungrouped exams are rostered individually below.'}
+                  Every exam belongs to a program — only its enrolled students are part of the exam, and they see it automatically.
                 </div>
               </div>
 
@@ -391,36 +381,6 @@ export default function ExamManager({ onExamsChanged }) {
                   </div>
                 ))}
               </div>
-
-              {!form.programId && (
-                <div>
-                  <span style={s.label}>
-                    Students taking this exam
-                    <span style={{ fontWeight: 400 }}> · optional · {form.studentIds.length} selected</span>
-                  </span>
-                  <input
-                    style={s.searchInput}
-                    value={studentSearch}
-                    placeholder="Search students…"
-                    onChange={(e) => setStudentSearch(e.target.value)}
-                  />
-                  <div style={s.hiddenList}>
-                    {rosterFiltered.map((st) => (
-                      <label key={st.id} style={s.hiddenRow}>
-                        <input
-                          type="checkbox"
-                          checked={form.studentIds.includes(st.id)}
-                          onChange={() => toggleStudent(st.id)}
-                        />
-                        {st.name}
-                      </label>
-                    ))}
-                    {rosterFiltered.length === 0 && (
-                      <span style={{ ...s.hint, gridColumn: '1 / -1' }}>No students match.</span>
-                    )}
-                  </div>
-                </div>
-              )}
 
               <div style={s.formActions}>
                 <button type="button" style={s.btnGhost} disabled={saving} onClick={() => setFormMode(null)}>Cancel</button>

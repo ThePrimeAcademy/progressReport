@@ -13,7 +13,7 @@
 const db = require('./db.service');
 const { getCurve, gradeScaled } = require('./scoring-sheet.service');
 const { getTestSectionMap, examCurveKey, getExam, listExams } = require('./exam.service');
-const { getProgram } = require('./program.service');
+const { getProgram, getProgramRoster } = require('./program.service');
 const { getStudentResultsGrouped, getResultsForTests } = require('./classmarker.service');
 
 // Only groups whose name contains "SAT" (case-insensitive) participate in SAT
@@ -377,6 +377,10 @@ async function getExamScoreboard(examId) {
   const exam = getExam(examId);
   if (!exam) return null;
   const hidden = new Set(exam.hiddenStudentIds || []);
+  // Only enrolled students are part of the exam — a non-enrolled student's
+  // attempt never reaches the scoreboard, even if they took the tests.
+  const enrolled = exam.programId ? getProgramRoster(exam.programId) : null;
+  const excluded = (uid) => hidden.has(uid) || (enrolled !== null && !enrolled.has(uid));
   const sectionOfTest = new Map(); // testId → 1|2|3|4
   for (const key of ['1', '2', '3', '4']) {
     const s = exam.sections?.[key];
@@ -395,7 +399,7 @@ async function getExamScoreboard(examId) {
       const tid = String(r.test?.testId ?? r.test_id ?? '');
       if (!sectionOfTest.has(tid)) continue;
       const uid = String(r.student?.userId ?? r.user_id ?? '');
-      if (!uid || hidden.has(uid)) continue;
+      if (!uid || excluded(uid)) continue;
       const entry = entryFor(uid, r.student?.name || r.name || `User ${uid}`);
       const prev = entry.tests.get(tid);
       if (!prev || (r.timeFinished || 0) > prev.timeFinished) {
@@ -404,7 +408,7 @@ async function getExamScoreboard(examId) {
     }
     try {
       for (const a of await getResultsForTests(new Set(sectionOfTest.keys()))) {
-        if (hidden.has(a.userId)) continue;
+        if (excluded(a.userId)) continue;
         const entry = entryFor(a.userId, a.name);
         const prev = entry.tests.get(a.testId);
         // Webhook data always wins; among API attempts keep the latest.

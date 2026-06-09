@@ -158,10 +158,10 @@ export default function ExamRow({ exam, tests, roster, programs, onChanged, onEr
         <select
           style={s.moveSelect}
           value={exam.programId || ''}
-          onChange={(e) => patchExam({ programId: e.target.value || '' })}
-          title="Move this exam into a program (or leave it ungrouped)"
+          onChange={(e) => { if (e.target.value) patchExam({ programId: e.target.value }); }}
+          title="Move this exam to another program"
         >
-          <option value="">No program</option>
+          {!exam.programId && <option value="" disabled>Move to a program…</option>}
           {programs.map((p) => (
             <option key={p.programId} value={p.programId}>{p.name}</option>
           ))}

@@ -30,6 +30,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { getProgram } = require('./program.service');
 
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '../../data');
 const EXAMS_FILE = path.join(DATA_DIR, 'exams.json');
@@ -93,6 +94,19 @@ function normalizeProgramId(value) {
   return s || null;
 }
 
+// Every exam must belong to an existing program — the program owns the roster
+// and gates who's part of the exam. Throws 400 if missing or unknown.
+function requireProgram(programId) {
+  const pid = normalizeProgramId(programId);
+  if (!pid) {
+    throw Object.assign(new Error('an exam must belong to a program'), { status: 400 });
+  }
+  if (!getProgram(pid)) {
+    throw Object.assign(new Error('program not found'), { status: 400 });
+  }
+  return pid;
+}
+
 function normalizeDate(value) {
   const s = String(value || '').trim();
   if (!s) return null;
@@ -132,12 +146,13 @@ function validateExam(name, sections, ignoreExamId) {
 function createExam({ name, date, programId, sections, studentIds, hiddenStudentIds }) {
   const normalized = normalizeSections(sections);
   validateExam(name, normalized, null);
+  const pid = requireProgram(programId);
   const now = new Date().toISOString();
   const exam = {
     examId: crypto.randomUUID(),
     name: String(name).trim(),
     date: normalizeDate(date),
-    programId: normalizeProgramId(programId),
+    programId: pid,
     sections: normalized,
     studentIds: normalizeHidden(studentIds),
     hiddenStudentIds: normalizeHidden(hiddenStudentIds),
@@ -157,9 +172,10 @@ function updateExam(examId, { name, date, programId, sections, studentIds, hidde
     ...all[idx],
     name: name != null ? String(name).trim() : all[idx].name,
     date: date !== undefined ? normalizeDate(date) : (all[idx].date || null),
-    // programId === undefined → leave as-is; null/'' → clear; string → set.
+    // programId === undefined → leave as-is; otherwise must be a valid program
+    // (an exam can be moved between programs but never un-grouped).
     programId: programId !== undefined
-      ? normalizeProgramId(programId)
+      ? requireProgram(programId)
       : (all[idx].programId || null),
     sections: sections != null ? normalizeSections(sections) : all[idx].sections,
     studentIds: studentIds != null
@@ -190,24 +206,6 @@ function duplicateExam(examId) {
     studentIds: source.studentIds || [],
     hiddenStudentIds: [],
   });
-}
-
-// Detach every exam from a program — called when that program is deleted so
-// its exams survive as ungrouped rather than pointing at a missing program.
-// Returns the count of exams that were detached.
-function clearProgram(programId) {
-  const all = load();
-  const pid = String(programId);
-  let changed = 0;
-  for (const exam of all) {
-    if (exam.programId === pid) {
-      exam.programId = null;
-      exam.updatedAt = new Date().toISOString();
-      changed++;
-    }
-  }
-  if (changed) save();
-  return changed;
 }
 
 function deleteExam(examId) {
@@ -256,7 +254,6 @@ module.exports = {
   updateExam,
   duplicateExam,
   deleteExam,
-  clearProgram,
   getTestSectionMap,
   examCurveKey,
   getExamsVersion,

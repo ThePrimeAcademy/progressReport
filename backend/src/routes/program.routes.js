@@ -49,14 +49,21 @@ router.put('/:programId', (req, res, next) => {
   }
 });
 
-// DELETE /api/programs/:programId — removes the program and detaches its exams
-// (they survive as ungrouped, not orphaned). Returns how many were detached.
+// DELETE /api/programs/:programId — only when empty. Exams must belong to a
+// program, so a program with exams can't be deleted out from under them: move
+// or delete its exams first.
 router.delete('/:programId', (req, res, next) => {
   try {
+    const members = exams.listExams().filter((e) => e.programId === req.params.programId);
+    if (members.length > 0) {
+      return res.status(400).json({
+        success: false,
+        error: `Move or delete this program's ${members.length} exam${members.length === 1 ? '' : 's'} first.`,
+      });
+    }
     const removed = programs.deleteProgram(req.params.programId);
     if (!removed) return res.status(404).json({ success: false, error: 'Program not found' });
-    const detached = exams.clearProgram(req.params.programId);
-    res.json({ success: true, detached });
+    res.json({ success: true });
   } catch (err) {
     next(err);
   }

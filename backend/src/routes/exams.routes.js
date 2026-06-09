@@ -7,6 +7,7 @@ const exams = require('../services/exam.service');
 const { listCurves, deleteCurve } = require('../services/scoring-sheet.service');
 const { getKnownTests, getTakersForTests } = require('../services/classmarker.service');
 const { getExamScoreboard, getExamTakenDates } = require('../services/sat.service');
+const { getProgramRoster } = require('../services/program.service');
 const db = require('../services/db.service');
 
 const router = express.Router();
@@ -138,6 +139,10 @@ router.get('/:examId/takers', async (req, res, next) => {
     const testIds = new Set(
       Object.values(exam.sections || {}).filter(Boolean).map((s) => String(s.testId))
     );
+    // Only enrolled students belong to the exam, so the hidden-students picker
+    // lists only them — non-enrolled takers are already excluded everywhere.
+    const enrolled = exam.programId ? getProgramRoster(exam.programId) : null;
+    const isEnrolled = (id) => enrolled === null || enrolled.has(id);
     const takers = new Map(); // id → name
 
     for (const r of await db.getAllRecords()) {
@@ -146,13 +151,14 @@ router.get('/:examId/takers', async (req, res, next) => {
       const uid = r.student?.userId ?? r.user_id;
       if (uid == null) continue;
       const id = String(uid);
+      if (!isEnrolled(id)) continue;
       if (!takers.has(id)) {
         takers.set(id, r.student?.name || r.name || r.student?.email || r.email || `User ${id}`);
       }
     }
     try {
       for (const [id, name] of await getTakersForTests(testIds)) {
-        if (!takers.has(id)) takers.set(id, name);
+        if (isEnrolled(id) && !takers.has(id)) takers.set(id, name);
       }
     } catch (e) {
       console.warn('[exams] API-cache takers unavailable:', e.message);
