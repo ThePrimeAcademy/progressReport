@@ -223,6 +223,94 @@ export default function ExamManager({ onExamsChanged }) {
     onError: setError,
   });
 
+  // The create-exam form. Rendered inside the targeted program (when one is
+  // chosen) so it appears right where the exam will live, or at the bottom for
+  // a general "+ New Exam" before a program is picked.
+  function renderCreateForm() {
+    return (
+      <div style={s.form}>
+        <div style={s.grid2}>
+          <div>
+            <span style={s.label}>Exam name</span>
+            <input
+              style={s.input}
+              value={form.name}
+              placeholder="e.g. Diagnostic, Test 1"
+              onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+            />
+          </div>
+          <div>
+            <span style={s.label}>Exam date <span style={{ fontWeight: 400 }}>· optional</span></span>
+            <input
+              type="date"
+              style={s.input}
+              value={form.date}
+              onChange={(e) => setForm((f) => ({ ...f, date: e.target.value }))}
+            />
+            <div style={s.hint}>Create the exam ahead of time — sections below can stay empty until the tests exist.</div>
+          </div>
+        </div>
+
+        <div>
+          <span style={s.label}>Program <span style={{ fontWeight: 400 }}>· required</span></span>
+          <select
+            style={s.select}
+            value={form.programId}
+            onChange={(e) => {
+              const pid = e.target.value;
+              setForm((f) => ({ ...f, programId: pid }));
+              // The form lives inside its program — expand it so picking one
+              // here keeps the form visible (instead of it vanishing).
+              if (pid) setOpenPrograms((prev) => new Set(prev).add(pid));
+            }}
+          >
+            <option value="">{programs.length ? 'Select a program…' : 'No programs yet — create one first'}</option>
+            {programs.map((p) => <option key={p.programId} value={p.programId}>{p.name}</option>)}
+          </select>
+          <div style={s.hint}>
+            Every exam belongs to a program — only its enrolled students are part of the exam, and they see it automatically.
+          </div>
+        </div>
+
+        <div>
+          <span style={s.label}>Filter tests by group</span>
+          <select style={s.select} value={groupFilter} onChange={(e) => setGroupFilter(e.target.value)}>
+            <option value="">All groups</option>
+            {groups.map((g) => <option key={g} value={g}>{g}</option>)}
+          </select>
+          <div style={s.hint}>Narrows the section dropdowns below — tests already used by another exam are hidden.</div>
+        </div>
+
+        <div style={s.grid2}>
+          {SECTION_DEFS.map(({ key, label, hint }) => (
+            <div key={key}>
+              <span style={s.label}>{label} <span style={{ fontWeight: 400 }}>· {hint}</span></span>
+              <select
+                style={s.select}
+                value={form.sections[key]}
+                onChange={(e) => setForm((f) => ({ ...f, sections: { ...f.sections, [key]: e.target.value } }))}
+              >
+                <option value="">— none —</option>
+                {optionsForSection(key).map((t) => (
+                  <option key={t.testId} value={t.testId}>
+                    {t.testName} ({t.attempts} attempt{t.attempts === 1 ? '' : 's'})
+                  </option>
+                ))}
+              </select>
+            </div>
+          ))}
+        </div>
+
+        <div style={s.formActions}>
+          <button type="button" style={s.btnGhost} disabled={saving} onClick={() => setFormMode(null)}>Cancel</button>
+          <button type="button" style={s.btn} disabled={saving || !formValid} onClick={handleSave}>
+            {saving ? 'Saving…' : 'Create Exam'}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div style={s.card}>
       <div style={s.head} onClick={() => setOpen((v) => !v)} role="button" aria-expanded={open}>
@@ -299,6 +387,9 @@ export default function ExamManager({ onExamsChanged }) {
                     ) : (
                       members.map((exam) => <ExamRow key={exam.examId} {...rowProps(exam)} />)
                     )}
+                    {/* Creating an exam for this program shows the form right
+                        here, inside the program it'll belong to. */}
+                    {formMode === 'new' && form.programId === program.programId && renderCreateForm()}
                   </div>
                 )}
               </div>
@@ -313,83 +404,9 @@ export default function ExamManager({ onExamsChanged }) {
             </>
           )}
 
-          {/* ── Create-exam form ── */}
-          {formMode !== null && (
-            <div style={s.form}>
-              <div style={s.grid2}>
-                <div>
-                  <span style={s.label}>Exam name</span>
-                  <input
-                    style={s.input}
-                    value={form.name}
-                    placeholder="e.g. Diagnostic, Test 1"
-                    onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-                  />
-                </div>
-                <div>
-                  <span style={s.label}>Exam date <span style={{ fontWeight: 400 }}>· optional</span></span>
-                  <input
-                    type="date"
-                    style={s.input}
-                    value={form.date}
-                    onChange={(e) => setForm((f) => ({ ...f, date: e.target.value }))}
-                  />
-                  <div style={s.hint}>Create the exam ahead of time — sections below can stay empty until the tests exist.</div>
-                </div>
-              </div>
-
-              <div>
-                <span style={s.label}>Program <span style={{ fontWeight: 400 }}>· required</span></span>
-                <select
-                  style={s.select}
-                  value={form.programId}
-                  onChange={(e) => setForm((f) => ({ ...f, programId: e.target.value }))}
-                >
-                  <option value="">{programs.length ? 'Select a program…' : 'No programs yet — create one first'}</option>
-                  {programs.map((p) => <option key={p.programId} value={p.programId}>{p.name}</option>)}
-                </select>
-                <div style={s.hint}>
-                  Every exam belongs to a program — only its enrolled students are part of the exam, and they see it automatically.
-                </div>
-              </div>
-
-              <div>
-                <span style={s.label}>Filter tests by group</span>
-                <select style={s.select} value={groupFilter} onChange={(e) => setGroupFilter(e.target.value)}>
-                  <option value="">All groups</option>
-                  {groups.map((g) => <option key={g} value={g}>{g}</option>)}
-                </select>
-                <div style={s.hint}>Narrows the section dropdowns below — tests already used by another exam are hidden.</div>
-              </div>
-
-              <div style={s.grid2}>
-                {SECTION_DEFS.map(({ key, label, hint }) => (
-                  <div key={key}>
-                    <span style={s.label}>{label} <span style={{ fontWeight: 400 }}>· {hint}</span></span>
-                    <select
-                      style={s.select}
-                      value={form.sections[key]}
-                      onChange={(e) => setForm((f) => ({ ...f, sections: { ...f.sections, [key]: e.target.value } }))}
-                    >
-                      <option value="">— none —</option>
-                      {optionsForSection(key).map((t) => (
-                        <option key={t.testId} value={t.testId}>
-                          {t.testName} ({t.attempts} attempt{t.attempts === 1 ? '' : 's'})
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                ))}
-              </div>
-
-              <div style={s.formActions}>
-                <button type="button" style={s.btnGhost} disabled={saving} onClick={() => setFormMode(null)}>Cancel</button>
-                <button type="button" style={s.btn} disabled={saving || !formValid} onClick={handleSave}>
-                  {saving ? 'Saving…' : 'Create Exam'}
-                </button>
-              </div>
-            </div>
-          )}
+          {/* ── Create-exam form (general "+ New Exam", before a program is
+              chosen — once a program is selected it moves into that program). ── */}
+          {formMode === 'new' && !form.programId && renderCreateForm()}
 
           {/* ── Create-program form ── */}
           {programFormName !== null && (
