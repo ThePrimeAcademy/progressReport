@@ -47,6 +47,9 @@ export default function ExamManager({ onExamsChanged }) {
   const [programSaving, setProgramSaving] = useState(false);
   const [rosterOpenFor, setRosterOpenFor] = useState(null); // programId
   const [dragExamId, setDragExamId] = useState(null); // exam being dragged
+  // Inline program rename: which program's name is being edited, and its draft.
+  const [editingProgramId, setEditingProgramId] = useState(null);
+  const [programNameDraft, setProgramNameDraft] = useState('');
   // Which programs are expanded to show their exams. Collapsed by default so
   // the panel stays compact — click a program to reveal its exams.
   const [openPrograms, setOpenPrograms] = useState(() => new Set());
@@ -176,13 +179,20 @@ export default function ExamManager({ onExamsChanged }) {
     }
   }
 
-  async function renameProgram(program) {
-    // eslint-disable-next-line no-alert
-    const name = window.prompt('Program name', program.name);
-    if (name == null || !name.trim() || name.trim() === program.name) return;
+  // Inline rename — click the name to edit in place (no prompt). Enter/blur
+  // saves, Esc cancels.
+  function startRenameProgram(program) {
+    setEditingProgramId(program.programId);
+    setProgramNameDraft(program.name);
+  }
+
+  async function commitRenameProgram(program) {
+    setEditingProgramId(null);
+    const name = programNameDraft.trim();
+    if (!name || name === program.name) return;
     setError(null);
     try {
-      await updateProgram(program.programId, { name: name.trim() });
+      await updateProgram(program.programId, { name });
       await refreshAndNotify();
     } catch (err) {
       setError(err.response?.data?.error || err.message || 'Failed to rename program');
@@ -375,13 +385,28 @@ export default function ExamManager({ onExamsChanged }) {
                 >
                   <span style={s.chevron}>{expanded ? '▾' : '▸'}</span>
                   <span style={s.programBadge}>Program</span>
-                  <span
-                    style={s.programName}
-                    onClick={(e) => { stop(e); renameProgram(program); }}
-                    title="Click to rename this program"
-                  >
-                    {program.name}
-                  </span>
+                  {editingProgramId === program.programId ? (
+                    <input
+                      autoFocus
+                      value={programNameDraft}
+                      onClick={stop}
+                      onChange={(e) => setProgramNameDraft(e.target.value)}
+                      onBlur={() => commitRenameProgram(program)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') commitRenameProgram(program);
+                        if (e.key === 'Escape') setEditingProgramId(null);
+                      }}
+                      style={{ ...s.input, flex: 1, padding: '4px 8px', fontSize: '0.9rem', fontWeight: 700 }}
+                    />
+                  ) : (
+                    <span
+                      style={{ ...s.programName, cursor: 'text' }}
+                      onClick={(e) => { stop(e); startRenameProgram(program); }}
+                      title="Click to rename this program"
+                    >
+                      {program.name}
+                    </span>
+                  )}
                   <span style={s.count}>{members.length} exam{members.length === 1 ? '' : 's'}</span>
                   <span
                     style={{ ...s.rosterChip, cursor: 'pointer' }}
@@ -413,7 +438,12 @@ export default function ExamManager({ onExamsChanged }) {
                           key={exam.examId}
                           {...rowProps(exam)}
                           dragging={dragExamId === exam.examId}
-                          onDragStart={(e) => { setDragExamId(exam.examId); e.dataTransfer.effectAllowed = 'move'; }}
+                          onDragStart={(e) => {
+                            setDragExamId(exam.examId);
+                            e.dataTransfer.effectAllowed = 'move';
+                            // Firefox/Safari won't begin a drag unless data is set.
+                            e.dataTransfer.setData('text/plain', exam.examId);
+                          }}
                           onDragOver={(e) => { if (dragExamId && dragExamId !== exam.examId) e.preventDefault(); }}
                           onDrop={(e) => { e.preventDefault(); handleDropOnExam(program.programId, exam.examId); }}
                         />

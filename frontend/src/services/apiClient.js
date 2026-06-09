@@ -19,9 +19,12 @@ const apiClient = axios.create({
 //   - any GET (idempotent by definition)
 //   - the job-based POSTs, which the server dedupes by content hash, so a
 //     retried request reuses the in-flight job instead of duplicating work
+//   - reorder, which is idempotent: replaying it just re-sets the same absolute
+//     order, so a transient drop no longer surfaces as a "Network Error" that
+//     silently loses the drag.
 // Retries trigger on connection-level failures (no response) and 502/503/504.
 const RETRYABLE_STATUS = new Set([502, 503, 504]);
-const DEDUPED_POSTS = [/^\/report$/, /^\/report\/preview$/, /^\/report\/email$/];
+const RETRYABLE_POSTS = [/^\/report$/, /^\/report\/preview$/, /^\/report\/email$/, /^\/exams\/reorder$/];
 const MAX_RETRIES = 4;
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -34,7 +37,7 @@ apiClient.interceptors.response.use(
     const isRetryableStatus = RETRYABLE_STATUS.has(error.response?.status);
     const isSafeMethod =
       method === 'get' ||
-      (method === 'post' && DEDUPED_POSTS.some((re) => re.test(config.url || '')));
+      (method === 'post' && RETRYABLE_POSTS.some((re) => re.test(config.url || '')));
 
     config.__retryCount = config.__retryCount || 0;
     if ((isNetworkError || isRetryableStatus) && isSafeMethod && config.__retryCount < MAX_RETRIES) {
