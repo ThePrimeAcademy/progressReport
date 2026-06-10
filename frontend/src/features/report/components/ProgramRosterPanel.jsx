@@ -8,13 +8,29 @@ import React, { useState } from 'react';
 import { updateProgram, fetchExamTakers } from '../api/reportApi.js';
 import s from './examManagerStyles.js';
 
-export default function ProgramRosterPanel({ program, roster, exams = [], onSaved, onError }) {
+export default function ProgramRosterPanel({ program, roster, exams = [], tests = [], onSaved, onError }) {
   const [selected, setSelected] = useState(() => new Set(program.studentIds || []));
   const [search, setSearch] = useState('');
   const [saving, setSaving] = useState(false);
   const [pullExamId, setPullExamId] = useState('');
+  const [pullGroup, setPullGroup] = useState('');
   const [pulling, setPulling] = useState(false);
   const [pullNote, setPullNote] = useState(null);
+
+  // ClassMarker groups linked to the chosen exam's tests — the same test can
+  // be linked to several groups, so the pull can be narrowed to one cohort.
+  const pullExam = exams.find((e) => e.examId === pullExamId);
+  const pullGroups = (() => {
+    if (!pullExam) return [];
+    const ids = new Set(Object.values(pullExam.sections || {}).filter(Boolean).map((sec) => String(sec.testId)));
+    const names = new Set();
+    for (const t of tests) {
+      if (!ids.has(String(t.testId))) continue;
+      for (const g of (t.groups || [])) if (g.groupName) names.add(g.groupName);
+      if (t.groupName) names.add(t.groupName);
+    }
+    return [...names].sort();
+  })();
 
   const filtered = roster.filter(
     (st) => !search || st.name.toLowerCase().includes(search.toLowerCase())
@@ -36,16 +52,17 @@ export default function ProgramRosterPanel({ program, roster, exams = [], onSave
     setPulling(true);
     setPullNote(null);
     try {
-      const takers = await fetchExamTakers(pullExamId, { all: true });
+      const takers = await fetchExamTakers(pullExamId, { all: true, group: pullGroup });
       const newOnes = takers.filter((t) => !selected.has(t.id));
       setSelected((prev) => new Set([...prev, ...takers.map((t) => t.id)]));
       const examName = exams.find((e) => e.examId === pullExamId)?.name || 'that exam';
+      const scope = pullGroup ? `${examName} in ${pullGroup}` : examName;
       setPullNote(
         newOnes.length > 0
-          ? `Added ${newOnes.length} student${newOnes.length === 1 ? '' : 's'} who took ${examName} — click Save Enrollment to keep.`
+          ? `Added ${newOnes.length} student${newOnes.length === 1 ? '' : 's'} who took ${scope} — click Save Enrollment to keep.`
           : takers.length > 0
-            ? `Everyone who took ${examName} is already selected.`
-            : `No attempts found for ${examName}.`
+            ? `Everyone who took ${scope} is already selected.`
+            : `No attempts found for ${scope}.`
       );
     } catch (err) {
       onError?.(err.response?.data?.error || err.message || 'Failed to pull exam takers');
@@ -73,15 +90,28 @@ export default function ProgramRosterPanel({ program, roster, exams = [], onSave
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginBottom: 8 }}>
         <select
-          style={{ ...s.select, width: 'auto', flex: '0 1 240px', padding: '5px 28px 5px 10px' }}
+          style={{ ...s.select, width: 'auto', flex: '0 1 220px', padding: '5px 28px 5px 10px' }}
           value={pullExamId}
-          onChange={(e) => { setPullExamId(e.target.value); setPullNote(null); }}
+          onChange={(e) => { setPullExamId(e.target.value); setPullGroup(''); setPullNote(null); }}
         >
           <option value="">Pull students from an exam…</option>
           {exams.map((e) => (
             <option key={e.examId} value={e.examId}>{e.name}</option>
           ))}
         </select>
+        {pullExamId && pullGroups.length > 0 && (
+          <select
+            style={{ ...s.select, width: 'auto', flex: '0 1 180px', padding: '5px 28px 5px 10px' }}
+            value={pullGroup}
+            onChange={(e) => { setPullGroup(e.target.value); setPullNote(null); }}
+            title="Only count attempts made under this ClassMarker group"
+          >
+            <option value="">All groups</option>
+            {pullGroups.map((g) => (
+              <option key={g} value={g}>{g}</option>
+            ))}
+          </select>
+        )}
         <button
           type="button"
           style={s.btnGhost}

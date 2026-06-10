@@ -132,9 +132,14 @@ export async function reorderExams(programId, orderedIds) {
 }
 
 // { all: true } skips the enrolled-only filter — used by the program roster's
-// bulk-enroll, which needs takers who aren't enrolled yet.
-export async function fetchExamTakers(examId, { all = false } = {}) {
-  const response = await apiClient.get(`/exams/${encodeURIComponent(examId)}/takers${all ? '?all=1' : ''}`);
+// bulk-enroll, which needs takers who aren't enrolled yet. { group } keeps only
+// attempts made under that ClassMarker group (a test can be linked to several).
+export async function fetchExamTakers(examId, { all = false, group = '' } = {}) {
+  const params = new URLSearchParams();
+  if (all) params.set('all', '1');
+  if (group) params.set('group', group);
+  const qs = params.toString();
+  const response = await apiClient.get(`/exams/${encodeURIComponent(examId)}/takers${qs ? `?${qs}` : ''}`);
   return response.data.data || [];
 }
 

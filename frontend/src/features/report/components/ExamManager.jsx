@@ -476,6 +476,7 @@ export default function ExamManager({ onExamsChanged }) {
                     program={program}
                     roster={roster}
                     exams={exams}
+                    tests={tests}
                     onError={setError}
                     onSaved={async () => { setRosterOpenFor(null); await refreshAndNotify(); }}
                   />

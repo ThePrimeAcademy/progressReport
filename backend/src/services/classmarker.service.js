@@ -514,11 +514,15 @@ async function getResultsForTests(testIdSet) {
 // Map of user_id (string) → display name for everyone with at least one
 // cached API result on any of the given testIds. Complements the webhook
 // store for exam-taker lookups.
-async function getTakersForTests(testIdSet) {
-  const { results } = await fetchAllResults();
+// `groupName` (optional) keeps only attempts made under that ClassMarker
+// group — the same test can be linked to several groups, and bulk-enroll
+// must not pull takers from a different cohort's link.
+async function getTakersForTests(testIdSet, groupName) {
+  const { results, groupMap } = await fetchAllResults();
   const takers = new Map();
   for (const r of results) {
     if (r.test_id == null || !testIdSet.has(String(r.test_id)) || r.user_id == null) continue;
+    if (groupName && (groupMap[String(r.group_id)] || `Group #${r.group_id}`) !== groupName) continue;
     const id = String(r.user_id);
     if (!takers.has(id)) {
       takers.set(id, `${r.first || ''} ${r.last || ''}`.trim() || r.email || `User ${id}`);

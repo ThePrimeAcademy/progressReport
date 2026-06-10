@@ -164,12 +164,17 @@ router.get('/:examId/takers', async (req, res, next) => {
     // needs the takers who are by definition not enrolled yet.
     const includeAll = req.query.all === '1' || req.query.all === 'true';
     const enrolled = !includeAll && exam.programId ? getProgramRoster(exam.programId) : null;
+    // ?group=<groupName> keeps only attempts made under that ClassMarker group.
+    // The same test is often linked to several groups, and bulk-enroll must not
+    // pull another cohort's takers just because they share the test.
+    const groupFilter = String(req.query.group || '').trim() || null;
     const isEnrolled = (id) => enrolled === null || enrolled.has(id);
     const takers = new Map(); // id → name
 
     for (const r of await db.getAllRecords()) {
       const tid = String(r.test?.testId ?? r.test_id ?? '');
       if (!testIds.has(tid)) continue;
+      if (groupFilter && (r.group?.groupName ?? r.group_name ?? null) !== groupFilter) continue;
       const uid = r.student?.userId ?? r.user_id;
       if (uid == null) continue;
       const id = String(uid);
@@ -179,7 +184,7 @@ router.get('/:examId/takers', async (req, res, next) => {
       }
     }
     try {
-      for (const [id, name] of await getTakersForTests(testIds)) {
+      for (const [id, name] of await getTakersForTests(testIds, groupFilter)) {
         if (isEnrolled(id) && !takers.has(id)) takers.set(id, name);
       }
     } catch (e) {
