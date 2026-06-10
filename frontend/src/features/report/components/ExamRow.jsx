@@ -7,7 +7,7 @@
 // scoring-sheet upload. Self-contained — saves each edit through the API, then
 // calls onChanged() so the parent re-fetches.
 import React, { useCallback, useState } from 'react';
-import { updateExam, duplicateExam, deleteExam } from '../api/reportApi.js';
+import { updateExam, deleteExam } from '../api/reportApi.js';
 import ScoringSheetUpload from './ScoringSheetUpload.jsx';
 import ScoreboardPanel from './ScoreboardPanel.jsx';
 import RosterPanel from './RosterPanel.jsx';
@@ -113,16 +113,6 @@ export default function ExamRow({
     sections[sectionKey] = testId ? { testId, testName: test?.testName || null } : null;
     setSectionEditing(null);
     patchExam({ sections });
-  }
-
-  async function handleDuplicate() {
-    onError?.(null);
-    try {
-      await duplicateExam(exam.examId);
-      await onChanged?.();
-    } catch (err) {
-      onError?.(err.response?.data?.error || err.message || 'Failed to duplicate exam');
-    }
   }
 
   async function handleDelete() {
@@ -252,7 +242,6 @@ export default function ExamRow({
         <button type="button" style={s.btnGhost} onClick={(e) => { stop(e); setHiddenOpen((v) => !v); }}>
           {hiddenOpen ? 'Close Hidden' : 'Hidden'}
         </button>
-        <button type="button" style={s.btnGhost} onClick={(e) => { stop(e); handleDuplicate(); }} title="New exam with the same students — set its own date and tests">Duplicate</button>
         <button type="button" style={s.btnDanger} onClick={(e) => { stop(e); handleDelete(); }}>Delete</button>
       </div>
 
