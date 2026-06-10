@@ -33,7 +33,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { getProgram } = require('./program.service');
+const { getProgram, markExamOrderCustom } = require('./program.service');
 
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '../../data');
 const EXAMS_FILE = path.join(DATA_DIR, 'exams.json');
@@ -173,7 +173,9 @@ function createExam({ name, date, programId, sections, studentIds, hiddenStudent
 // Reorder the exams within a program to match `orderedIds`. Exam array order
 // is the display order, so this rewrites the program's slots in the global
 // array (other programs' exams keep their positions). Unlisted program exams
-// keep their relative order, appended after the listed ones.
+// keep their relative order, appended after the listed ones. Also marks the
+// program's order as custom — until that first drag, the list endpoint shows
+// a program's exams sorted by date.
 function reorderExams(programId, orderedIds) {
   const all = load();
   const pid = String(programId);
@@ -189,6 +191,7 @@ function reorderExams(programId, orderedIds) {
   let i = 0;
   exams = all.map((e) => (e.programId === pid ? ordered[i++] : e));
   save();
+  markExamOrderCustom(pid);
   return ordered.map((e) => e.examId);
 }
 

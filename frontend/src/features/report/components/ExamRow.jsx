@@ -26,9 +26,9 @@ export default function ExamRow({
   onDragStart, onDragEnd, onDragOver, onDrop, dragging,
 }) {
   const assignedCount = SECTION_DEFS.filter((d) => exam.sections?.[d.key]?.testId).length;
-  // Unconfigured exams (no tests yet) open expanded so a freshly created one is
-  // ready to edit; configured ones start collapsed.
-  const [expanded, setExpanded] = useState(assignedCount === 0);
+  // Every exam starts collapsed — the panel stays compact; click a row to
+  // open it for editing.
+  const [expanded, setExpanded] = useState(false);
   const [editingName, setEditingName] = useState(false);
   const [nameDraft, setNameDraft] = useState(exam.name);
   const [scoreboardOpen, setScoreboardOpen] = useState(false);

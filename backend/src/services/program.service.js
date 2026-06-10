@@ -6,7 +6,11 @@
 // placeholders — while students not in the program never see those exams.
 //
 // Storage: DATA_DIR/programs.json —
-//   [{ programId, name, studentIds: ["<user_id>", ...], createdAt, updatedAt }]
+//   [{ programId, name, studentIds: ["<user_id>", ...],
+//      examOrderCustom: boolean, createdAt, updatedAt }]
+//
+// examOrderCustom: set the first time an admin drags the program's exams into
+// a manual order. Until then the exam list endpoint shows them by date.
 //
 // The exam ↔ program link lives on the exam (exam.programId), so a program
 // carries no exam list of its own — see exam.service. An exam without a
@@ -102,6 +106,17 @@ function updateProgram(programId, { name, studentIds }) {
   return all[idx];
 }
 
+// Remember that this program's exams were manually ordered — from then on the
+// stored array order wins over the default date sort. Called by
+// exam.service.reorderExams; unknown ids are ignored.
+function markExamOrderCustom(programId) {
+  const all = load();
+  const idx = all.findIndex((p) => p.programId === String(programId));
+  if (idx < 0 || all[idx].examOrderCustom) return;
+  all[idx] = { ...all[idx], examOrderCustom: true, updatedAt: new Date().toISOString() };
+  save();
+}
+
 function deleteProgram(programId) {
   const all = load();
   const idx = all.findIndex((p) => p.programId === String(programId));
@@ -117,6 +132,7 @@ module.exports = {
   getProgramRoster,
   createProgram,
   updateProgram,
+  markExamOrderCustom,
   deleteProgram,
   getProgramsVersion,
 };

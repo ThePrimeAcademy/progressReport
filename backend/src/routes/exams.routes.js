@@ -7,7 +7,7 @@ const exams = require('../services/exam.service');
 const { listCurves, deleteCurve } = require('../services/scoring-sheet.service');
 const { getKnownTests, getTakersForTests } = require('../services/classmarker.service');
 const { getExamScoreboard, getExamTakenDates } = require('../services/sat.service');
-const { getProgramRoster } = require('../services/program.service');
+const { getProgramRoster, getProgram } = require('../services/program.service');
 const db = require('../services/db.service');
 
 const router = express.Router();
@@ -26,7 +26,26 @@ router.get('/', async (req, res, next) => {
       curveKey: exams.examCurveKey(exam.examId),
       sheets: curves[exams.examCurveKey(exam.examId)] || {},
     }));
-    res.json({ success: true, data });
+    // Until a program's exams have been dragged into a manual order
+    // (program.examOrderCustom), show them chronologically: undated
+    // placeholders first (newest creations, nothing to sort by yet), then by
+    // exam date / derived taken date ascending. Members are re-slotted in
+    // place so other programs' positions are untouched.
+    const byProgram = new Map();
+    for (const e of data) {
+      if (!e.programId || getProgram(e.programId)?.examOrderCustom) continue;
+      if (!byProgram.has(e.programId)) byProgram.set(e.programId, []);
+      byProgram.get(e.programId).push(e);
+    }
+    const dateKey = (e) => String(e.date || e.takenDate || '');
+    const slotted = new Map(); // programId → iterator over date-sorted members
+    for (const [pid, members] of byProgram) {
+      slotted.set(pid, members.slice().sort((a, b) => dateKey(a).localeCompare(dateKey(b))).values());
+    }
+    const ordered = data.map((e) => (
+      e.programId && slotted.has(e.programId) ? slotted.get(e.programId).next().value : e
+    ));
+    res.json({ success: true, data: ordered });
   } catch (err) {
     next(err);
   }
