@@ -171,7 +171,7 @@ function HomeworkCompletion({ homework, onChange }) {
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10, marginBottom: pct != null ? 12 : 0 }}>
         <div>
           <div style={{ fontSize: '0.72rem', color: 'var(--muted)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.07em' }}>
-            Homework Completion
+            HW Completion
           </div>
           <div style={{ fontSize: '0.72rem', color: 'var(--muted)', marginTop: 3 }}>
             Set the counts before downloading or emailing — parents see this bar in the PDF.
@@ -551,6 +551,7 @@ export default function ReportViewer({
         </div>
 
         {/* SAT score placeholders */}
+        <SectionTitle>SAT</SectionTitle>
         <SATScores satScores={satScores} />
 
         {/* Full SAT score history — replaces the old Average/Highest/Lowest/Trend strip */}

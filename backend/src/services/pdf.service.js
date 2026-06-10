@@ -218,9 +218,9 @@ function buildWeeklySection(categoryPerfSplit, categoryPerf) {
     .slice(0, TOP);
 
   return `
-    <div style="margin-bottom:12px;">
+    <div style="margin-bottom:10px;">
       <div class="section-title">Weekly Performance</div>
-      <div style="display:flex;flex-direction:column;gap:14px;">
+      <div style="display:flex;flex-direction:column;gap:10px;">
         ${buildSubjectBox('English', '#1a56db', '#eff6ff', topN(enCats), botN(enCats))}
         ${buildSubjectBox('Math', '#1a56db', '#eff6ff', topN(maCats), botN(maCats))}
       </div>
@@ -253,7 +253,7 @@ function buildSatHistorySection(allScores) {
       </div>`;
   }).join('');
   // Single row — cards shrink to fit however many exams there are.
-  return `<div style="display:flex;gap:8px;flex-wrap:nowrap;margin:0 0 18px;">${cards}</div>`;
+  return `<div style="display:flex;gap:8px;flex-wrap:nowrap;margin:0 0 12px;">${cards}</div>`;
 }
 
 // ── Homework completion ───────────────────────────────────────
@@ -270,9 +270,9 @@ function buildHomeworkSection(homework) {
   const pct = Math.round((homework.completed / homework.total) * 100);
   const c = homeworkColor(pct);
   return `
-    <div style="margin:0 0 18px;">
-      <div class="section-title">Homework Completion</div>
-      <div style="background:#fafbff;border:1px solid var(--border);border-radius:10px;padding:12px 16px;">
+    <div style="margin:0 0 12px;">
+      <div class="section-title">HW Completion</div>
+      <div style="background:#fafbff;border:1px solid var(--border);border-radius:10px;padding:9px 14px;">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
           <span style="font-size:0.8rem;color:var(--muted);font-weight:600;">
             Completed <strong style="color:${c.bar};">${homework.completed}</strong> of ${homework.total} assignment${homework.total === 1 ? '' : 's'}
