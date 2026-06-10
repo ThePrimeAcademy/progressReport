@@ -6,7 +6,21 @@ const {
   getCurve,
   listCurves,
   deleteCurve,
+  copyCurve,
 } = require('../services/scoring-sheet.service');
+
+function curveSummary(record) {
+  return {
+    groupId: record.groupId,
+    section: record.section,
+    bound: record.bound,
+    uploadedAt: record.uploadedAt,
+    originalFilename: record.originalFilename,
+    points: record.curve.length,
+    rawMin: record.curve[0]?.raw ?? null,
+    rawMax: record.curve[record.curve.length - 1]?.raw ?? null,
+  };
+}
 
 const router = express.Router();
 
@@ -54,6 +68,18 @@ router.post('/', async (req, res, next) => {
         rawMax: record.curve[record.curve.length - 1]?.raw ?? null,
       },
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/scoring-sheets/copy — reuse a curve already uploaded to another
+// exam. Body: { fromGroupId, toGroupId, section: 'math' | 'rw' }
+router.post('/copy', (req, res, next) => {
+  try {
+    const { fromGroupId, toGroupId, section } = req.body || {};
+    const record = copyCurve(fromGroupId, toGroupId, section);
+    res.json({ success: true, data: curveSummary(record) });
   } catch (err) {
     next(err);
   }

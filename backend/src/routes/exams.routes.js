@@ -160,7 +160,10 @@ router.get('/:examId/takers', async (req, res, next) => {
     );
     // Only enrolled students belong to the exam, so the hidden-students picker
     // lists only them — non-enrolled takers are already excluded everywhere.
-    const enrolled = exam.programId ? getProgramRoster(exam.programId) : null;
+    // ?all=1 skips that filter: the program roster's "pull takers" bulk-enroll
+    // needs the takers who are by definition not enrolled yet.
+    const includeAll = req.query.all === '1' || req.query.all === 'true';
+    const enrolled = !includeAll && exam.programId ? getProgramRoster(exam.programId) : null;
     const isEnrolled = (id) => enrolled === null || enrolled.has(id);
     const takers = new Map(); // id → name
 

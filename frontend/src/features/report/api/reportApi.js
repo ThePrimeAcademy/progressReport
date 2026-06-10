@@ -75,6 +75,12 @@ export async function uploadScoringSheet({ groupId, section, file }) {
   return response.data.data;
 }
 
+// Reuse a curve already uploaded to another exam — no file re-upload needed.
+export async function copyScoringSheet({ fromGroupId, toGroupId, section }) {
+  const response = await apiClient.post('/scoring-sheets/copy', { fromGroupId, toGroupId, section });
+  return response.data.data;
+}
+
 export async function deleteScoringSheet({ groupId, section }) {
   const response = await apiClient.delete(`/scoring-sheets/${encodeURIComponent(groupId)}/${encodeURIComponent(section)}`);
   return response.data;
@@ -125,8 +131,10 @@ export async function reorderExams(programId, orderedIds) {
   return response.data.data;
 }
 
-export async function fetchExamTakers(examId) {
-  const response = await apiClient.get(`/exams/${encodeURIComponent(examId)}/takers`);
+// { all: true } skips the enrolled-only filter — used by the program roster's
+// bulk-enroll, which needs takers who aren't enrolled yet.
+export async function fetchExamTakers(examId, { all = false } = {}) {
+  const response = await apiClient.get(`/exams/${encodeURIComponent(examId)}/takers${all ? '?all=1' : ''}`);
   return response.data.data || [];
 }
 

@@ -292,11 +292,17 @@ export default function ExamManager({ onExamsChanged }) {
     }
   }
 
+  // Exams whose curves can be reused by another exam's "Copy from…" picker.
+  const curveSources = exams
+    .filter((e) => e.sheets && (e.sheets.math || e.sheets.rw))
+    .map((e) => ({ curveKey: e.curveKey, name: e.name, sheets: e.sheets }));
+
   const rowProps = (exam) => ({
     exam,
     tests,
     roster,
     programs,
+    curveSources,
     onChanged: refreshAndNotify,
     onError: setError,
   });
@@ -469,6 +475,7 @@ export default function ExamManager({ onExamsChanged }) {
                   <ProgramRosterPanel
                     program={program}
                     roster={roster}
+                    exams={exams}
                     onError={setError}
                     onSaved={async () => { setRosterOpenFor(null); await refreshAndNotify(); }}
                   />

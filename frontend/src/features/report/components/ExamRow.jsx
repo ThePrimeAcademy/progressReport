@@ -22,7 +22,7 @@ export const SECTION_DEFS = [
 ];
 
 export default function ExamRow({
-  exam, tests, roster, programs, onChanged, onError,
+  exam, tests, roster, programs, curveSources = [], onChanged, onError,
   onDragStart, onDragEnd, onDragOver, onDrop, dragging,
 }) {
   const assignedCount = SECTION_DEFS.filter((d) => exam.sections?.[d.key]?.testId).length;
@@ -320,6 +320,7 @@ export default function ExamRow({
           <ScoringSheetUpload
             groupId={exam.curveKey}
             sheets={exam.sheets}
+            sources={curveSources.filter((src) => src.curveKey !== exam.curveKey)}
             onChanged={onChanged}
           />
         </>

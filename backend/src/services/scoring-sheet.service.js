@@ -112,6 +112,35 @@ function setBound(groupId, section, bound) {
   return record;
 }
 
+// Reuse an already-uploaded curve on another exam without re-uploading the
+// .xlsx — copies the parsed points and bound, and records where it came from.
+function copyCurve(fromGroupId, toGroupId, section) {
+  if (!VALID_SECTIONS.has(section)) {
+    throw Object.assign(new Error(`section must be one of: ${[...VALID_SECTIONS].join(', ')}`), { status: 400 });
+  }
+  if (!toGroupId) throw Object.assign(new Error('toGroupId is required'), { status: 400 });
+  if (String(fromGroupId) === String(toGroupId)) {
+    throw Object.assign(new Error('Source and target are the same exam'), { status: 400 });
+  }
+  const source = getCurve(fromGroupId, section);
+  if (!source) {
+    throw Object.assign(new Error('No curve found on the source exam for this section'), { status: 404 });
+  }
+  ensureDir();
+  const record = {
+    groupId: String(toGroupId),
+    section,
+    bound: source.bound || 'upper',
+    uploadedAt: new Date().toISOString(),
+    originalFilename: source.originalFilename || null,
+    copiedFrom: { groupId: String(fromGroupId), section },
+    curve: source.curve,
+  };
+  fs.writeFileSync(curvePath(toGroupId, section), JSON.stringify(record, null, 2));
+  version++;
+  return record;
+}
+
 function getCurve(groupId, section) {
   if (!groupId || !VALID_SECTIONS.has(section)) return null;
   const p = curvePath(groupId, section);
@@ -187,6 +216,7 @@ function gradeScaled(curveRecord, rawCorrect) {
 module.exports = {
   saveCurveFromBase64,
   setBound,
+  copyCurve,
   getCurve,
   listCurves,
   deleteCurve,

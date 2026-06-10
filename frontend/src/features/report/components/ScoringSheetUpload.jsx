@@ -5,7 +5,7 @@
 // Uploads an .xlsx scoring curve, then notifies the parent to refresh.
 
 import React, { useRef, useState } from 'react';
-import { uploadScoringSheet, deleteScoringSheet, setScoringSheetBound } from '../api/reportApi.js';
+import { uploadScoringSheet, deleteScoringSheet, setScoringSheetBound, copyScoringSheet } from '../api/reportApi.js';
 
 const styles = {
   // Compact enough that the label + both uploaded section pills (pts, bound
@@ -46,6 +46,11 @@ const styles = {
     letterSpacing: '0.04em', textTransform: 'uppercase',
   },
   boundBtnActive: { background: 'var(--accent)', color: '#fff' },
+  copySelect: {
+    appearance: 'auto', border: '1px solid var(--border)', background: '#fff',
+    color: 'var(--ink)', padding: '3px 6px', borderRadius: 6, cursor: 'pointer',
+    fontSize: '0.72rem', fontWeight: 500, fontFamily: 'inherit', maxWidth: 130,
+  },
   status: { fontSize: '0.72rem' },
   error: { color: '#b91c1c' },
   ok: { color: '#15803d' },
@@ -56,10 +61,13 @@ const SECTION_LABELS = {
   rw: 'RW',
 };
 
-function SectionSlot({ groupId, section, existing, onChanged }) {
+function SectionSlot({ groupId, section, existing, sources = [], onChanged }) {
   const inputRef = useRef(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
+
+  // Other exams that already have a curve uploaded for THIS section.
+  const sectionSources = sources.filter((src) => src.sheets?.[section]);
 
   async function handleFile(e) {
     const file = e.target.files?.[0];
@@ -85,6 +93,22 @@ function SectionSlot({ groupId, section, existing, onChanged }) {
       onChanged?.();
     } catch (err) {
       setError(err.response?.data?.error || err.message || 'Delete failed');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleCopy(e) {
+    const fromGroupId = e.target.value;
+    e.target.value = '';
+    if (!fromGroupId) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await copyScoringSheet({ fromGroupId, toGroupId: groupId, section });
+      onChanged?.();
+    } catch (err) {
+      setError(err.response?.data?.error || err.message || 'Copy failed');
     } finally {
       setBusy(false);
     }
@@ -145,9 +169,25 @@ function SectionSlot({ groupId, section, existing, onChanged }) {
           </button>
         </>
       ) : (
-        <button type="button" style={styles.btn} disabled={busy} onClick={() => inputRef.current?.click()}>
-          {busy ? 'Uploading…' : 'Upload .xlsx'}
-        </button>
+        <>
+          <button type="button" style={styles.btn} disabled={busy} onClick={() => inputRef.current?.click()}>
+            {busy ? 'Working…' : 'Upload .xlsx'}
+          </button>
+          {sectionSources.length > 0 && (
+            <select
+              style={styles.copySelect}
+              value=""
+              disabled={busy}
+              onChange={handleCopy}
+              title="Reuse a scoring sheet already uploaded to another test"
+            >
+              <option value="">Copy from…</option>
+              {sectionSources.map((src) => (
+                <option key={src.curveKey} value={src.curveKey}>{src.name}</option>
+              ))}
+            </select>
+          )}
+        </>
       )}
       <input
         ref={inputRef}
@@ -161,12 +201,14 @@ function SectionSlot({ groupId, section, existing, onChanged }) {
   );
 }
 
-export default function ScoringSheetUpload({ groupId, sheets, onChanged }) {
+// `sources` — other exams whose already-uploaded curves can be reused here:
+// [{ curveKey, name, sheets: { math?, rw? } }]
+export default function ScoringSheetUpload({ groupId, sheets, sources = [], onChanged }) {
   return (
     <div style={styles.wrapper} onClick={(e) => e.stopPropagation()}>
       <span style={styles.label} title="Scoring sheets — the .xlsx curve for each section">Sheets:</span>
-      <SectionSlot groupId={groupId} section="rw" existing={sheets?.rw} onChanged={onChanged} />
-      <SectionSlot groupId={groupId} section="math" existing={sheets?.math} onChanged={onChanged} />
+      <SectionSlot groupId={groupId} section="rw" existing={sheets?.rw} sources={sources} onChanged={onChanged} />
+      <SectionSlot groupId={groupId} section="math" existing={sheets?.math} sources={sources} onChanged={onChanged} />
     </div>
   );
 }
