@@ -67,6 +67,7 @@ export default function ReportPage() {
     dayOfWeek, setDayOfWeek,
     previewData, previewLoading, previewError,
     downloadLoading, downloadError, downloadSuccess,
+    homework, setHomework,
     handlePreview, handleDownload,
     contacts, updateContacts, saveContacts,
     allContacts, allContactsLoading, noteContactsSaved,
@@ -180,6 +181,8 @@ export default function ReportPage() {
             downloadLoading={downloadLoading}
             downloadError={downloadError}
             downloadSuccess={downloadSuccess}
+            homework={homework}
+            onHomeworkChange={setHomework}
             contacts={contacts}
             onContactsChange={updateContacts}
             onSaveContacts={saveContacts}

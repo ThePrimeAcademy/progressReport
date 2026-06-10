@@ -14,6 +14,13 @@ import {
   fetchEmailJobStatus,
 } from '../api/reportApi.js';
 
+// Only include homework in a request when both counts are set — a partial
+// selection means the admin hasn't finished, so the PDF omits the section.
+function buildHomeworkPayload({ total, completed }) {
+  if (total === '' || completed === '') return undefined;
+  return { total: Number(total), completed: Number(completed) };
+}
+
 export function useGenerateReport() {
   const [students, setStudents] = useState([]);
   const [studentsLoading, setStudentsLoading] = useState(true);
@@ -31,6 +38,11 @@ export function useGenerateReport() {
   const [downloadLoading, setDownloadLoading] = useState(false);
   const [downloadError, setDownloadError] = useState(null);
   const [downloadSuccess, setDownloadSuccess] = useState(false);
+
+  // Admin-entered homework completion — sent with the PDF/email request so
+  // parents see a completed/total bar in the report. Cleared whenever the
+  // report inputs change so counts never leak across students or ranges.
+  const [homework, setHomework] = useState({ total: '', completed: '' });
 
   const [contacts, setContacts] = useState({ studentEmail: '', parentEmail: '' });
   const [contactsLoading, setContactsLoading] = useState(false);
@@ -93,6 +105,7 @@ export function useGenerateReport() {
     setPreviewData(null);
     setPreviewError(null);
     setDownloadSuccess(false);
+    setHomework({ total: '', completed: '' });
   }, [selectedStudentId, startDate, endDate, dayOfWeek]);
 
   // Filter the picker / dropdown to only students who actually have a
@@ -190,6 +203,7 @@ export function useGenerateReport() {
         startDate,
         endDate,
         dayOfWeek: dayOfWeek || undefined,
+        homework: buildHomeworkPayload(homework),
       });
       if (tab && !tab.closed) {
         tab.location.replace(fileUrl);
@@ -203,7 +217,7 @@ export function useGenerateReport() {
     } finally {
       setDownloadLoading(false);
     }
-  }, [selectedStudentId, startDate, endDate, dayOfWeek]);
+  }, [selectedStudentId, startDate, endDate, dayOfWeek, homework]);
 
   const updateContacts = useCallback((patch) => {
     setContacts((c) => ({ ...c, ...patch }));
@@ -250,6 +264,7 @@ export function useGenerateReport() {
         studentEmail: contacts.studentEmail || '',
         parentEmail: contacts.parentEmail || '',
         subject: emailSubject || undefined,
+        homework: buildHomeworkPayload(homework),
       });
 
       const jobId = start?.jobId;
@@ -295,7 +310,7 @@ export function useGenerateReport() {
     } finally {
       setEmailLoading(false);
     }
-  }, [selectedStudentId, startDate, endDate, dayOfWeek, contacts, emailSubject]);
+  }, [selectedStudentId, startDate, endDate, dayOfWeek, contacts, emailSubject, homework]);
 
   const isValid =
     selectedStudentId !== '' &&
@@ -313,6 +328,7 @@ export function useGenerateReport() {
     dayOfWeek, setDayOfWeek,
     previewData, previewLoading, previewError,
     downloadLoading, downloadError, downloadSuccess,
+    homework, setHomework,
     handlePreview, handleDownload,
     contacts, updateContacts, saveContacts, contactsLoading,
     allContacts, allContactsLoading, noteContactsSaved,

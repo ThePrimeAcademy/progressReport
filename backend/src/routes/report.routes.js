@@ -39,7 +39,7 @@ const router = express.Router();
 const JOB_TTL_MS = 5 * 60 * 1000;
 const sendJobs = new Map(); // key -> { status, startedAt, finishedAt?, result?, error? }
 
-function dedupeKey({ studentId, startDate, endDate, dayOfWeek, recipients, subject }) {
+function dedupeKey({ studentId, startDate, endDate, dayOfWeek, recipients, subject, homework }) {
   const days = Array.isArray(dayOfWeek)
     ? dayOfWeek.map(String).sort().join(',')
     : String(dayOfWeek || '');
@@ -50,8 +50,24 @@ function dedupeKey({ studentId, startDate, endDate, dayOfWeek, recipients, subje
     days,
     (recipients || []).map((e) => e.toLowerCase()).sort().join(','),
     String(subject || ''),
+    homeworkKey(homework),
   ].join('|');
   return crypto.createHash('sha256').update(normalized).digest('hex').slice(0, 24);
+}
+
+// Admin-entered homework completion shown to parents in the PDF. Returns
+// { total, completed } when usable, otherwise null (section is omitted).
+function sanitizeHomework(hw) {
+  if (!hw || typeof hw !== 'object') return null;
+  const total = Number(hw.total);
+  const completed = Number(hw.completed);
+  if (!Number.isInteger(total) || !Number.isInteger(completed)) return null;
+  if (total <= 0 || total > 999 || completed < 0 || completed > total) return null;
+  return { total, completed };
+}
+
+function homeworkKey(homework) {
+  return homework ? `hw${homework.completed}/${homework.total}` : '';
 }
 
 function readJob(key) {
@@ -328,14 +344,17 @@ function startOrReusePdf(key, doWork) {
 router.post('/', validate, (req, res, next) => {
   try {
     const { studentId, startDate, endDate, dayOfWeek } = req.body;
+    const homework = sanitizeHomework(req.body.homework);
     // previewKey already mixes in the data/exam/curve versions, so a PDF job
     // never outlives a scoring change. Prefix keeps the job maps distinct.
-    const key = `pdf-${previewKey({ studentId, startDate, endDate, dayOfWeek })}`;
+    // Homework is admin-entered per render, so it's part of the key — without
+    // it, a tweak to the counts would be served the stale pre-warmed PDF.
+    const key = `pdf-${previewKey({ studentId, startDate, endDate, dayOfWeek })}${homeworkKey(homework)}`;
     const start = startOrReusePdf(key, async () => {
       const data = await gatherPreviewData({ studentId, startDate, endDate, dayOfWeek });
       const pdfBuffer = await generateReportPDF(
         data.student, data.groups, data.stats, data.satScores,
-        startDate, endDate, data.latestTest, data.categoryPerf, data.categoryPerfSplit
+        startDate, endDate, data.latestTest, data.categoryPerf, data.categoryPerfSplit, homework
       );
       return { buffer: pdfBuffer, filename: `${buildReportFilename(data.student.name)}.pdf` };
     });
@@ -401,6 +420,7 @@ router.post('/email', validate, async (req, res, next) => {
   const t0 = Date.now();
   try {
     const { studentId, startDate, endDate, dayOfWeek, subject } = req.body;
+    const homework = sanitizeHomework(req.body.homework);
     let { studentEmail, parentEmail } = req.body;
 
     if (studentEmail === undefined && parentEmail === undefined) {
@@ -417,7 +437,7 @@ router.post('/email', validate, async (req, res, next) => {
       return res.status(400).json({ error: 'Provide at least one recipient (student or parent email).' });
     }
 
-    const key = dedupeKey({ studentId, startDate, endDate, dayOfWeek, recipients, subject });
+    const key = dedupeKey({ studentId, startDate, endDate, dayOfWeek, recipients, subject, homework });
     console.log(`[email] queued studentId=${studentId} recipients=${recipients.length} key=${key}`);
 
     const start = startOrReuseJob(key, async () => {
@@ -439,7 +459,7 @@ router.post('/email', validate, async (req, res, next) => {
       const latestTest = webhookLatestTest || apiLatestTest;
 
       console.log(`[email job ${key}] data gathered in ${Date.now() - t0}ms, rendering PDF…`);
-      const pdfBuffer = await generateReportPDF(student, groups, stats, satScores, startDate, endDate, latestTest, categoryPerf, webhookCategorySplit);
+      const pdfBuffer = await generateReportPDF(student, groups, stats, satScores, startDate, endDate, latestTest, categoryPerf, webhookCategorySplit, homework);
       const filename = `${buildReportFilename(student.name)}.pdf`;
       console.log(`[email job ${key}] PDF rendered (${pdfBuffer.length} bytes) at ${Date.now() - t0}ms, sending via Gmail API…`);
 

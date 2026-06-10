@@ -256,6 +256,36 @@ function buildSatHistorySection(allScores) {
   return `<div style="display:flex;gap:8px;flex-wrap:nowrap;margin:0 0 18px;">${cards}</div>`;
 }
 
+// ── Homework completion ───────────────────────────────────────
+// Admin-entered completed/total counts. Parent-facing bar: ≥80% green,
+// 60–79% orange, below 60% red.
+function homeworkColor(pct) {
+  if (pct >= 80) return { bar: '#15803d', bg: '#dcfce7' };
+  if (pct >= 60) return { bar: '#ea580c', bg: '#ffedd5' };
+  return { bar: '#b91c1c', bg: '#fee2e2' };
+}
+
+function buildHomeworkSection(homework) {
+  if (!homework || !homework.total) return '';
+  const pct = Math.round((homework.completed / homework.total) * 100);
+  const c = homeworkColor(pct);
+  return `
+    <div style="margin:0 0 18px;">
+      <div class="section-title">Homework Completion</div>
+      <div style="background:#fafbff;border:1px solid var(--border);border-radius:10px;padding:12px 16px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+          <span style="font-size:0.8rem;color:var(--muted);font-weight:600;">
+            Completed <strong style="color:${c.bar};">${homework.completed}</strong> of ${homework.total} assignment${homework.total === 1 ? '' : 's'}
+          </span>
+          <span style="background:${c.bg};color:${c.bar};font-weight:700;font-size:0.78rem;padding:3px 10px;border-radius:6px;">${pct}%</span>
+        </div>
+        <div class="score-bar-track" style="display:block;width:100%;">
+          <div class="score-bar-fill" style="width:${Math.min(pct, 100)}%;background:${c.bar};"></div>
+        </div>
+      </div>
+    </div>`;
+}
+
 function buildTestRows(groups) {
   const allTests = groups.flatMap((g) => g.results);
   allTests.sort((a, b) => new Date(a.date) - new Date(b.date));
@@ -277,7 +307,7 @@ function buildTestRows(groups) {
 }
 
 // ── Main export ───────────────────────────────────────────────
-async function generateReportPDF(student, groups, stats, satScores, startDate, endDate, latestTest, categoryPerf, categoryPerfSplit) {
+async function generateReportPDF(student, groups, stats, satScores, startDate, endDate, latestTest, categoryPerf, categoryPerfSplit, homework) {
   const now = new Date();
   const grade = letterGrade(stats.averageScore);
   const reportId = `PR-${Date.now().toString(36).toUpperCase()}`;
@@ -301,6 +331,7 @@ async function generateReportPDF(student, groups, stats, satScores, startDate, e
     satLatestMathScore: satScores?.latestMathScore ?? '—',
     satSuperScore: satScores?.superScore ?? '—',
     satHistorySection: buildSatHistorySection(satScores?.allScores),
+    homeworkSection: buildHomeworkSection(homework),
     // latestTestSection: buildLatestTestSection(latestTest), // hidden from PDF — restore this line (and delete the '' line below) to bring back "Latest Test Performance"
     latestTestSection: '',
     weeklySection: buildWeeklySection(categoryPerfSplit, categoryPerf),

@@ -131,6 +131,89 @@ function SatScoreHistory({ allScores }) {
   );
 }
 
+// ── Homework completion (admin-entered, included in the PDF) ─
+// Parent-facing thresholds: ≥80% green, 60–79% orange, below 60% red.
+function hwColor(pct) {
+  if (pct >= 80) return { bar: '#15803d', bg: '#dcfce7' };
+  if (pct >= 60) return { bar: '#ea580c', bg: '#ffedd5' };
+  return { bar: '#b91c1c', bg: '#fee2e2' };
+}
+
+const hwSelectStyle = {
+  fontFamily: 'var(--font-sans)', fontSize: '0.82rem', color: 'var(--ink)',
+  background: 'var(--bg)', border: '1.5px solid var(--border)', borderRadius: 8,
+  padding: '6px 10px', cursor: 'pointer', outline: 'none',
+};
+
+const HW_MAX_TOTAL = 50;
+
+function HomeworkCompletion({ homework, onChange }) {
+  const { total, completed } = homework;
+  const totalNum = Number(total);
+  const hasData = total !== '' && completed !== '';
+  const pct = hasData ? Math.round((Number(completed) / totalNum) * 100) : null;
+  const c = pct != null ? hwColor(pct) : null;
+
+  const completedOptions = total === ''
+    ? []
+    : Array.from({ length: totalNum + 1 }, (_, i) => i);
+
+  const handleTotal = (e) => {
+    const t = e.target.value;
+    if (t === '') return onChange({ total: '', completed: '' });
+    // Keep the completed pick, clamped so it can never exceed the new total.
+    const clamped = completed === '' ? '' : String(Math.min(Number(completed), Number(t)));
+    onChange({ total: t, completed: clamped });
+  };
+
+  return (
+    <div style={{ background: '#fafbff', border: '1.5px solid var(--border)', borderRadius: 10, padding: '14px 16px', marginBottom: 24 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10, marginBottom: pct != null ? 12 : 0 }}>
+        <div>
+          <div style={{ fontSize: '0.72rem', color: 'var(--muted)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.07em' }}>
+            Homework Completion
+          </div>
+          <div style={{ fontSize: '0.72rem', color: 'var(--muted)', marginTop: 3 }}>
+            Set the counts before downloading or emailing — parents see this bar in the PDF.
+          </div>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <label style={{ fontSize: '0.75rem', color: 'var(--muted)', fontWeight: 600 }}>Completed</label>
+          <select
+            value={completed}
+            onChange={(e) => onChange({ ...homework, completed: e.target.value })}
+            disabled={total === ''}
+            style={{ ...hwSelectStyle, ...(total === '' ? { opacity: 0.5, cursor: 'not-allowed' } : {}) }}
+          >
+            <option value="">—</option>
+            {completedOptions.map((i) => <option key={i} value={i}>{i}</option>)}
+          </select>
+          <span style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>of</span>
+          <select value={total} onChange={handleTotal} style={hwSelectStyle}>
+            <option value="">Total HW</option>
+            {Array.from({ length: HW_MAX_TOTAL }, (_, i) => i + 1).map((i) => (
+              <option key={i} value={i}>{i}</option>
+            ))}
+          </select>
+        </div>
+      </div>
+      {pct != null && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div style={{ flex: 1, background: '#e5e7eb', borderRadius: 99, height: 8, overflow: 'hidden' }}>
+            <div style={{
+              width: `${Math.min(pct, 100)}%`, background: c.bar, height: '100%', borderRadius: 99,
+              transition: 'width 0.25s var(--ease, ease), background 0.25s var(--ease, ease)',
+            }} />
+          </div>
+          <span style={{ background: c.bg, color: c.bar, fontWeight: 700, fontSize: '0.78rem', padding: '3px 10px', borderRadius: 6, whiteSpace: 'nowrap' }}>
+            {Number(completed)}/{totalNum} · {pct}%
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Overall stats ─────────────────────────────────────────────
 function OverallStats({ stats, totalTests, totalGroups }) {
   const cards = [
@@ -431,6 +514,7 @@ function GroupSection({ group }) {
 // ── Main ReportViewer ─────────────────────────────────────────
 export default function ReportViewer({
   data, onDownload, downloadLoading, downloadError, downloadSuccess,
+  homework = { total: '', completed: '' }, onHomeworkChange,
   contacts, onContactsChange, onSaveContacts, onSendEmail,
   emailConfigured, emailLoading, emailError, emailSuccess,
   emailSubject, onEmailSubjectChange,
@@ -471,6 +555,11 @@ export default function ReportViewer({
 
         {/* Full SAT score history — replaces the old Average/Highest/Lowest/Trend strip */}
         <SatScoreHistory allScores={satScores?.allScores} />
+
+        {/* Homework completion — admin sets counts here before generating the PDF */}
+        {onHomeworkChange && (
+          <HomeworkCompletion homework={homework} onChange={onHomeworkChange} />
+        )}
 
         {downloadSuccess && (
           <div style={{ padding: '10px 14px', background: '#f0fdf4', border: '1.5px solid #86efac', borderRadius: 8, color: '#15803d', fontSize: '0.85rem', fontWeight: 500 }}>
