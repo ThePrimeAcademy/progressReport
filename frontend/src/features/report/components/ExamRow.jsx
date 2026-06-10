@@ -284,14 +284,14 @@ export default function ExamRow({
               return (
                 <div
                   key={key}
-                  style={{ ...s.sectionChip, cursor: 'pointer' }}
+                  style={{ ...s.sectionChip, cursor: 'pointer', ...(editing ? s.sectionChipEditing : null) }}
                   onClick={() => !editing && setSectionEditing({ key, group: testGroup(assigned?.testId) })}
                   title="Click to change this section's test"
                 >
                   <span style={s.sectionLabel}>{label}</span>
                   {editing ? (
                     <div
-                      style={{ display: 'grid', gap: 4 }}
+                      style={s.sectionEditPanel}
                       onClick={(e) => e.stopPropagation()}
                       onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setSectionEditing(null); }}
                     >

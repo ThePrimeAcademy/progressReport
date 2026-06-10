@@ -29,3 +29,27 @@ body {
 }
 
 ::selection { background: var(--accent-dim); color: var(--accent); }
+
+/* ── Focus & micro-motion ───────────────────────────
+   Replace the browser's default black focus outline with the app's accent
+   ring, and give inline editors (e.g. the exam section test pickers) a soft
+   entrance instead of popping in. */
+select:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+button:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-dim);
+}
+
+@keyframes rise-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  @keyframes rise-in {
+    from { opacity: 1; transform: none; }
+  }
+}
