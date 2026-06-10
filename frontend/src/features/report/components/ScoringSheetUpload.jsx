@@ -8,13 +8,16 @@ import React, { useRef, useState } from 'react';
 import { uploadScoringSheet, deleteScoringSheet, setScoringSheetBound } from '../api/reportApi.js';
 
 const styles = {
+  // Compact enough that the label + both uploaded section pills (pts, bound
+  // toggle, Replace/Remove) stay on ONE line at the exam row's width; wrap
+  // remains as the fallback for narrow screens.
   wrapper: {
-    display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center',
+    display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center',
     padding: '10px 14px', borderTop: '1px dashed var(--border)',
     background: '#fafbff', fontSize: '0.78rem',
   },
   label: { fontWeight: 600, color: 'var(--muted)', letterSpacing: '0.04em', textTransform: 'uppercase', fontSize: '0.7rem' },
-  slot: { display: 'inline-flex', alignItems: 'center', gap: 6, padding: '4px 10px', borderRadius: 999, border: '1.5px solid var(--border)', background: '#fff', whiteSpace: 'nowrap' },
+  slot: { display: 'inline-flex', alignItems: 'center', gap: 5, padding: '3px 8px', borderRadius: 999, border: '1.5px solid var(--border)', background: '#fff', whiteSpace: 'nowrap' },
   slotUploaded: { borderColor: '#86efac', background: '#f0fdf4', color: '#15803d' },
   slotMissing: { color: 'var(--muted)' },
   pill: { fontWeight: 600, fontSize: '0.72rem' },
@@ -25,12 +28,12 @@ const styles = {
   },
   btnGhost: {
     appearance: 'none', border: '1px solid var(--border)', background: '#fff',
-    color: 'var(--ink)', padding: '4px 10px', borderRadius: 6, cursor: 'pointer',
+    color: 'var(--ink)', padding: '3px 8px', borderRadius: 6, cursor: 'pointer',
     fontSize: '0.72rem', fontWeight: 500,
   },
   btnDanger: {
     appearance: 'none', border: '1px solid #fca5a5', background: '#fff',
-    color: '#b91c1c', padding: '4px 10px', borderRadius: 6, cursor: 'pointer',
+    color: '#b91c1c', padding: '3px 8px', borderRadius: 6, cursor: 'pointer',
     fontSize: '0.7rem', fontWeight: 500,
   },
   boundToggle: {
@@ -39,7 +42,7 @@ const styles = {
   },
   boundBtn: {
     appearance: 'none', border: 'none', background: '#fff', color: 'var(--muted)',
-    padding: '3px 8px', cursor: 'pointer', fontSize: '0.68rem', fontWeight: 600,
+    padding: '3px 6px', cursor: 'pointer', fontSize: '0.68rem', fontWeight: 600,
     letterSpacing: '0.04em', textTransform: 'uppercase',
   },
   boundBtnActive: { background: 'var(--accent)', color: '#fff' },
@@ -161,7 +164,7 @@ function SectionSlot({ groupId, section, existing, onChanged }) {
 export default function ScoringSheetUpload({ groupId, sheets, onChanged }) {
   return (
     <div style={styles.wrapper} onClick={(e) => e.stopPropagation()}>
-      <span style={styles.label}>Scoring Sheets:</span>
+      <span style={styles.label} title="Scoring sheets — the .xlsx curve for each section">Sheets:</span>
       <SectionSlot groupId={groupId} section="rw" existing={sheets?.rw} onChanged={onChanged} />
       <SectionSlot groupId={groupId} section="math" existing={sheets?.math} onChanged={onChanged} />
     </div>
