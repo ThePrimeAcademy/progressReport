@@ -9,7 +9,7 @@
 //   [{ examId, name, date: "YYYY-MM-DD" | null, programId: "<id>" | null,
 //      sections: { "1": { testId, testName } | null, ... "4" },
 //      studentIds: ["<user_id>", ...], hiddenStudentIds: ["<user_id>", ...],
-//      createdAt, updatedAt }]
+//      isPractice: boolean, createdAt, updatedAt }]
 //
 // programId: optional link to a program (see program.service). When set, the
 // program owns the roster — the exam's score is gated by program enrollment,
@@ -23,6 +23,9 @@
 // hiddenStudentIds: per-exam exclusions — these students' attempts on the
 // exam's tests are ignored everywhere the exam is scored (SAT score cards,
 // history, weekly category performance).
+// isPractice: practice sittings stay out of the grade report entirely — no
+// score cards, no history entry, no super-score contribution, no upcoming
+// placeholder. The admin scoreboard still shows them.
 //
 // Scoring curves for an exam live in scoring-sheet.service under the key
 // `exam:<examId>` (sections 'rw' | 'math'), reusing the same storage and
@@ -143,7 +146,7 @@ function validateExam(name, sections, ignoreExamId) {
   }
 }
 
-function createExam({ name, date, programId, sections, studentIds, hiddenStudentIds }) {
+function createExam({ name, date, programId, sections, studentIds, hiddenStudentIds, isPractice }) {
   const normalized = normalizeSections(sections);
   validateExam(name, normalized, null);
   const pid = requireProgram(programId);
@@ -156,6 +159,7 @@ function createExam({ name, date, programId, sections, studentIds, hiddenStudent
     sections: normalized,
     studentIds: normalizeHidden(studentIds),
     hiddenStudentIds: normalizeHidden(hiddenStudentIds),
+    isPractice: Boolean(isPractice),
     createdAt: now,
     updatedAt: now,
   };
@@ -188,7 +192,7 @@ function reorderExams(programId, orderedIds) {
   return ordered.map((e) => e.examId);
 }
 
-function updateExam(examId, { name, date, programId, sections, studentIds, hiddenStudentIds }) {
+function updateExam(examId, { name, date, programId, sections, studentIds, hiddenStudentIds, isPractice }) {
   const all = load();
   const idx = all.findIndex((e) => e.examId === String(examId));
   if (idx < 0) throw Object.assign(new Error('Exam not found'), { status: 404 });
@@ -208,6 +212,9 @@ function updateExam(examId, { name, date, programId, sections, studentIds, hidde
     hiddenStudentIds: hiddenStudentIds != null
       ? normalizeHidden(hiddenStudentIds)
       : (all[idx].hiddenStudentIds || []),
+    isPractice: isPractice !== undefined
+      ? Boolean(isPractice)
+      : Boolean(all[idx].isPractice),
     updatedAt: new Date().toISOString(),
   };
   validateExam(next.name, next.sections, next.examId);
@@ -229,6 +236,7 @@ function duplicateExam(examId) {
     sections: {},
     studentIds: source.studentIds || [],
     hiddenStudentIds: [],
+    isPractice: Boolean(source.isPractice),
   });
 }
 

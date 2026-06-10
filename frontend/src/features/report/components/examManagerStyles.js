@@ -36,6 +36,14 @@ export const s = {
   hiddenRowOn: { background: '#fff1f2', color: '#b91c1c', textDecoration: 'line-through' },
   hiddenBadge: { fontSize: '0.68rem', fontWeight: 700, color: '#b91c1c', background: '#fff1f2', border: '1px solid #fca5a5', borderRadius: 999, padding: '2px 8px' },
   dateChip: { fontSize: '0.7rem', fontWeight: 600, color: 'var(--accent)', background: 'var(--accent-dim)', borderRadius: 999, padding: '2px 9px', whiteSpace: 'nowrap' },
+  // Practice switch: a real on/off toggle on the exam header. ON = amber pill
+  // (practice — excluded from grade reports); OFF = quiet outline (real exam).
+  practiceToggle: { display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: '0.68rem', fontWeight: 600, color: 'var(--muted)', background: '#fff', border: '1px solid var(--border)', borderRadius: 999, padding: '2px 9px 2px 4px', whiteSpace: 'nowrap', cursor: 'pointer', userSelect: 'none', transition: 'color 150ms ease, background 150ms ease, border-color 150ms ease' },
+  practiceToggleOn: { color: '#b45309', background: '#fffbeb', borderColor: '#fcd34d' },
+  practiceTrack: { position: 'relative', width: 22, height: 12, borderRadius: 999, background: 'var(--border)', flex: 'none', transition: 'background 150ms ease' },
+  practiceTrackOn: { background: '#f59e0b' },
+  practiceKnob: { position: 'absolute', top: 2, left: 2, width: 8, height: 8, borderRadius: '50%', background: '#fff', boxShadow: '0 1px 2px rgba(0,0,0,0.25)', transition: 'transform 150ms ease' },
+  practiceKnobOn: { transform: 'translateX(10px)' },
   rosterChip: { fontSize: '0.68rem', fontWeight: 600, color: 'var(--muted)', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 999, padding: '2px 8px', whiteSpace: 'nowrap' },
   searchInput: { width: '100%', boxSizing: 'border-box', padding: '6px 10px', borderRadius: 8, border: '1.5px solid var(--border)', fontSize: '0.78rem', fontFamily: 'inherit', marginBottom: 8 },
 

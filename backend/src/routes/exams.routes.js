@@ -216,19 +216,19 @@ router.post('/reorder', (req, res, next) => {
 // exams get created in advance and have tests attached later.
 router.post('/', (req, res, next) => {
   try {
-    const { name, date, programId, sections, studentIds, hiddenStudentIds } = req.body || {};
-    res.json({ success: true, data: exams.createExam({ name, date, programId, sections, studentIds, hiddenStudentIds }) });
+    const { name, date, programId, sections, studentIds, hiddenStudentIds, isPractice } = req.body || {};
+    res.json({ success: true, data: exams.createExam({ name, date, programId, sections, studentIds, hiddenStudentIds, isPractice }) });
   } catch (err) {
     next(err);
   }
 });
 
-// PUT /api/exams/:examId — rename, re-date, re-map sections and/or set
-// student rosters.
+// PUT /api/exams/:examId — rename, re-date, re-map sections, set student
+// rosters and/or flip the practice flag.
 router.put('/:examId', (req, res, next) => {
   try {
-    const { name, date, programId, sections, studentIds, hiddenStudentIds } = req.body || {};
-    res.json({ success: true, data: exams.updateExam(req.params.examId, { name, date, programId, sections, studentIds, hiddenStudentIds }) });
+    const { name, date, programId, sections, studentIds, hiddenStudentIds, isPractice } = req.body || {};
+    res.json({ success: true, data: exams.updateExam(req.params.examId, { name, date, programId, sections, studentIds, hiddenStudentIds, isPractice }) });
   } catch (err) {
     next(err);
   }

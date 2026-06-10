@@ -182,6 +182,7 @@ function rosterPlaceholders(student, gradedKeys) {
   if (!sid || sid.startsWith('sheets:')) return [];
   const placeholders = [];
   for (const exam of listExams()) {
+    if (exam.isPractice) continue; // practice exams never reach the report
     const key = examCurveKey(exam.examId);
     if (gradedKeys.has(key)) continue;
     if (!examRosteredForPlaceholder(exam, sid)) continue;
@@ -256,8 +257,10 @@ async function getSatScoresForStudent(student) {
   if (records.length === 0) return empty;
 
   // Program gate: a graded exam only counts toward this student's scores if
-  // they're enrolled in its program. Legacy group buckets (no "exam:" prefix)
-  // and ungrouped exams pass through unchanged.
+  // they're enrolled in its program. Practice exams are dropped outright —
+  // they never feed the grade report (cards, history or super score). Legacy
+  // group buckets (no "exam:" prefix) and ungrouped exams pass through
+  // unchanged.
   const sid = String(student.id);
   const buckets = gradeRecordsByGroup(records)
     .map(applyCurves)
@@ -265,7 +268,9 @@ async function getSatScoresForStudent(student) {
       const m = /^exam:(.+)$/.exec(String(b.groupId));
       if (!m) return true;
       const exam = getExam(m[1]);
-      return !exam || examScoreVisible(exam, sid);
+      if (!exam) return true;
+      if (exam.isPractice) return false;
+      return examScoreVisible(exam, sid);
     });
   if (buckets.length === 0) return empty;
 

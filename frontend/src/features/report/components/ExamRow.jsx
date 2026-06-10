@@ -212,6 +212,28 @@ export default function ExamRow({
         {(exam.hiddenStudentIds || []).length > 0 && (
           <span style={s.hiddenBadge}>{exam.hiddenStudentIds.length} hidden</span>
         )}
+        <span
+          role="switch"
+          aria-checked={Boolean(exam.isPractice)}
+          tabIndex={0}
+          style={{ ...s.practiceToggle, ...(exam.isPractice ? s.practiceToggleOn : null) }}
+          onClick={(e) => { stop(e); patchExam({ isPractice: !exam.isPractice }); }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              stop(e);
+              patchExam({ isPractice: !exam.isPractice });
+            }
+          }}
+          title={exam.isPractice
+            ? 'Practice exam — kept out of grade reports. Click to count it as a real exam.'
+            : 'Real exam — counts in grade reports. Click to mark as practice.'}
+        >
+          <span style={{ ...s.practiceTrack, ...(exam.isPractice ? s.practiceTrackOn : null) }}>
+            <span style={{ ...s.practiceKnob, ...(exam.isPractice ? s.practiceKnobOn : null) }} />
+          </span>
+          Practice
+        </span>
         <select
           style={s.moveSelect}
           value={exam.programId || ''}
