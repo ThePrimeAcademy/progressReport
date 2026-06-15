@@ -223,3 +223,30 @@ export async function fetchEmailJobStatus(jobId) {
   const response = await apiClient.get(`/report/email/job/${encodeURIComponent(jobId)}`);
   return response.data.data;
 }
+
+// ── Scheduled bulk send ────────────────────────────────────────────────────
+// Persist a bulk send to fire server-side at sendAt (an ISO string). The
+// report date range is frozen at schedule time.
+// payload: { label?, subject?, startDate, endDate, dayOfWeek?, sendAt, items }
+export async function scheduleBulkEmail(payload) {
+  const response = await apiClient.post('/report/email/schedule', payload);
+  return response.data.data;
+}
+
+// All scheduled/in-flight/completed batches, newest first, with status counts.
+export async function fetchEmailQueue() {
+  const response = await apiClient.get('/report/email/queue');
+  return response.data.data || [];
+}
+
+// One batch with its per-student items.
+export async function fetchEmailBatch(id) {
+  const response = await apiClient.get(`/report/email/queue/${encodeURIComponent(id)}`);
+  return response.data.data;
+}
+
+// Cancel a not-yet-started batch.
+export async function cancelScheduledBatch(id) {
+  const response = await apiClient.delete(`/report/email/queue/${encodeURIComponent(id)}`);
+  return response.data;
+}

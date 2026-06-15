@@ -6,6 +6,7 @@ import DateRangePicker from '../features/report/components/DateRangePicker.jsx';
 import DayPicker from '../features/report/components/DayPicker.jsx';
 import ReportViewer from '../features/report/components/ReportViewer.jsx';
 import BulkSendPanel from '../features/report/components/BulkSendPanel.jsx';
+import ScheduledQueuePanel from '../features/report/components/ScheduledQueuePanel.jsx';
 import ExamManager from '../features/report/components/ExamManager.jsx';
 import Button from '../components/ui/Button.jsx';
 
@@ -78,6 +79,8 @@ export default function ReportPage() {
   } = useGenerateReport();
 
   const [bulkMode, setBulkMode] = useState(false);
+  // Bumped after a successful schedule so the queue panel refetches immediately.
+  const [queueRefresh, setQueueRefresh] = useState(0);
 
   return (
     <div style={s.page}>
@@ -114,18 +117,22 @@ export default function ReportPage() {
         </header>
 
         {bulkMode ? (
-          <BulkSendPanel
-            students={filteredStudents}
-            startDate={startDate}
-            endDate={endDate}
-            dayOfWeek={dayOfWeek}
-            onStartDate={setStartDate}
-            onEndDate={setEndDate}
-            onDayOfWeek={setDayOfWeek}
-            allContacts={allContacts}
-            allContactsLoading={allContactsLoading}
-            onContactsPersisted={noteContactsSaved}
-          />
+          <>
+            <BulkSendPanel
+              students={filteredStudents}
+              startDate={startDate}
+              endDate={endDate}
+              dayOfWeek={dayOfWeek}
+              onStartDate={setStartDate}
+              onEndDate={setEndDate}
+              onDayOfWeek={setDayOfWeek}
+              allContacts={allContacts}
+              allContactsLoading={allContactsLoading}
+              onContactsPersisted={noteContactsSaved}
+              onScheduled={() => setQueueRefresh((n) => n + 1)}
+            />
+            <ScheduledQueuePanel refreshSignal={queueRefresh} />
+          </>
         ) : (<>
         <div style={s.card}>
           <div style={s.cardHead}>

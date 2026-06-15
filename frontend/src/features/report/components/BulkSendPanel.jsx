@@ -9,6 +9,7 @@ import {
   saveStudentContacts,
   fetchPrograms,
   fetchStudents,
+  scheduleBulkEmail,
 } from '../api/reportApi.js';
 
 const MAX_CONCURRENCY = 3;
@@ -169,7 +170,51 @@ const s = {
     color: 'var(--muted)',
     fontStyle: 'italic',
   },
+  scheduleBox: {
+    border: '1.5px dashed var(--border)',
+    borderRadius: 12,
+    padding: '14px 16px',
+    background: '#fafbff',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 10,
+  },
+  scheduleHead: { display: 'flex', alignItems: 'center', gap: 8 },
+  scheduleOptional: {
+    fontSize: '0.6rem',
+    fontWeight: 600,
+    letterSpacing: '0.06em',
+    textTransform: 'uppercase',
+    color: 'var(--muted)',
+    background: 'var(--bg)',
+    border: '1px solid var(--border)',
+    borderRadius: 99,
+    padding: '2px 8px',
+  },
+  scheduleRow: { display: 'flex', gap: 10, alignItems: 'stretch', flexWrap: 'wrap' },
+  scheduleInput: {
+    flex: 1,
+    minWidth: 200,
+    padding: '10px 14px',
+    border: '1.5px solid var(--border)',
+    borderRadius: 8,
+    background: 'var(--bg)',
+    color: 'var(--ink)',
+    fontFamily: 'var(--font-sans)',
+    fontSize: '0.92rem',
+    outline: 'none',
+    colorScheme: 'light',
+  },
+  scheduleHint: { fontSize: '0.74rem', color: 'var(--muted)', lineHeight: 1.5, margin: 0 },
+  scheduleErr: { fontSize: '0.8rem', color: '#b91c1c', fontWeight: 500 },
+  scheduleOk: { fontSize: '0.8rem', color: '#15803d', fontWeight: 500 },
 };
+
+// datetime-local wants "YYYY-MM-DDTHH:mm" in LOCAL time (no timezone suffix).
+function toDatetimeLocalValue(date) {
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
 
 async function pollJobUntilTerminal(jobId) {
   for (let i = 0; i < MAX_POLL_ATTEMPTS; i++) {
@@ -187,6 +232,7 @@ export default function BulkSendPanel({
   allContacts = {},
   allContactsLoading = false,
   onContactsPersisted,
+  onScheduled,
 }) {
   const [selectedIds, setSelectedIds] = useState(() => new Set());
   const [subject, setSubject] = useState('Prime Academy Weekly Report');
@@ -202,6 +248,12 @@ export default function BulkSendPanel({
   // id → 'saving' | 'saved' | 'error:<message>'
   const [saveStates, setSaveStates] = useState({});
   const contactsLoading = allContactsLoading;
+
+  // Schedule-for-later: a datetime-local string ('' = send now). Submitting
+  // persists a server-side batch instead of sending from the browser.
+  const [sendAt, setSendAt] = useState('');
+  const [scheduling, setScheduling] = useState(false);
+  const [scheduleMsg, setScheduleMsg] = useState(null); // { type: 'success'|'error', text }
 
   // Program scoping: '' = all active students (the date-filtered list passed
   // in), otherwise a programId — the list then becomes that program's enrolled
@@ -418,6 +470,58 @@ export default function BulkSendPanel({
     }
   }
 
+  // Persist a server-side batch that fires at `sendAt`. Recipients are frozen
+  // now (the report date range is also frozen), so the browser need not stay
+  // open. Only selected students with a recipient email are included.
+  async function handleSchedule() {
+    setScheduleMsg(null);
+    if (!sendAt) {
+      setScheduleMsg({ type: 'error', text: 'Pick a date and time to schedule.' });
+      return;
+    }
+    const when = new Date(sendAt);
+    if (Number.isNaN(when.getTime()) || when.getTime() < Date.now()) {
+      setScheduleMsg({ type: 'error', text: 'Schedule time must be in the future.' });
+      return;
+    }
+    const targets = sortedStudents.filter((stu) => selectedIds.has(stu.id) && hasSavedContacts(stu.id));
+    if (targets.length === 0) {
+      setScheduleMsg({ type: 'error', text: 'No selected students have a recipient email.' });
+      return;
+    }
+
+    setScheduling(true);
+    try {
+      // Flush any unsaved typed emails so the snapshot uses the latest values.
+      await saveAllDirty();
+      const items = targets.map((stu) => ({
+        studentId: stu.id,
+        studentName: stu.name,
+        studentEmail: effectiveEmail(stu.id, 'studentEmail'),
+        parentEmail: effectiveEmail(stu.id, 'parentEmail'),
+      }));
+      const res = await scheduleBulkEmail({
+        label: activeProgram ? activeProgram.name : 'All active students',
+        subject: subject || undefined,
+        startDate,
+        endDate,
+        dayOfWeek: dayOfWeek || undefined,
+        sendAt: when.toISOString(),
+        items,
+      });
+      setScheduleMsg({
+        type: 'success',
+        text: `Scheduled ${res.scheduledCount} report${res.scheduledCount === 1 ? '' : 's'} for ${when.toLocaleString()}.`,
+      });
+      setSendAt('');
+      onScheduled?.();
+    } catch (err) {
+      setScheduleMsg({ type: 'error', text: err.response?.data?.error || err.message || 'Failed to schedule.' });
+    } finally {
+      setScheduling(false);
+    }
+  }
+
   const tally = useMemo(() => {
     const t = { sent: 0, deduped: 0, failed: 0, skipped: 0, pending: 0, sending: 0 };
     for (const r of Object.values(results)) t[r.status] = (t[r.status] || 0) + 1;
@@ -579,6 +683,40 @@ export default function BulkSendPanel({
             ? `Sending ${tally.sending + tally.sent + tally.deduped + tally.failed} / ${sendableCount}…`
             : `Send to ${sendableCount} student${sendableCount === 1 ? '' : 's'}`}
         </Button>
+
+        <div style={s.scheduleBox}>
+          <div style={s.scheduleHead}>
+            <span style={s.label}>Or schedule for later</span>
+            <span style={s.scheduleOptional}>optional</span>
+          </div>
+          <div style={s.scheduleRow}>
+            <input
+              type="datetime-local"
+              value={sendAt}
+              min={toDatetimeLocalValue(new Date())}
+              onChange={(e) => { setSendAt(e.target.value); setScheduleMsg(null); }}
+              style={s.scheduleInput}
+              aria-label="Schedule send date and time"
+            />
+            <Button
+              onClick={handleSchedule}
+              disabled={running || scheduling || !sendAt || sendableCount === 0}
+              loading={scheduling}
+              variant="secondary"
+              size="md"
+            >
+              Schedule {sendableCount > 0 ? `${sendableCount}` : ''}
+            </Button>
+          </div>
+          <p style={s.scheduleHint}>
+            Fires automatically at the chosen time — you can close this page. Track or cancel it in the queue below.
+          </p>
+          {scheduleMsg && (
+            <div style={scheduleMsg.type === 'error' ? s.scheduleErr : s.scheduleOk}>
+              {scheduleMsg.type === 'error' ? '⚠ ' : '✓ '}{scheduleMsg.text}
+            </div>
+          )}
+        </div>
 
         {globalError && (
           <div style={{ padding: '10px 14px', background: '#fff1f2', border: '1.5px solid #fca5a5', borderRadius: 8, color: '#b91c1c', fontSize: '0.85rem' }}>

@@ -1,23 +1,15 @@
 // routes/report.routes.js
 const express = require('express');
-const {
-  getStudentById,
-  getStudentResultsGrouped,
-  getLatestTestResult,
-  computeCategoryPerformance,
-  getDataVersion,
-} = require('../services/classmarker.service');
-const { getSatScoresForStudent } = require('../services/sat.service');
-const {
-  getLatestWebhookTestResult,
-  getWebhookCategoryPerformance,
-  getWebhookCategoryPerformanceSplit,
-} = require('../services/webhook.service');
-const { computeStats } = require('../services/stats.service');
+const { getDataVersion } = require('../services/classmarker.service');
 const { getCurvesVersion } = require('../services/scoring-sheet.service');
 const { getExamsVersion } = require('../services/exam.service');
 const { generateReportPDF } = require('../services/pdf.service');
-const { sendReportEmail, isConfigured: isEmailConfigured, verifyConnection: verifyEmailConnection } = require('../services/email.service');
+const { isConfigured: isEmailConfigured, verifyConnection: verifyEmailConnection } = require('../services/email.service');
+const {
+  buildReportFilename,
+  gatherReportData,
+  buildAndSendReport,
+} = require('../services/report-delivery.service');
 const db = require('../services/db.service');
 const crypto = require('crypto');
 
@@ -120,20 +112,6 @@ function startOrReuseJob(key, doWork) {
   return { jobId: key, status: 'pending' };
 }
 
-// Concatenated first+last+"Report" — e.g. "Darin Kim" -> "DarinKimReport".
-// Strips diacritics/whitespace/punctuation so it's safe in Content-Disposition.
-function buildReportFilename(studentName) {
-  const cleaned = String(studentName || 'Student')
-    .normalize('NFKD')
-    .replace(/[̀-ͯ]/g, '')
-    .replace(/[^A-Za-z0-9 ]+/g, '')
-    .trim()
-    .split(/\s+/)
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-    .join('');
-  return `${cleaned}Report`;
-}
-
 function validate(req, res, next) {
   const { studentId, startDate, endDate } = req.body;
   if (!studentId || typeof studentId !== 'string')
@@ -143,22 +121,6 @@ function validate(req, res, next) {
   if (new Date(startDate) > new Date(endDate))
     return res.status(400).json({ error: 'startDate must be before endDate' });
   next();
-}
-
-// Resolve student — handles both ClassMarker IDs and sheets: prefixed IDs
-async function resolveStudent(studentId) {
-  if (studentId.startsWith('sheets:')) {
-    // Sheets-only student — build from sheets records
-    const { loadRecords } = require('../services/sheets.service');
-    const records = await loadRecords();
-    const key = studentId.replace('sheets:', '');
-    const record = records?.find((r) =>
-      r.normalized_email === key || r.normalized_name === key
-    );
-    if (!record) throw Object.assign(new Error(`Student "${studentId}" not found`), { status: 404 });
-    return { id: studentId, name: record.name, email: record.email };
-  }
-  return getStudentById(studentId);
 }
 
 // ── Preview job tracking ──────────────────────────────────────────────────
@@ -224,27 +186,6 @@ function startOrReusePreview(key, doWork) {
   return { jobId: key, status: 'pending' };
 }
 
-async function gatherPreviewData({ studentId, startDate, endDate, dayOfWeek }) {
-  const student = await resolveStudent(studentId);
-  const [groups, apiLatestTest, satScores, webhookLatestTest, webhookCategoryPerf, webhookCategorySplit] = await Promise.all([
-    studentId.startsWith("sheets:") ? Promise.resolve([]) : getStudentResultsGrouped(studentId, startDate, endDate, dayOfWeek),
-    studentId.startsWith("sheets:") ? Promise.resolve(null) : getLatestTestResult(studentId, startDate, endDate, dayOfWeek),
-    getSatScoresForStudent(student),
-    getLatestWebhookTestResult(student, startDate, endDate, dayOfWeek),
-    getWebhookCategoryPerformance(student, startDate, endDate, dayOfWeek),
-    getWebhookCategoryPerformanceSplit(student, startDate, endDate, dayOfWeek),
-  ]);
-
-  const allResults = groups.flatMap((g) => g.results);
-  const stats = computeStats(allResults);
-  const categoryPerf = webhookCategoryPerf.length
-    ? webhookCategoryPerf
-    : computeCategoryPerformance(groups);
-  const latestTest = webhookLatestTest || apiLatestTest;
-
-  return { student, groups, stats, satScores, startDate, endDate, latestTest, categoryPerf, categoryPerfSplit: webhookCategorySplit };
-}
-
 // POST /api/report/preview — kicks off the data gather in the background and
 // returns immediately with a jobId. Frontend polls the GET endpoint below.
 router.post('/preview', validate, async (req, res, next) => {
@@ -252,7 +193,7 @@ router.post('/preview', validate, async (req, res, next) => {
     const { studentId, startDate, endDate, dayOfWeek } = req.body;
     const key = previewKey({ studentId, startDate, endDate, dayOfWeek });
     const start = startOrReusePreview(key, async () => {
-      const data = await gatherPreviewData({ studentId, startDate, endDate, dayOfWeek });
+      const data = await gatherReportData({ studentId, startDate, endDate, dayOfWeek });
       // Pre-warm the PDF for the same inputs (fire and forget) — previewing
       // a student almost always precedes downloading their report, and the
       // download POST derives the same job key, so the click joins a render
@@ -351,7 +292,7 @@ router.post('/', validate, (req, res, next) => {
     // it, a tweak to the counts would be served the stale pre-warmed PDF.
     const key = `pdf-${previewKey({ studentId, startDate, endDate, dayOfWeek })}${homeworkKey(homework)}`;
     const start = startOrReusePdf(key, async () => {
-      const data = await gatherPreviewData({ studentId, startDate, endDate, dayOfWeek });
+      const data = await gatherReportData({ studentId, startDate, endDate, dayOfWeek });
       const pdfBuffer = await generateReportPDF(
         data.student, data.groups, data.stats, data.satScores,
         startDate, endDate, data.latestTest, data.categoryPerf, data.categoryPerfSplit, homework
@@ -441,43 +382,11 @@ router.post('/email', validate, async (req, res, next) => {
     console.log(`[email] queued studentId=${studentId} recipients=${recipients.length} key=${key}`);
 
     const start = startOrReuseJob(key, async () => {
-      const student = await resolveStudent(studentId);
-      const [groups, apiLatestTest, satScores, webhookLatestTest, webhookCategoryPerf, webhookCategorySplit] = await Promise.all([
-        studentId.startsWith("sheets:") ? Promise.resolve([]) : getStudentResultsGrouped(studentId, startDate, endDate, dayOfWeek),
-        studentId.startsWith("sheets:") ? Promise.resolve(null) : getLatestTestResult(studentId, startDate, endDate, dayOfWeek),
-        getSatScoresForStudent(student),
-        getLatestWebhookTestResult(student, startDate, endDate, dayOfWeek),
-        getWebhookCategoryPerformance(student, startDate, endDate, dayOfWeek),
-        getWebhookCategoryPerformanceSplit(student, startDate, endDate, dayOfWeek),
-      ]);
-
-      const allResults = groups.flatMap((g) => g.results);
-      const stats = computeStats(allResults);
-      const categoryPerf = webhookCategoryPerf.length
-        ? webhookCategoryPerf
-        : computeCategoryPerformance(groups);
-      const latestTest = webhookLatestTest || apiLatestTest;
-
-      console.log(`[email job ${key}] data gathered in ${Date.now() - t0}ms, rendering PDF…`);
-      const pdfBuffer = await generateReportPDF(student, groups, stats, satScores, startDate, endDate, latestTest, categoryPerf, webhookCategorySplit, homework);
-      const filename = `${buildReportFilename(student.name)}.pdf`;
-      console.log(`[email job ${key}] PDF rendered (${pdfBuffer.length} bytes) at ${Date.now() - t0}ms, sending via Gmail API…`);
-
-      const sendResult = await sendReportEmail({
-        studentName: student.name,
-        recipients,
-        pdfBuffer,
-        filename,
-        startDate,
-        endDate,
-        subject,
+      const sendResult = await buildAndSendReport({
+        studentId, startDate, endDate, dayOfWeek,
+        recipients, studentEmail, parentEmail, subject, homework,
       });
       console.log(`[email job ${key}] sent in total ${Date.now() - t0}ms id=${sendResult.id || '?'}`);
-
-      await db.setContacts(studentId, {
-        studentEmail: studentEmail || '',
-        parentEmail: parentEmail || '',
-      });
       return sendResult;
     });
 
@@ -503,6 +412,95 @@ router.get('/email/job/:jobId', (req, res) => {
       durationMs: (job.finishedAt || Date.now()) - job.startedAt,
     },
   });
+});
+
+// ── Scheduled bulk send ─────────────────────────────────────────────────────
+// A scheduled batch persists in SQLite and is delivered server-side by
+// scheduled-email.service at send_at (so the browser need not stay open). The
+// report date range is frozen at schedule time, matching the bulk panel.
+
+function validateSchedule(req, res, next) {
+  const { startDate, endDate, sendAt, items } = req.body;
+  if (!startDate || !endDate)
+    return res.status(400).json({ error: 'startDate and endDate are required' });
+  if (new Date(startDate) > new Date(endDate))
+    return res.status(400).json({ error: 'startDate must be before endDate' });
+  const when = new Date(sendAt);
+  if (!sendAt || Number.isNaN(when.getTime()))
+    return res.status(400).json({ error: 'A valid sendAt time is required' });
+  // 60s grace so a "send in a moment" schedule isn't rejected by clock skew.
+  if (when.getTime() < Date.now() - 60 * 1000)
+    return res.status(400).json({ error: 'sendAt must be in the future' });
+  if (!Array.isArray(items) || items.length === 0)
+    return res.status(400).json({ error: 'At least one recipient item is required' });
+  next();
+}
+
+// POST /api/report/email/schedule
+// body: { label?, subject?, startDate, endDate, dayOfWeek?, sendAt, items: [{ studentId, studentName?, studentEmail?, parentEmail? }] }
+router.post('/email/schedule', validateSchedule, async (req, res, next) => {
+  try {
+    const { label, subject, startDate, endDate, dayOfWeek, sendAt } = req.body;
+    // Keep only rows that actually have a recipient — a scheduled send with no
+    // address would just become a 'skipped' item, so drop it up front.
+    const items = req.body.items
+      .filter((it) => it && it.studentId)
+      .map((it) => ({
+        studentId: String(it.studentId),
+        studentName: it.studentName || '',
+        studentEmail: String(it.studentEmail || '').trim(),
+        parentEmail: String(it.parentEmail || '').trim(),
+      }))
+      .filter((it) => it.studentEmail || it.parentEmail);
+
+    if (items.length === 0) {
+      return res.status(400).json({ error: 'No selected students have a recipient email.' });
+    }
+
+    const id = await db.createScheduledBatch({ label, subject, startDate, endDate, dayOfWeek, sendAt, items });
+    console.log(`[schedule] batch ${id} — ${items.length} recipient(s) for ${sendAt}`);
+    res.json({ success: true, data: { id, scheduledCount: items.length, sendAt } });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/report/email/queue — all batches (newest first) with status counts.
+router.get('/email/queue', async (req, res, next) => {
+  try {
+    const batches = await db.listScheduledBatches();
+    res.json({ success: true, data: batches });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/report/email/queue/:id — one batch with its per-student items.
+router.get('/email/queue/:id', async (req, res, next) => {
+  try {
+    const batch = await db.getScheduledBatch(req.params.id);
+    if (!batch) return res.status(404).json({ success: false, error: 'Scheduled batch not found.' });
+    res.json({ success: true, data: batch });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// DELETE /api/report/email/queue/:id — cancel a not-yet-started batch.
+router.delete('/email/queue/:id', async (req, res, next) => {
+  try {
+    const result = await db.cancelScheduledBatch(req.params.id);
+    if (!result.ok) {
+      const code = result.reason === 'not_found' ? 404 : 409;
+      const msg = result.reason === 'not_found'
+        ? 'Scheduled batch not found.'
+        : `This batch can't be canceled (status: ${result.status}).`;
+      return res.status(code).json({ success: false, error: msg });
+    }
+    res.json({ success: true, data: { canceled: true } });
+  } catch (err) {
+    next(err);
+  }
 });
 
 module.exports = router;

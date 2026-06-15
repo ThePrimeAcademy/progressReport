@@ -71,4 +71,6 @@ app.use((err, req, res, next) => {
 
 app.listen(PORT, () => {
   console.log(`ProgressReport backend running on http://localhost:${PORT}`);
+  // Begin polling for due scheduled bulk-email batches.
+  require('./services/scheduled-email.service').startScheduler();
 });
