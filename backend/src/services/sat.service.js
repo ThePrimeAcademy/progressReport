@@ -11,10 +11,10 @@
 // Super = best RW ever + best Math ever, across every group the student took.
 
 const db = require('./db.service');
-const { getCurve, gradeScaled } = require('./scoring-sheet.service');
-const { getTestSectionMap, examCurveKey, getExam, listExams } = require('./exam.service');
-const { getProgram, getProgramRoster, isProgramArchived } = require('./program.service');
-const { getStudentResultsGrouped, getResultsForTests } = require('./classmarker.service');
+const { getCurve, gradeScaled, getCurvesVersion } = require('./scoring-sheet.service');
+const { getTestSectionMap, examCurveKey, getExam, listExams, getExamsVersion } = require('./exam.service');
+const { getProgram, getProgramRoster, isProgramArchived, getProgramsVersion } = require('./program.service');
+const { getStudentResultsGrouped, getResultsForTests, getDataVersion } = require('./classmarker.service');
 
 // Only groups whose name contains "SAT" (case-insensitive) participate in SAT
 // score aggregation. Keeps non-SAT classes (e.g. ACT, subject tests, school
@@ -515,40 +515,68 @@ async function getExamClassAverage(examId) {
   };
 }
 
-// The student's SAT attempt that falls inside the report window paired with
-// the class average for that same exam. "Taken that week" = a graded attempt
-// (total present) whose finished-date lands within [startDate, endDate]; the
-// latest such attempt wins. Only exam-mapped attempts have a scoreboard to
-// average, so legacy ungrouped groups return null (no class comparison).
-async function getSatWeekClassAverage(satScores, startDate, endDate) {
-  const scores = satScores?.allScores || [];
-  if (!startDate || !endDate || scores.length === 0) return null;
-  const start = String(startDate).slice(0, 10);
-  const end = String(endDate).slice(0, 10);
-  const inWeek = scores
-    .filter((s) => s.total != null && s.date && s.date >= start && s.date <= end)
-    .sort((a, b) => (b.timeFinished ?? 0) - (a.timeFinished ?? 0));
-  for (const attempt of inWeek) {
-    const m = /^exam:(.+)$/.exec(String(attempt.groupId));
-    if (!m) continue;
-    const classAvg = await getExamClassAverage(m[1]);
-    if (!classAvg) continue;
-    return {
-      examName: attempt.groupName || classAvg.examName,
-      date: attempt.date,
-      student: { total: attempt.total, rw: attempt.english, math: attempt.math },
-      classAvg: { total: classAvg.total, rw: classAvg.rw, math: classAvg.math },
-      n: classAvg.n,
-    };
+// ── Per-exam class-average cache ──────────────────────────────
+// A scoreboard read hits the webhook store + ClassMarker API cache, so each
+// exam's average is memoised for the life of a scoring "version" (data, curve,
+// exam and program edits all bump it). A whole cohort's bulk report run then
+// grades each exam once instead of once per student.
+let classAvgCache = new Map(); // examId -> Promise<classAvg|null>
+let classAvgCacheVersion = null;
+function currentScoringVersion() {
+  return `${getDataVersion()}.${getCurvesVersion()}.${getExamsVersion()}.${getProgramsVersion()}`;
+}
+function getExamClassAverageCached(examId) {
+  const v = currentScoringVersion();
+  if (v !== classAvgCacheVersion) {
+    classAvgCache = new Map();
+    classAvgCacheVersion = v;
   }
-  return null;
+  if (!classAvgCache.has(examId)) {
+    // Cache the promise so concurrent reports share one computation.
+    classAvgCache.set(examId, getExamClassAverage(examId));
+  }
+  return classAvgCache.get(examId);
+}
+
+// Decorate a student's SAT scores with class averages so every score card can
+// show the cohort average beneath it (matches the live report's per-category
+// layout). Adds:
+//   • allScores[i].classAvg = { total, rw, math, n } for that exam (or null)
+//   • classAverages = headline-card averages for the latest Total / RW / Math
+// Each average is over that exam's enrolled takers only (non-takers excluded
+// upstream), so an empty/ungraded exam simply yields null and renders no pill.
+async function attachClassAverages(satScores) {
+  const all = satScores?.allScores || [];
+  const withAvg = [];
+  for (const s of all) {
+    const m = /^exam:(.+)$/.exec(String(s.groupId));
+    const classAvg = m ? await getExamClassAverageCached(m[1]) : null;
+    withAvg.push({ ...s, classAvg });
+  }
+  // Headline averages follow the same "latest exam that has this score" rule the
+  // four cards use, so each card's pill matches the number above it.
+  const latestWith = (key) => withAvg
+    .filter((s) => s[key] != null && s.classAvg)
+    .sort((a, b) => (b.timeFinished ?? 0) - (a.timeFinished ?? 0))[0] || null;
+  const lt = latestWith('total');
+  const lr = latestWith('english');
+  const lm = latestWith('math');
+  return {
+    ...satScores,
+    allScores: withAvg,
+    classAverages: {
+      total: lt?.classAvg?.total ?? null,
+      english: lr?.classAvg?.rw ?? null,
+      math: lm?.classAvg?.math ?? null,
+    },
+  };
 }
 
 module.exports = {
   getSatScoresForStudent,
   getExamScoreboard,
   getExamClassAverage,
-  getSatWeekClassAverage,
+  attachClassAverages,
   getExamTakenDates,
   isSatGroupName,
   deriveTestSection,

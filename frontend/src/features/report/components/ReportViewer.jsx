@@ -48,12 +48,14 @@ function Card({ children, style = {} }) {
 
 // ── SAT Score placeholder cards ───────────────────────────────
 function SATScores({ satScores }) {
+  const ca = satScores?.classAverages || {};
   const scores = [
-    { label: 'Latest Test Score', value: satScores?.latestTestScore ?? '—', color: '#1a56db' },
-    { label: 'Latest English Score', value: satScores?.latestEnglishScore ?? '—', color: '#15803d' },
-    { label: 'Latest Math Score', value: satScores?.latestMathScore ?? '—', color: '#b45309' },
-    { label: 'Super Score', value: satScores?.superScore ?? '—', color: '#7c3aed' },
+    { label: 'Latest Test Score', value: satScores?.latestTestScore ?? '—', color: '#1a56db', classAvg: ca.total },
+    { label: 'Latest English Score', value: satScores?.latestEnglishScore ?? '—', color: '#15803d', classAvg: ca.english },
+    { label: 'Latest Math Score', value: satScores?.latestMathScore ?? '—', color: '#b45309', classAvg: ca.math },
+    { label: 'Super Score', value: satScores?.superScore ?? '—', color: '#7c3aed', classAvg: null },
   ];
+  const fromWorkbook = satScores?.source === 'excel' || satScores?.source === 'sheets';
   return (
     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 24 }}>
       {scores.map((s) => (
@@ -67,9 +69,13 @@ function SATScores({ satScores }) {
           <div style={{ fontSize: '2rem', fontWeight: 700, color: s.color, lineHeight: 1 }}>
             {s.value}
           </div>
-          <div style={{ fontSize: '0.68rem', color: 'var(--muted)', marginTop: 4 }}>
-            {satScores?.source === 'excel' || satScores?.source === 'sheets' ? 'From SAT workbook' : ''}
-          </div>
+          {s.classAvg != null ? (
+            <div style={{ marginTop: 10, fontSize: '0.66rem', color: 'var(--muted)', background: '#eef1f8', borderRadius: 7, padding: '4px 10px' }}>
+              Class avg&nbsp;&nbsp;<strong style={{ color: '#475569', fontWeight: 700 }}>{s.classAvg}</strong>
+            </div>
+          ) : (
+            fromWorkbook && <div style={{ fontSize: '0.68rem', color: 'var(--muted)', marginTop: 4 }}>From SAT workbook</div>
+          )}
         </div>
       ))}
     </div>
@@ -124,67 +130,14 @@ function SatScoreHistory({ allScores }) {
                 {s.date}
               </div>
             )}
+            {s.classAvg && (s.classAvg.rw != null || s.classAvg.math != null) && (
+              <div style={{ marginTop: 7, fontSize: '0.6rem', color: 'var(--muted)', background: '#eef1f8', borderRadius: 6, padding: '4px 7px', lineHeight: 1.35 }}>
+                Class avg<br /><span style={{ color: '#475569', fontWeight: 700 }}>RW {s.classAvg.rw ?? '—'} · M {s.classAvg.math ?? '—'}</span>
+              </div>
+            )}
           </div>
         );
       })}
-    </div>
-  );
-}
-
-// ── This week's SAT — class comparison ───────────────────────
-// Mirrors the PDF panel: the student's score for the exam they sat during the
-// report window, beside the cohort average (enrolled takers only). Renders
-// nothing when no in-window SAT exists or it had no comparable cohort.
-function ClassAvgMetric({ label, you, avg, color, last }) {
-  const hasBoth = you != null && avg != null;
-  const delta = hasBoth ? you - avg : null;
-  const deltaColor = delta == null ? '#6b7280' : delta >= 0 ? '#15803d' : '#b91c1c';
-  const deltaBg = delta == null ? '#f3f4f6' : delta >= 0 ? '#dcfce7' : '#fee2e2';
-  const deltaText = delta == null ? '—' : `${delta >= 0 ? '+' : ''}${delta}`;
-  return (
-    <div style={{ padding: '12px 16px', borderRight: last ? 'none' : '1px solid var(--border)' }}>
-      <div style={{ fontSize: '0.62rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', color: 'var(--muted)', marginBottom: 7 }}>
-        {label}
-      </div>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
-        <span style={{ fontSize: '1.6rem', fontWeight: 700, color, lineHeight: 1 }}>{you ?? '—'}</span>
-        {hasBoth && (
-          <span style={{ fontSize: '0.62rem', fontWeight: 700, color: deltaColor, background: deltaBg, padding: '2px 7px', borderRadius: 5 }}>
-            {deltaText}
-          </span>
-        )}
-      </div>
-      <div style={{ fontSize: '0.7rem', color: 'var(--muted)', marginTop: 6 }}>
-        Class avg <strong style={{ color: 'var(--ink)', fontWeight: 700 }}>{avg ?? '—'}</strong>
-      </div>
-    </div>
-  );
-}
-
-function SatWeekClassAverage({ weekClassAverage }) {
-  const w = weekClassAverage;
-  if (!w) return null;
-  const a = w.classAvg || {};
-  if (a.total == null && a.rw == null && a.math == null) return null;
-  const s = w.student || {};
-  return (
-    <div style={{ border: '1.5px solid var(--border)', borderRadius: 12, overflow: 'hidden', background: 'var(--bg)', marginBottom: 24 }}>
-      <div style={{
-        display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 10,
-        padding: '10px 16px', background: 'linear-gradient(90deg,#eef2ff,#faf5ff)', borderBottom: '1px solid var(--border)',
-      }}>
-        <span style={{ fontWeight: 700, fontSize: '0.85rem', color: '#3730a3' }}>
-          This week's SAT · {w.examName || 'SAT'}
-        </span>
-        <span style={{ fontSize: '0.68rem', color: 'var(--muted)', whiteSpace: 'nowrap' }}>
-          {w.date} · class avg of {w.n === 1 ? '1 student' : `${w.n} students`}
-        </span>
-      </div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)' }}>
-        <ClassAvgMetric label="Total" you={s.total} avg={a.total} color="#1a56db" />
-        <ClassAvgMetric label="Reading & Writing" you={s.rw} avg={a.rw} color="#15803d" />
-        <ClassAvgMetric label="Math" you={s.math} avg={a.math} color="#b45309" last />
-      </div>
     </div>
   );
 }
@@ -612,11 +565,8 @@ export default function ReportViewer({
         <SectionTitle>SAT</SectionTitle>
         <SATScores satScores={satScores} />
 
-        {/* Full SAT score history — replaces the old Average/Highest/Lowest/Trend strip */}
+        {/* Full SAT score history — each card shows the cohort average for that exam */}
         <SatScoreHistory allScores={satScores?.allScores} />
-
-        {/* This week's SAT vs. the cohort average (enrolled takers only) */}
-        <SatWeekClassAverage weekClassAverage={satScores?.weekClassAverage} />
 
         {/* Homework completion — admin sets counts here before generating the PDF */}
         {onHomeworkChange && (
