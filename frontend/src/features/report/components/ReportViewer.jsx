@@ -562,7 +562,7 @@ export default function ReportViewer({
         </div>
 
         {/* SAT score placeholders */}
-        <SectionTitle>SAT</SectionTitle>
+        <SectionTitle>SAT Scores</SectionTitle>
         <SATScores satScores={satScores} />
 
         {/* Full SAT score history — each card shows the cohort average for that exam */}
