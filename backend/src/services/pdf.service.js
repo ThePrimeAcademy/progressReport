@@ -241,16 +241,22 @@ function escapeHtml(value) {
 function buildSatHistorySection(allScores) {
   if (!allScores || allScores.length === 0) return '';
   const cards = allScores.map((s) => {
-    const accent = s.total != null ? '#1a56db' : '#6b7280';
+    // A null total means the student didn't complete the test — show it as not
+    // taken with no individual score and no class average (they have nothing to
+    // compare). Only fully-completed sittings get the score + cohort lines.
+    const taken = s.total != null;
+    const accent = taken ? '#1a56db' : '#6b7280';
     return `
       <div style="flex:1 1 0;min-width:0;background:#fafbff;border:1px solid var(--border);border-radius:10px;padding:10px 12px;">
         <div style="font-size:0.7rem;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:0.07em;margin-bottom:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
           ${escapeHtml(s.groupName || 'SAT')}
         </div>
-        <div style="font-size:1.4rem;font-weight:700;color:${accent};line-height:1;">${s.total ?? '—'}</div>
-        <div style="font-size:0.7rem;color:var(--muted);margin-top:5px;white-space:nowrap;">RW ${s.english ?? '—'} &middot; M ${s.math ?? '—'}</div>
+        <div style="font-size:1.4rem;font-weight:700;color:${accent};line-height:1;">${taken ? s.total : '—'}</div>
+        ${taken
+          ? `<div style="font-size:0.7rem;color:var(--muted);margin-top:5px;white-space:nowrap;">RW ${s.english ?? '—'} &middot; M ${s.math ?? '—'}</div>`
+          : `<div style="font-size:0.66rem;color:var(--muted);margin-top:5px;white-space:nowrap;font-style:italic;">Not taken</div>`}
         ${s.date ? `<div style="font-size:0.66rem;color:var(--muted);margin-top:2px;white-space:nowrap;">${escapeHtml(s.date)}</div>` : ''}
-        ${historyClassAvg(s)}
+        ${taken ? historyClassAvg(s) : ''}
       </div>`;
   }).join('');
   // Single row — cards shrink to fit however many exams there are.
@@ -282,7 +288,7 @@ function deltaText(student, avg) {
   if (student == null || avg == null) return '';
   const d = student - avg;
   const up = d >= 0;
-  return ` <span style="color:${up ? '#15803d' : '#b91c1c'};font-weight:700;">${up ? '+' : ''}${d}</span>`;
+  return ` <span style="font-size:0.82em;color:${up ? '#15803d' : '#b91c1c'};font-weight:700;">${up ? '+' : ''}${d}</span>`;
 }
 
 function historyClassAvg(s) {
@@ -291,7 +297,7 @@ function historyClassAvg(s) {
   // Single line, sized to fit the narrow cards: a tiny "avg" tag instead of the
   // longer "Class average" label, with the cohort RW/M and the student's signed
   // delta beside each.
-  return `<div style="margin-top:7px;font-size:0.56rem;color:var(--muted);background:#eef1f8;border-radius:6px;padding:4px 6px;white-space:nowrap;overflow:hidden;"><span style="font-size:0.5rem;text-transform:uppercase;letter-spacing:0.04em;">avg</span> <strong style="color:#475569;font-weight:700;">RW ${ca.rw ?? '—'}${deltaText(s.english, ca.rw)} &middot; M ${ca.math ?? '—'}${deltaText(s.math, ca.math)}</strong></div>`;
+  return `<div style="margin-top:7px;font-size:0.64rem;color:var(--muted);background:#eef1f8;border-radius:6px;padding:4px 7px;white-space:nowrap;overflow:hidden;"><strong style="color:#475569;font-weight:700;">RW ${ca.rw ?? '—'}${deltaText(s.english, ca.rw)} &middot; M ${ca.math ?? '—'}${deltaText(s.math, ca.math)}</strong></div>`;
 }
 
 // ── Homework completion ───────────────────────────────────────

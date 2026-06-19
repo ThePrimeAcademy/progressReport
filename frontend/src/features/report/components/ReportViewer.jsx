@@ -69,7 +69,7 @@ function DeltaText({ student, avg }) {
   if (student == null || avg == null) return null;
   const d = student - avg;
   const up = d >= 0;
-  return <span style={{ color: up ? '#15803d' : '#b91c1c', fontWeight: 700 }}> {up ? '+' : ''}{d}</span>;
+  return <span style={{ fontSize: '0.82em', color: up ? '#15803d' : '#b91c1c', fontWeight: 700 }}> {up ? '+' : ''}{d}</span>;
 }
 
 function SATScores({ satScores }) {
@@ -116,7 +116,10 @@ function SatScoreHistory({ allScores }) {
     // Single row — cards shrink to fit however many exams there are.
     <div style={{ display: 'flex', gap: 8, flexWrap: 'nowrap', marginBottom: 24 }}>
       {allScores.map((s) => {
-        const accent = s.total != null ? '#1a56db' : '#6b7280';
+        // No total → the student didn't complete the test: show it as not taken
+        // with no individual score and no class average.
+        const taken = s.total != null;
+        const accent = taken ? '#1a56db' : '#6b7280';
         return (
           <div
             key={s.groupId}
@@ -146,19 +149,24 @@ function SatScoreHistory({ allScores }) {
               {s.groupName || 'SAT'}
             </div>
             <div style={{ fontSize: '1.5rem', fontWeight: 700, color: accent, lineHeight: 1 }}>
-              {s.total ?? '—'}
+              {taken ? s.total : '—'}
             </div>
-            <div style={{ fontSize: '0.7rem', color: 'var(--muted)', marginTop: 6 }}>
-              RW {s.english ?? '—'} · M {s.math ?? '—'}
-            </div>
+            {taken ? (
+              <div style={{ fontSize: '0.7rem', color: 'var(--muted)', marginTop: 6 }}>
+                RW {s.english ?? '—'} · M {s.math ?? '—'}
+              </div>
+            ) : (
+              <div style={{ fontSize: '0.66rem', color: 'var(--muted)', marginTop: 6, fontStyle: 'italic' }}>
+                Not taken
+              </div>
+            )}
             {s.date && (
               <div style={{ fontSize: '0.66rem', color: 'var(--muted)', marginTop: 2 }}>
                 {s.date}
               </div>
             )}
-            {s.classAvg && (s.classAvg.rw != null || s.classAvg.math != null) && (
-              <div style={{ marginTop: 7, fontSize: '0.62rem', color: 'var(--muted)', background: '#eef1f8', borderRadius: 6, padding: '4px 7px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                <span style={{ fontSize: '0.54rem', textTransform: 'uppercase', letterSpacing: '0.04em' }}>avg</span>{' '}
+            {taken && s.classAvg && (s.classAvg.rw != null || s.classAvg.math != null) && (
+              <div style={{ marginTop: 7, fontSize: '0.7rem', color: 'var(--muted)', background: '#eef1f8', borderRadius: 6, padding: '4px 7px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                 <strong style={{ color: '#475569', fontWeight: 700 }}>
                   RW {s.classAvg.rw ?? '—'}<DeltaText student={s.english} avg={s.classAvg.rw} /> · M {s.classAvg.math ?? '—'}<DeltaText student={s.math} avg={s.classAvg.math} />
                 </strong>
