@@ -433,9 +433,12 @@ function buildProgressionChart(progression) {
   if (pts.length < 2) return '';
   const W = 720; const H = 300; const padL = 30; const padR = 30; const padT = 34; const padB = 46;
   const vals = pts.map((p) => p.avgTotal);
-  const span = Math.max(...vals) - Math.min(...vals);
-  const pad = Math.max(40, Math.round(span * 0.35));
-  const lo = Math.min(...vals) - pad; const hi = Math.max(...vals) + pad;
+  const span = (Math.max(...vals) - Math.min(...vals)) || 1;
+  // Tight, asymmetric padding so the line nearly fills the plot — the climb
+  // reads as steep. A little extra headroom up top leaves room for the value
+  // label above the highest point.
+  const lo = Math.min(...vals) - Math.max(12, Math.round(span * 0.08));
+  const hi = Math.max(...vals) + Math.max(34, Math.round(span * 0.18));
   const x = (i) => padL + (i * (W - padL - padR)) / (pts.length - 1);
   const y = (v) => padT + (1 - (v - lo) / (hi - lo)) * (H - padT - padB);
   const line = pts.map((p, i) => `${i === 0 ? 'M' : 'L'}${x(i).toFixed(1)},${y(p.avgTotal).toFixed(1)}`).join(' ');
@@ -464,11 +467,13 @@ function buildProgressionChart(progression) {
 
 async function generateProgramSummaryPDF(summary) {
   const h = summary.headline || {};
-  const stat = (label, value, sub, color, valueSize = '2.6rem') => `
-    <div style="flex:1 1 0;border:1px solid var(--border);border-radius:16px;padding:22px 24px;background:#fff;">
-      <div style="font-size:0.78rem;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:var(--muted);margin-bottom:14px;white-space:nowrap;">${label}</div>
-      <div style="font-size:${valueSize};font-weight:700;color:${color};line-height:1.02;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${value}</div>
-      <div style="font-size:0.82rem;color:var(--muted);margin-top:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${sub}</div>
+  // Labels and subs wrap (rather than clip) so the narrow four-up cards never
+  // overflow the page; the value stays on one line.
+  const stat = (label, value, sub, color, valueSize = '2.5rem') => `
+    <div style="flex:1 1 0;min-width:0;border:1px solid var(--border);border-radius:16px;padding:18px 18px;background:#fff;">
+      <div style="font-size:0.7rem;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;color:var(--muted);line-height:1.25;min-height:2.5em;">${label}</div>
+      <div style="font-size:${valueSize};font-weight:700;color:${color};line-height:1.02;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:4px;">${value}</div>
+      <div style="font-size:0.78rem;color:var(--muted);margin-top:10px;line-height:1.3;">${sub}</div>
     </div>`;
 
   const html = `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"/><style>
@@ -491,7 +496,7 @@ async function generateProgramSummaryPDF(summary) {
       ${stat('Avg Improvement', `${h.avgImprovement == null ? '—' : (h.avgImprovement >= 0 ? '+' : '') + h.avgImprovement}`, `${escapeHtml(h.firstName || 'Initial')} &rarr; Superscore`, h.avgImprovement != null && h.avgImprovement < 0 ? '#b91c1c' : '#15803d')}
       ${stat('Students Improved', `${h.improvedCount ?? 0}/${h.comparedCount ?? 0}`, h.comparedCount ? `${Math.round((h.improvedCount / h.comparedCount) * 100)}% of the group` : '—', '#1a56db')}
       ${stat('Group Average Now', `${h.latestAvg ?? '—'}`, `on ${escapeHtml(h.lastName || '')}`, '#1a56db')}
-      ${stat('Date Range', h.firstDate && h.lastDate ? `${fmtShort(h.firstDate)} &ndash; ${fmtShort(h.lastDate)}` : '—', h.lastDate ? String(h.lastDate).slice(0, 4) : `${summary.examsCompleted} exam${summary.examsCompleted === 1 ? '' : 's'}`, '#475569', '1.7rem')}
+      ${stat('Date Range', h.firstDate && h.lastDate ? `${fmtShort(h.firstDate)}&nbsp;&ndash;&nbsp;${fmtShort(h.lastDate)}` : '—', h.lastDate ? String(h.lastDate).slice(0, 4) : `${summary.examsCompleted} exam${summary.examsCompleted === 1 ? '' : 's'}`, '#475569', '1.05rem')}
     </div>
     <div class="section-title">Group progression</div>
     <div style="display:flex;gap:12px;flex-wrap:nowrap;">${programProgressionCards(summary.progression || [])}</div>
