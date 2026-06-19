@@ -12,15 +12,12 @@ const { generateProgramSummaryPDF } = require('../services/pdf.service');
 const router = express.Router();
 router.use(express.json());
 
-// Filename-safe program name, e.g. "GA Summer SAT 2026" -> "GASummerSAT2026".
+// Downloaded filename: the program name plus " Summary", e.g.
+// "GA Summer SAT 2026 Summary". Strips only characters that break the
+// Content-Disposition header.
 function summaryFilename(name) {
-  const cleaned = String(name || 'Program')
-    .normalize('NFKD')
-    .replace(/[^A-Za-z0-9 ]+/g, '')
-    .trim()
-    .split(/\s+/)
-    .join('');
-  return `${cleaned || 'Program'}Summary`;
+  const cleaned = String(name || 'Program').replace(/["\\\r\n]+/g, '').trim();
+  return `${cleaned || 'Program'} Summary`;
 }
 
 // GET /api/programs/:programId/summary.pdf — one-page cohort report (headline

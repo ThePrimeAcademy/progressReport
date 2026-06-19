@@ -37,7 +37,9 @@ async function getProgramSummary(programId) {
   boards.sort((a, b) => String(a.sb.date || '9999-99-99').localeCompare(String(b.sb.date || '9999-99-99')));
 
   const progression = [];
-  const perStudent = new Map(); // studentId -> { name, pts: [{ exam, total }] }
+  // studentId -> { name, totals:[{exam,total}], bestRw, bestMath } — totals feed
+  // the "initial" score and ordering; bestRw/bestMath build the superscore.
+  const perStudent = new Map();
   for (const { exam, sb } of boards) {
     const totals = sb.rows.filter((r) => r.total != null);
     if (totals.length === 0) continue; // exam nobody has completed yet
@@ -49,30 +51,35 @@ async function getProgramSummary(programId) {
       avgMath: mean(sb.rows.filter((r) => r.mathScaled != null).map((r) => r.mathScaled)),
       n: totals.length,
     });
-    for (const r of totals) {
-      if (!perStudent.has(r.studentId)) perStudent.set(r.studentId, { name: r.name, pts: [] });
-      perStudent.get(r.studentId).pts.push({ exam: exam.name, total: r.total });
+    for (const r of sb.rows) {
+      if (!perStudent.has(r.studentId)) perStudent.set(r.studentId, { name: r.name, totals: [], bestRw: null, bestMath: null });
+      const ps = perStudent.get(r.studentId);
+      if (r.rwScaled != null && (ps.bestRw == null || r.rwScaled > ps.bestRw)) ps.bestRw = r.rwScaled;
+      if (r.mathScaled != null && (ps.bestMath == null || r.mathScaled > ps.bestMath)) ps.bestMath = r.mathScaled;
+      if (r.total != null) ps.totals.push({ exam: exam.name, total: r.total });
     }
   }
 
+  // Improvement = each student's superscore (best RW ever + best Math ever)
+  // minus their initial (first completed exam). Only students with >= 2
+  // completed exams are compared, so a lone diagnostic isn't counted.
   const students = [];
-  const improvements = []; // { name, change } for students with >= 2 completed exams
-  for (const { name, pts } of perStudent.values()) {
-    const first = pts[0];
-    const last = pts[pts.length - 1];
-    const change = pts.length >= 2 ? last.total - first.total : null;
-    if (change != null) improvements.push({ name, change });
+  const improvements = [];
+  for (const { name, totals, bestRw, bestMath } of perStudent.values()) {
+    const first = totals[0] || null;
+    const superscore = bestRw != null && bestMath != null ? bestRw + bestMath : null;
+    const change = totals.length >= 2 && superscore != null && first != null ? superscore - first.total : null;
+    if (change != null) improvements.push(change);
     students.push({
       name,
-      firstTotal: first.total,
-      firstExam: first.exam,
-      latestTotal: last.total,
-      latestExam: last.exam,
+      firstTotal: first?.total ?? null,
+      firstExam: first?.exam ?? null,
+      superscore,
+      latestTotal: totals[totals.length - 1]?.total ?? null,
       change,
     });
   }
-  // Leaderboard order — current standing first, change column tells the growth.
-  students.sort((a, b) => (b.latestTotal ?? 0) - (a.latestTotal ?? 0));
+  students.sort((a, b) => (b.superscore ?? 0) - (a.superscore ?? 0));
 
   const last = progression[progression.length - 1] || null;
 
@@ -85,9 +92,9 @@ async function getProgramSummary(programId) {
     students,
     headline: {
       avgImprovement: improvements.length
-        ? Math.round(improvements.reduce((a, b) => a + b.change, 0) / improvements.length)
+        ? Math.round(improvements.reduce((a, b) => a + b, 0) / improvements.length)
         : null,
-      improvedCount: improvements.filter((x) => x.change >= 0).length,
+      improvedCount: improvements.filter((x) => x > 0).length,
       comparedCount: improvements.length,
       latestAvg: last ? last.avgTotal : null,
       firstName: progression[0]?.name || null,

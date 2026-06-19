@@ -10,14 +10,16 @@ const {
   getLatestTestResult,
   computeCategoryPerformance,
 } = require('./classmarker.service');
-const { getSatScoresForStudent, attachClassAverages } = require('./sat.service');
+const { getSatScoresForStudent } = require('./sat.service');
+const { getProgramForStudent } = require('./program.service');
+const { getProgramSummary } = require('./program-summary.service');
 const {
   getLatestWebhookTestResult,
   getWebhookCategoryPerformance,
   getWebhookCategoryPerformanceSplit,
 } = require('./webhook.service');
 const { computeStats } = require('./stats.service');
-const { generateReportPDF } = require('./pdf.service');
+const { generateReportPDF, generateProgramSummaryPDF } = require('./pdf.service');
 const { sendReportEmail } = require('./email.service');
 const db = require('./db.service');
 
@@ -72,12 +74,8 @@ async function gatherReportData({ studentId, startDate, endDate, dayOfWeek }) {
     : computeCategoryPerformance(groups);
   const latestTest = webhookLatestTest || apiLatestTest;
 
-  // Per-category class averages: one under each headline card and each SAT
-  // history card, averaged across each exam's enrolled takers only.
-  const satScoresWithAvg = await attachClassAverages(satScores);
-
   return {
-    student, groups, stats, satScores: satScoresWithAvg, startDate, endDate,
+    student, groups, stats, satScores, startDate, endDate,
     latestTest, categoryPerf, categoryPerfSplit: webhookCategorySplit,
   };
 }
@@ -98,6 +96,23 @@ async function buildAndSendReport({
   );
   const filename = `${buildReportFilename(data.student.name)}.pdf`;
 
+  // Ride the student's program summary along with the report card so families
+  // get the group-level "how we're doing" context. Best-effort: a summary
+  // failure never blocks the report card itself.
+  const attachments = [];
+  const program = getProgramForStudent(data.student.id);
+  if (program) {
+    try {
+      const summary = await getProgramSummary(program.programId);
+      if (summary) {
+        const summaryPdf = await generateProgramSummaryPDF(summary);
+        attachments.push({ filename: `${program.name} Summary.pdf`, content: summaryPdf });
+      }
+    } catch (err) {
+      console.warn(`[report] program summary attach failed for ${data.student.id}:`, err.message);
+    }
+  }
+
   const sendResult = await sendReportEmail({
     studentName: data.student.name,
     recipients,
@@ -106,6 +121,7 @@ async function buildAndSendReport({
     startDate,
     endDate,
     subject,
+    attachments,
   });
 
   // Persist whichever of student/parent emails were supplied so the contact

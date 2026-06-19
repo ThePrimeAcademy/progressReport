@@ -118,6 +118,14 @@ function isProgramArchived(programId) {
   return Boolean(getProgram(programId)?.archived);
 }
 
+// The (non-archived) program a student is enrolled in, or null. Used to scope a
+// student's weekly class-average comparison to their own cohort. First match
+// wins if somehow enrolled in several.
+function getProgramForStudent(studentId) {
+  const sid = String(studentId);
+  return load().find((p) => !p.archived && (p.studentIds || []).includes(sid)) || null;
+}
+
 // Remember that this program's exams were manually ordered — from then on the
 // stored array order wins over the default date sort. Called by
 // exam.service.reorderExams; unknown ids are ignored.
@@ -142,6 +150,7 @@ module.exports = {
   listPrograms,
   getProgram,
   getProgramRoster,
+  getProgramForStudent,
   createProgram,
   updateProgram,
   isProgramArchived,

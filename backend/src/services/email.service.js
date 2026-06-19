@@ -95,11 +95,8 @@ function encodeHeader(value) {
   return `=?UTF-8?B?${Buffer.from(value, 'utf-8').toString('base64')}?=`;
 }
 
-function buildRfc822Message({ from, to, subject, html, attachment }) {
+function buildRfc822Message({ from, to, subject, html, attachments }) {
   const boundary = `----=_PrimeReport_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
-  const pdfBase64 = Buffer.from(attachment.content).toString('base64');
-  // RFC 5322: lines must be <= 998 chars; base64 typically wraps at 76.
-  const pdfWrapped = pdfBase64.match(/.{1,76}/g).join('\r\n');
 
   const lines = [];
   if (from) lines.push(`From: ${encodeHeader(from)}`);
@@ -114,13 +111,18 @@ function buildRfc822Message({ from, to, subject, html, attachment }) {
   lines.push('');
   lines.push(html);
   lines.push('');
-  lines.push(`--${boundary}`);
-  lines.push(`Content-Type: application/pdf; name="${attachment.filename}"`);
-  lines.push(`Content-Disposition: attachment; filename="${attachment.filename}"`);
-  lines.push('Content-Transfer-Encoding: base64');
-  lines.push('');
-  lines.push(pdfWrapped);
-  lines.push('');
+  for (const att of attachments) {
+    const pdfBase64 = Buffer.from(att.content).toString('base64');
+    // RFC 5322: lines must be <= 998 chars; base64 typically wraps at 76.
+    const pdfWrapped = pdfBase64.match(/.{1,76}/g).join('\r\n');
+    lines.push(`--${boundary}`);
+    lines.push(`Content-Type: application/pdf; name="${att.filename}"`);
+    lines.push(`Content-Disposition: attachment; filename="${att.filename}"`);
+    lines.push('Content-Transfer-Encoding: base64');
+    lines.push('');
+    lines.push(pdfWrapped);
+    lines.push('');
+  }
   lines.push(`--${boundary}--`);
   return lines.join('\r\n');
 }
@@ -134,7 +136,7 @@ function toBase64Url(input) {
     .replace(/=+$/, '');
 }
 
-async function sendReportEmail({ studentName, recipients, pdfBuffer, filename, startDate, endDate, subject }) {
+async function sendReportEmail({ studentName, recipients, pdfBuffer, filename, startDate, endDate, subject, attachments = [] }) {
   if (!isConfigured()) {
     const err = new Error(
       'Email service not configured. Set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, and GOOGLE_REFRESH_TOKEN on the backend.'
@@ -159,10 +161,10 @@ async function sendReportEmail({ studentName, recipients, pdfBuffer, filename, s
     to,
     subject: finalSubject,
     html,
-    attachment: {
-      filename: filename || 'progress-report.pdf',
-      content: pdfBuffer,
-    },
+    attachments: [
+      { filename: filename || 'progress-report.pdf', content: pdfBuffer },
+      ...(attachments || []),
+    ],
   });
 
   try {

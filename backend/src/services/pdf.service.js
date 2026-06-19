@@ -241,9 +241,8 @@ function escapeHtml(value) {
 function buildSatHistorySection(allScores) {
   if (!allScores || allScores.length === 0) return '';
   const cards = allScores.map((s) => {
-    // A null total means the student didn't complete the test — show it as not
-    // taken with no individual score and no class average (they have nothing to
-    // compare). Only fully-completed sittings get the score + cohort lines.
+    // A null total means the student didn't complete the test — show it as "Not
+    // taken" rather than a fabricated score.
     const taken = s.total != null;
     const accent = taken ? '#1a56db' : '#6b7280';
     return `
@@ -256,48 +255,10 @@ function buildSatHistorySection(allScores) {
           ? `<div style="font-size:0.7rem;color:var(--muted);margin-top:5px;white-space:nowrap;">RW ${s.english ?? '—'} &middot; M ${s.math ?? '—'}</div>`
           : `<div style="font-size:0.66rem;color:var(--muted);margin-top:5px;white-space:nowrap;font-style:italic;">Not taken</div>`}
         ${s.date ? `<div style="font-size:0.66rem;color:var(--muted);margin-top:2px;white-space:nowrap;">${escapeHtml(s.date)}</div>` : ''}
-        ${taken ? historyClassAvg(s) : ''}
       </div>`;
   }).join('');
   // Single row — cards shrink to fit however many exams there are.
   return `<div style="display:flex;gap:8px;flex-wrap:nowrap;margin:0 0 12px;">${cards}</div>`;
-}
-
-// ── Class-average pills (one per category) ────────────────────
-// Each SAT score card carries the cohort average beneath it — enrolled takers
-// only, so non-takers never drag the mean down. A headline card shows a single
-// number; a history card shows RW · M for that exam. Null averages render
-// nothing (e.g. an upcoming exam nobody has sat yet).
-// Signed delta of the student's score vs the class average — green when at or
-// above the cohort, red when below. Empty when either side is missing.
-function deltaChip(student, avg) {
-  if (student == null || avg == null) return '';
-  const d = student - avg;
-  const up = d >= 0;
-  return `<span style="display:inline-block;font-size:0.6rem;font-weight:700;color:${up ? '#15803d' : '#b91c1c'};background:${up ? '#dcfce7' : '#fee2e2'};padding:1px 6px;border-radius:5px;margin-left:6px;">${up ? '+' : ''}${d}</span>`;
-}
-
-function headlineClassAvg(student, value) {
-  if (value == null) return '';
-  return `<div style="margin-top:8px;font-size:0.64rem;color:var(--muted);background:#eef1f8;border-radius:7px;padding:4px 10px;">Class avg&nbsp;&nbsp;<strong style="color:#475569;font-weight:700;">${value}</strong>${deltaChip(student, value)}</div>`;
-}
-
-// Compact plain-text delta (no background chip) for the tight history cards, so
-// the whole class-average row fits on a single line.
-function deltaText(student, avg) {
-  if (student == null || avg == null) return '';
-  const d = student - avg;
-  const up = d >= 0;
-  return ` <span style="font-size:0.82em;color:${up ? '#15803d' : '#b91c1c'};font-weight:700;">${up ? '+' : ''}${d}</span>`;
-}
-
-function historyClassAvg(s) {
-  const ca = s.classAvg;
-  if (!ca || (ca.rw == null && ca.math == null)) return '';
-  // Single line, sized to fit the narrow cards: a tiny "avg" tag instead of the
-  // longer "Class average" label, with the cohort RW/M and the student's signed
-  // delta beside each.
-  return `<div style="margin-top:7px;font-size:0.64rem;color:var(--muted);background:#eef1f8;border-radius:6px;padding:4px 7px;white-space:nowrap;overflow:hidden;"><strong style="color:#475569;font-weight:700;">RW ${ca.rw ?? '—'}${deltaText(s.english, ca.rw)} &middot; M ${ca.math ?? '—'}${deltaText(s.math, ca.math)}</strong></div>`;
 }
 
 // ── Homework completion ───────────────────────────────────────
@@ -374,9 +335,6 @@ async function generateReportPDF(student, groups, stats, satScores, startDate, e
     satLatestEnglishScore: satScores?.latestEnglishScore ?? '—',
     satLatestMathScore: satScores?.latestMathScore ?? '—',
     satSuperScore: satScores?.superScore ?? '—',
-    satClassTotal: headlineClassAvg(satScores?.latestTestScore, satScores?.classAverages?.total),
-    satClassEnglish: headlineClassAvg(satScores?.latestEnglishScore, satScores?.classAverages?.english),
-    satClassMath: headlineClassAvg(satScores?.latestMathScore, satScores?.classAverages?.math),
     satHistorySection: buildSatHistorySection(satScores?.allScores),
     homeworkSection: buildHomeworkSection(homework),
     // latestTestSection: buildLatestTestSection(latestTest), // hidden from PDF — restore this line (and delete the '' line below) to bring back "Latest Test Performance"
@@ -457,73 +415,88 @@ function programProgressionCards(progression) {
     const prev = i > 0 ? progression[i - 1] : null;
     const delta = prev && e.avgTotal != null && prev.avgTotal != null ? e.avgTotal - prev.avgTotal : null;
     const deltaHtml = delta == null ? ''
-      : `<span style="display:inline-block;margin-left:7px;font-size:0.62rem;font-weight:700;color:${delta >= 0 ? '#15803d' : '#b91c1c'};background:${delta >= 0 ? '#dcfce7' : '#fee2e2'};padding:1px 7px;border-radius:5px;">${delta >= 0 ? '+' : ''}${delta}</span>`;
+      : `<span style="display:inline-block;margin-left:9px;font-size:0.74rem;font-weight:700;color:${delta >= 0 ? '#15803d' : '#b91c1c'};background:${delta >= 0 ? '#dcfce7' : '#fee2e2'};padding:2px 9px;border-radius:6px;">${delta >= 0 ? '+' : ''}${delta}</span>`;
     return `
-      <div style="flex:1 1 0;min-width:0;background:#fafbff;border:1px solid var(--border);border-radius:10px;padding:11px 13px;">
-        <div style="font-size:0.7rem;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:0.07em;margin-bottom:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(e.name)}</div>
-        <div style="display:flex;align-items:baseline;"><span style="font-size:1.5rem;font-weight:700;color:#1a56db;line-height:1;">${e.avgTotal ?? '—'}</span>${deltaHtml}</div>
-        <div style="font-size:0.68rem;color:var(--muted);margin-top:5px;white-space:nowrap;">RW ${e.avgRw ?? '—'} &middot; M ${e.avgMath ?? '—'}</div>
-        <div style="font-size:0.64rem;color:var(--muted);margin-top:3px;white-space:nowrap;">${e.n} student${e.n === 1 ? '' : 's'} &middot; ${escapeHtml(e.date || '')}</div>
+      <div style="flex:1 1 0;min-width:0;background:#fafbff;border:1px solid var(--border);border-radius:14px;padding:18px 20px;">
+        <div style="font-size:0.82rem;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:0.07em;margin-bottom:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(e.name)}</div>
+        <div style="display:flex;align-items:baseline;"><span style="font-size:2.3rem;font-weight:700;color:#1a56db;line-height:1;">${e.avgTotal ?? '—'}</span>${deltaHtml}</div>
+        <div style="font-size:0.88rem;color:var(--muted);margin-top:12px;white-space:nowrap;">RW ${e.avgRw ?? '—'} &middot; M ${e.avgMath ?? '—'}</div>
+        <div style="font-size:0.78rem;color:var(--muted);margin-top:6px;white-space:nowrap;">${e.n} student${e.n === 1 ? '' : 's'} &middot; ${escapeHtml(e.date || '')}</div>
       </div>`;
   }).join('');
 }
 
-function programStudentRows(students) {
-  return students.map((s, i) => {
-    const ch = s.change;
-    const color = ch == null ? '#6b7280' : ch >= 0 ? '#15803d' : '#b91c1c';
-    const chText = ch == null ? '—' : `${ch >= 0 ? '+' : ''}${ch}`;
-    return `
-      <tr>
-        <td class="num-cell">${i + 1}</td>
-        <td style="font-weight:600;">${escapeHtml(s.name)}</td>
-        <td style="color:#6b7280;white-space:nowrap;">${s.firstTotal ?? '—'} <span style="color:#9ca3af;">${s.firstExam ? `(${escapeHtml(s.firstExam)})` : ''}</span></td>
-        <td style="font-weight:700;color:#1a56db;">${s.latestTotal ?? '—'}</td>
-        <td style="font-weight:700;color:${color};">${chText}</td>
-      </tr>`;
+// Average-total trend across the program's exams — a simple line chart that
+// fills the page and shows the group's climb at a glance.
+function buildProgressionChart(progression) {
+  const pts = (progression || []).filter((e) => e.avgTotal != null);
+  if (pts.length < 2) return '';
+  const W = 720; const H = 300; const padL = 30; const padR = 30; const padT = 34; const padB = 46;
+  const vals = pts.map((p) => p.avgTotal);
+  const span = Math.max(...vals) - Math.min(...vals);
+  const pad = Math.max(40, Math.round(span * 0.35));
+  const lo = Math.min(...vals) - pad; const hi = Math.max(...vals) + pad;
+  const x = (i) => padL + (i * (W - padL - padR)) / (pts.length - 1);
+  const y = (v) => padT + (1 - (v - lo) / (hi - lo)) * (H - padT - padB);
+  const line = pts.map((p, i) => `${i === 0 ? 'M' : 'L'}${x(i).toFixed(1)},${y(p.avgTotal).toFixed(1)}`).join(' ');
+  const area = `${line} L${x(pts.length - 1).toFixed(1)},${(H - padB).toFixed(1)} L${x(0).toFixed(1)},${(H - padB).toFixed(1)} Z`;
+  const grid = [0.25, 0.5, 0.75].map((f) => {
+    const gy = (padT + f * (H - padT - padB)).toFixed(1);
+    return `<line x1="${padL}" y1="${gy}" x2="${W - padR}" y2="${gy}" stroke="#eef1f8" stroke-width="1"/>`;
   }).join('');
+  // Anchor the first/last labels inward so long exam names don't clip the edges.
+  const anchorFor = (i) => (i === 0 ? 'start' : i === pts.length - 1 ? 'end' : 'middle');
+  const dots = pts.map((p, i) => {
+    const cx = x(i).toFixed(1);
+    const anchor = anchorFor(i);
+    return `
+    <circle cx="${cx}" cy="${y(p.avgTotal).toFixed(1)}" r="5" fill="#1a56db"/>
+    <text x="${cx}" y="${(y(p.avgTotal) - 14).toFixed(1)}" text-anchor="${anchor}" font-size="17" font-weight="700" fill="#1a56db">${p.avgTotal}</text>
+    <text x="${cx}" y="${(H - padB + 24).toFixed(1)}" text-anchor="${anchor}" font-size="13" fill="#6b7280">${escapeHtml(p.name)}</text>`;
+  }).join('');
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%" style="display:block;">
+    ${grid}
+    <path d="${area}" fill="#eef2ff"/>
+    <path d="${line}" fill="none" stroke="#1a56db" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>
+    ${dots}
+  </svg>`;
 }
 
 async function generateProgramSummaryPDF(summary) {
   const h = summary.headline || {};
-  const stat = (label, value, sub, color, valueSize = '1.8rem') => `
-    <div style="flex:1 1 0;border:1px solid var(--border);border-radius:12px;padding:13px 16px;background:#fff;">
-      <div style="font-size:0.64rem;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:var(--muted);margin-bottom:8px;white-space:nowrap;">${label}</div>
-      <div style="font-size:${valueSize};font-weight:700;color:${color};line-height:1.05;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${value}</div>
-      <div style="font-size:0.68rem;color:var(--muted);margin-top:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${sub}</div>
+  const stat = (label, value, sub, color, valueSize = '2.6rem') => `
+    <div style="flex:1 1 0;border:1px solid var(--border);border-radius:16px;padding:22px 24px;background:#fff;">
+      <div style="font-size:0.78rem;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:var(--muted);margin-bottom:14px;white-space:nowrap;">${label}</div>
+      <div style="font-size:${valueSize};font-weight:700;color:${color};line-height:1.02;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${value}</div>
+      <div style="font-size:0.82rem;color:var(--muted);margin-top:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${sub}</div>
     </div>`;
 
   const html = `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"/><style>
     @import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=DM+Sans:wght@300;400;500;600;700&display=swap');
     *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
     :root{--ink:#0f1623;--accent:#1a56db;--muted:#6b7280;--border:#dde3f0;}
-    html{font-size:13.5px;} body{font-family:'DM Sans',Arial,sans-serif;color:var(--ink);background:#fff;padding:20px 28px;line-height:1.5;}
-    .brand{font-family:'DM Serif Display',Georgia,serif;font-size:1.7rem;color:var(--accent);letter-spacing:-0.5px;}
-    .section-title{font-family:'DM Serif Display',Georgia,serif;font-size:1.2rem;color:var(--ink);margin:18px 0 10px;padding-bottom:4px;border-bottom:2px solid #e8f0fe;}
-    table{width:100%;border-collapse:collapse;font-size:0.82rem;}
-    th{text-align:left;font-size:0.62rem;text-transform:uppercase;letter-spacing:0.06em;color:var(--muted);font-weight:700;padding:7px 10px;border-bottom:1.5px solid var(--border);}
-    td{padding:7px 10px;border-bottom:1px solid #eef1f8;}
-    .num-cell{color:#9ca3af;font-weight:600;width:26px;}
-    tr:nth-child(even) td{background:#fafbff;}
+    html{font-size:15px;} body{font-family:'DM Sans',Arial,sans-serif;color:var(--ink);background:#fff;padding:30px 36px;line-height:1.5;}
+    .brand{font-family:'DM Serif Display',Georgia,serif;font-size:2.1rem;color:var(--accent);letter-spacing:-0.5px;}
+    .section-title{font-family:'DM Serif Display',Georgia,serif;font-size:1.5rem;color:var(--ink);margin:30px 0 16px;padding-bottom:6px;border-bottom:2px solid #e8f0fe;}
   </style></head><body>
-    <div style="display:flex;align-items:flex-start;justify-content:space-between;border-bottom:3px solid var(--accent);padding-bottom:8px;margin-bottom:14px;">
-      <div><div class="brand">Program Summary</div><div style="font-size:0.8rem;color:var(--muted);margin-top:2px;">How the group is performing</div></div>
-      <div style="text-align:right;font-size:0.78rem;color:var(--muted);">${escapeHtml(summary.generatedDate || '')}</div>
+    <div style="display:flex;align-items:flex-start;justify-content:space-between;border-bottom:3px solid var(--accent);padding-bottom:12px;margin-bottom:22px;">
+      <div><div class="brand">Program Summary</div><div style="font-size:0.92rem;color:var(--muted);margin-top:4px;">How the group is performing</div></div>
+      <div style="text-align:right;font-size:0.86rem;color:var(--muted);">${escapeHtml(summary.generatedDate || '')}</div>
     </div>
-    <div style="margin-bottom:14px;">
-      <div style="font-family:'DM Serif Display',Georgia,serif;font-size:1.5rem;">${escapeHtml(summary.programName || 'Program')}</div>
-      <div style="font-size:0.82rem;color:var(--muted);margin-top:2px;">${summary.studentCount} students enrolled &middot; ${summary.examsCompleted} of ${summary.examCount} exams completed</div>
+    <div style="margin-bottom:22px;">
+      <div style="font-family:'DM Serif Display',Georgia,serif;font-size:2rem;">${escapeHtml(summary.programName || 'Program')}</div>
+      <div style="font-size:0.95rem;color:var(--muted);margin-top:4px;">${summary.studentCount} students enrolled &middot; ${summary.examsCompleted} of ${summary.examCount} exams completed</div>
     </div>
-    <div style="display:flex;gap:10px;">
-      ${stat('Avg Improvement', `${h.avgImprovement == null ? '—' : (h.avgImprovement >= 0 ? '+' : '') + h.avgImprovement}`, `${escapeHtml(h.firstName || '')} &rarr; ${escapeHtml(h.lastName || '')}`, h.avgImprovement != null && h.avgImprovement < 0 ? '#b91c1c' : '#15803d')}
+    <div style="display:flex;gap:14px;">
+      ${stat('Avg Improvement', `${h.avgImprovement == null ? '—' : (h.avgImprovement >= 0 ? '+' : '') + h.avgImprovement}`, `${escapeHtml(h.firstName || 'Initial')} &rarr; Superscore`, h.avgImprovement != null && h.avgImprovement < 0 ? '#b91c1c' : '#15803d')}
       ${stat('Students Improved', `${h.improvedCount ?? 0}/${h.comparedCount ?? 0}`, h.comparedCount ? `${Math.round((h.improvedCount / h.comparedCount) * 100)}% of the group` : '—', '#1a56db')}
       ${stat('Group Average Now', `${h.latestAvg ?? '—'}`, `on ${escapeHtml(h.lastName || '')}`, '#1a56db')}
-      ${stat('Date Range', h.firstDate && h.lastDate ? `${fmtShort(h.firstDate)} &ndash; ${fmtShort(h.lastDate)}` : '—', h.lastDate ? String(h.lastDate).slice(0, 4) : `${summary.examsCompleted} exam${summary.examsCompleted === 1 ? '' : 's'}`, '#475569', '1.15rem')}
+      ${stat('Date Range', h.firstDate && h.lastDate ? `${fmtShort(h.firstDate)} &ndash; ${fmtShort(h.lastDate)}` : '—', h.lastDate ? String(h.lastDate).slice(0, 4) : `${summary.examsCompleted} exam${summary.examsCompleted === 1 ? '' : 's'}`, '#475569', '1.7rem')}
     </div>
     <div class="section-title">Group progression</div>
-    <div style="display:flex;gap:8px;flex-wrap:nowrap;">${programProgressionCards(summary.progression || [])}</div>
-    <div class="section-title">Student improvement &mdash; first to latest</div>
-    <table><thead><tr><th></th><th>Student</th><th>First</th><th>Latest</th><th>Change</th></tr></thead><tbody>${programStudentRows(summary.students || [])}</tbody></table>
+    <div style="display:flex;gap:12px;flex-wrap:nowrap;">${programProgressionCards(summary.progression || [])}</div>
+    <div class="section-title">Average score trend</div>
+    <div style="border:1px solid var(--border);border-radius:16px;padding:20px 22px;background:#fff;">${buildProgressionChart(summary.progression || [])}</div>
   </body></html>`;
 
   try {

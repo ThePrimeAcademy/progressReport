@@ -47,40 +47,13 @@ function Card({ children, style = {} }) {
 }
 
 // ── SAT Score placeholder cards ───────────────────────────────
-// Signed delta of the student's score vs the class average — green when at or
-// above the cohort, red when below. Renders nothing when either side is missing.
-function DeltaChip({ student, avg }) {
-  if (student == null || avg == null) return null;
-  const d = student - avg;
-  const up = d >= 0;
-  return (
-    <span style={{
-      display: 'inline-block', fontSize: '0.6rem', fontWeight: 700, marginLeft: 6,
-      color: up ? '#15803d' : '#b91c1c', background: up ? '#dcfce7' : '#fee2e2',
-      padding: '1px 6px', borderRadius: 5,
-    }}>
-      {up ? '+' : ''}{d}
-    </span>
-  );
-}
-
-// Plain-text delta (no chip) for the tight one-line history class-average row.
-function DeltaText({ student, avg }) {
-  if (student == null || avg == null) return null;
-  const d = student - avg;
-  const up = d >= 0;
-  return <span style={{ fontSize: '0.82em', color: up ? '#15803d' : '#b91c1c', fontWeight: 700 }}> {up ? '+' : ''}{d}</span>;
-}
-
 function SATScores({ satScores }) {
-  const ca = satScores?.classAverages || {};
   const scores = [
-    { label: 'Latest Test Score', value: satScores?.latestTestScore ?? '—', studentRaw: satScores?.latestTestScore, color: '#1a56db', classAvg: ca.total },
-    { label: 'Latest English Score', value: satScores?.latestEnglishScore ?? '—', studentRaw: satScores?.latestEnglishScore, color: '#15803d', classAvg: ca.english },
-    { label: 'Latest Math Score', value: satScores?.latestMathScore ?? '—', studentRaw: satScores?.latestMathScore, color: '#b45309', classAvg: ca.math },
-    { label: 'Super Score', value: satScores?.superScore ?? '—', studentRaw: null, color: '#7c3aed', classAvg: null },
+    { label: 'Latest Test Score', value: satScores?.latestTestScore ?? '—', color: '#1a56db' },
+    { label: 'Latest English Score', value: satScores?.latestEnglishScore ?? '—', color: '#15803d' },
+    { label: 'Latest Math Score', value: satScores?.latestMathScore ?? '—', color: '#b45309' },
+    { label: 'Super Score', value: satScores?.superScore ?? '—', color: '#7c3aed' },
   ];
-  const fromWorkbook = satScores?.source === 'excel' || satScores?.source === 'sheets';
   return (
     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 24 }}>
       {scores.map((s) => (
@@ -94,14 +67,9 @@ function SATScores({ satScores }) {
           <div style={{ fontSize: '2rem', fontWeight: 700, color: s.color, lineHeight: 1 }}>
             {s.value}
           </div>
-          {s.classAvg != null ? (
-            <div style={{ marginTop: 10, fontSize: '0.66rem', color: 'var(--muted)', background: '#eef1f8', borderRadius: 7, padding: '4px 10px' }}>
-              Class avg&nbsp;&nbsp;<strong style={{ color: '#475569', fontWeight: 700 }}>{s.classAvg}</strong>
-              <DeltaChip student={s.studentRaw} avg={s.classAvg} />
-            </div>
-          ) : (
-            fromWorkbook && <div style={{ fontSize: '0.68rem', color: 'var(--muted)', marginTop: 4 }}>From SAT workbook</div>
-          )}
+          <div style={{ fontSize: '0.68rem', color: 'var(--muted)', marginTop: 4 }}>
+            {satScores?.source === 'excel' || satScores?.source === 'sheets' ? 'From SAT workbook' : ''}
+          </div>
         </div>
       ))}
     </div>
@@ -116,8 +84,7 @@ function SatScoreHistory({ allScores }) {
     // Single row — cards shrink to fit however many exams there are.
     <div style={{ display: 'flex', gap: 8, flexWrap: 'nowrap', marginBottom: 24 }}>
       {allScores.map((s) => {
-        // No total → the student didn't complete the test: show it as not taken
-        // with no individual score and no class average.
+        // No total → the student didn't complete the test: show it as "Not taken".
         const taken = s.total != null;
         const accent = taken ? '#1a56db' : '#6b7280';
         return (
@@ -163,13 +130,6 @@ function SatScoreHistory({ allScores }) {
             {s.date && (
               <div style={{ fontSize: '0.66rem', color: 'var(--muted)', marginTop: 2 }}>
                 {s.date}
-              </div>
-            )}
-            {taken && s.classAvg && (s.classAvg.rw != null || s.classAvg.math != null) && (
-              <div style={{ marginTop: 7, fontSize: '0.7rem', color: 'var(--muted)', background: '#eef1f8', borderRadius: 6, padding: '4px 7px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                <strong style={{ color: '#475569', fontWeight: 700 }}>
-                  RW {s.classAvg.rw ?? '—'}<DeltaText student={s.english} avg={s.classAvg.rw} /> · M {s.classAvg.math ?? '—'}<DeltaText student={s.math} avg={s.classAvg.math} />
-                </strong>
               </div>
             )}
           </div>

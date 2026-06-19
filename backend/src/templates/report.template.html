@@ -482,17 +482,14 @@
     <div class="sat-card">
       <div class="sat-label">Latest Test Score</div>
       <div class="sat-value" style="color:#1a56db;">{{satLatestTestScore}}</div>
-      {{satClassTotal}}
     </div>
     <div class="sat-card">
       <div class="sat-label">Latest English Score</div>
       <div class="sat-value" style="color:#15803d;">{{satLatestEnglishScore}}</div>
-      {{satClassEnglish}}
     </div>
     <div class="sat-card">
       <div class="sat-label">Latest Math Score</div>
       <div class="sat-value" style="color:#b45309;">{{satLatestMathScore}}</div>
-      {{satClassMath}}
     </div>
     <div class="sat-card">
       <div class="sat-label">Super Score</div>
@@ -500,8 +497,7 @@
     </div>
   </div>
 
-  <!-- SAT score history — one card per SAT exam (newest first), each with the
-       cohort average for that exam beneath it -->
+  <!-- SAT score history — one card per SAT exam, newest first -->
   {{satHistorySection}}
 
   <!-- Homework completion — set by the admin before generating the PDF -->
