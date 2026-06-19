@@ -39,11 +39,13 @@ router.post('/', (req, res, next) => {
   }
 });
 
-// PUT /api/programs/:programId — rename and/or set the enrolled roster.
+// PUT /api/programs/:programId — rename, set the enrolled roster, and/or
+// archive/unarchive. Archiving hides the program's exams from student SAT
+// reports while keeping all scoring data intact.
 router.put('/:programId', (req, res, next) => {
   try {
-    const { name, studentIds } = req.body || {};
-    res.json({ success: true, data: programs.updateProgram(req.params.programId, { name, studentIds }) });
+    const { name, studentIds, archived } = req.body || {};
+    res.json({ success: true, data: programs.updateProgram(req.params.programId, { name, studentIds, archived }) });
   } catch (err) {
     next(err);
   }

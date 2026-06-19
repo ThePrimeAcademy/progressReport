@@ -66,6 +66,7 @@ export const s = {
   programHead: { display: 'flex', alignItems: 'center', gap: 10, padding: '12px 16px', background: 'var(--accent-dim)', flexWrap: 'wrap' },
   programName: { fontWeight: 700, fontSize: '0.95rem', color: 'var(--ink)', flex: 1, letterSpacing: '-0.01em' },
   programBadge: { fontSize: '0.62rem', fontWeight: 800, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--accent)', background: 'var(--bg)', border: '1px solid var(--accent)', borderRadius: 999, padding: '2px 8px' },
+  archivedBadge: { fontSize: '0.62rem', fontWeight: 800, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#b45309', background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: 999, padding: '2px 8px', whiteSpace: 'nowrap' },
   programBody: { padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 12, background: '#fff' },
   programEmpty: { fontSize: '0.78rem', color: 'var(--muted)', fontStyle: 'italic', padding: '4px 2px' },
   ungroupedLabel: { fontSize: '0.66rem', fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)', marginTop: 4 },

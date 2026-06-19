@@ -3,6 +3,7 @@ const express = require('express');
 const { getDataVersion } = require('../services/classmarker.service');
 const { getCurvesVersion } = require('../services/scoring-sheet.service');
 const { getExamsVersion } = require('../services/exam.service');
+const { getProgramsVersion } = require('../services/program.service');
 const { generateReportPDF } = require('../services/pdf.service');
 const { isConfigured: isEmailConfigured, verifyConnection: verifyEmailConnection } = require('../services/email.service');
 const {
@@ -138,7 +139,7 @@ function previewKey({ studentId, startDate, endDate, dayOfWeek }) {
   // Include the data/exam/curve versions so a preview generated before a
   // webhook landed, an exam was (re)defined, or a curve was uploaded doesn't
   // get served from the dedupe cache after scoring inputs changed.
-  const version = `v${getDataVersion()}.${getExamsVersion()}.${getCurvesVersion()}`;
+  const version = `v${getDataVersion()}.${getExamsVersion()}.${getCurvesVersion()}.${getProgramsVersion()}`;
   const normalized = [String(studentId), String(startDate), String(endDate), days, version].join('|');
   return crypto.createHash('sha256').update(normalized).digest('hex').slice(0, 24);
 }

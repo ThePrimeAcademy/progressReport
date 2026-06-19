@@ -10,7 +10,7 @@ const {
   getLatestTestResult,
   computeCategoryPerformance,
 } = require('./classmarker.service');
-const { getSatScoresForStudent } = require('./sat.service');
+const { getSatScoresForStudent, getSatWeekClassAverage } = require('./sat.service');
 const {
   getLatestWebhookTestResult,
   getWebhookCategoryPerformance,
@@ -72,8 +72,13 @@ async function gatherReportData({ studentId, startDate, endDate, dayOfWeek }) {
     : computeCategoryPerformance(groups);
   const latestTest = webhookLatestTest || apiLatestTest;
 
+  // Class comparison for the SAT (if any) the student sat during the report
+  // window — averaged across that exam's enrolled takers only.
+  const weekClassAverage = await getSatWeekClassAverage(satScores, startDate, endDate);
+  const satScoresWithAvg = { ...satScores, weekClassAverage };
+
   return {
-    student, groups, stats, satScores, startDate, endDate,
+    student, groups, stats, satScores: satScoresWithAvg, startDate, endDate,
     latestTest, categoryPerf, categoryPerfSplit: webhookCategorySplit,
   };
 }

@@ -256,6 +256,49 @@ function buildSatHistorySection(allScores) {
   return `<div style="display:flex;gap:8px;flex-wrap:nowrap;margin:0 0 12px;">${cards}</div>`;
 }
 
+// ── This week's SAT — class comparison ────────────────────────
+// One focused panel for the exam the student sat during the report window:
+// their score beside the cohort average (enrolled takers only — non-takers are
+// excluded upstream so the mean isn't dragged toward zero). A signed delta chip
+// reads green when at/above the class, red when below.
+function classAvgMetric(label, you, avg, color, isLast) {
+  const hasBoth = you != null && avg != null;
+  const delta = hasBoth ? you - avg : null;
+  const deltaColor = delta == null ? '#6b7280' : delta >= 0 ? '#15803d' : '#b91c1c';
+  const deltaBg = delta == null ? '#f3f4f6' : delta >= 0 ? '#dcfce7' : '#fee2e2';
+  const deltaText = delta == null ? '—' : `${delta >= 0 ? '+' : ''}${delta}`;
+  const border = isLast ? '' : 'border-right:1px solid var(--border);';
+  return `
+    <div style="padding:11px 16px;${border}">
+      <div style="font-size:0.62rem;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:var(--muted);margin-bottom:7px;">${label}</div>
+      <div style="display:flex;align-items:baseline;gap:8px;">
+        <span style="font-size:1.55rem;font-weight:700;color:${color};line-height:1;">${you ?? '—'}</span>
+        ${hasBoth ? `<span style="font-size:0.62rem;font-weight:700;color:${deltaColor};background:${deltaBg};padding:2px 7px;border-radius:5px;">${deltaText}</span>` : ''}
+      </div>
+      <div style="font-size:0.68rem;color:var(--muted);margin-top:6px;">Class avg <strong style="color:var(--ink);font-weight:700;">${avg ?? '—'}</strong></div>
+    </div>`;
+}
+
+function buildSatClassAverageSection(weekClassAverage) {
+  const w = weekClassAverage;
+  if (!w || (w.classAvg.total == null && w.classAvg.rw == null && w.classAvg.math == null)) return '';
+  const s = w.student || {};
+  const a = w.classAvg || {};
+  const peers = w.n === 1 ? '1 student' : `${w.n} students`;
+  return `
+    <div style="margin:0 0 14px;border:1px solid var(--border);border-radius:12px;overflow:hidden;background:#fff;">
+      <div style="display:flex;align-items:baseline;justify-content:space-between;gap:10px;padding:9px 16px;background:linear-gradient(90deg,#eef2ff,#faf5ff);border-bottom:1px solid var(--border);">
+        <span style="font-weight:700;font-size:0.82rem;color:#3730a3;letter-spacing:-0.01em;">This week's SAT &middot; ${escapeHtml(w.examName || 'SAT')}</span>
+        <span style="font-size:0.66rem;color:var(--muted);white-space:nowrap;">${escapeHtml(w.date || '')} &middot; class avg of ${peers}</span>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);">
+        ${classAvgMetric('Total', s.total, a.total, '#1a56db', false)}
+        ${classAvgMetric('Reading &amp; Writing', s.rw, a.rw, '#15803d', false)}
+        ${classAvgMetric('Math', s.math, a.math, '#b45309', true)}
+      </div>
+    </div>`;
+}
+
 // ── Homework completion ───────────────────────────────────────
 // Admin-entered completed/total counts. Parent-facing bar: ≥80% green,
 // 60–79% orange, below 60% red.
@@ -331,6 +374,7 @@ async function generateReportPDF(student, groups, stats, satScores, startDate, e
     satLatestMathScore: satScores?.latestMathScore ?? '—',
     satSuperScore: satScores?.superScore ?? '—',
     satHistorySection: buildSatHistorySection(satScores?.allScores),
+    satClassAverageSection: buildSatClassAverageSection(satScores?.weekClassAverage),
     homeworkSection: buildHomeworkSection(homework),
     // latestTestSection: buildLatestTestSection(latestTest), // hidden from PDF — restore this line (and delete the '' line below) to bring back "Latest Test Performance"
     latestTestSection: '',

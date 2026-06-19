@@ -131,6 +131,64 @@ function SatScoreHistory({ allScores }) {
   );
 }
 
+// ── This week's SAT — class comparison ───────────────────────
+// Mirrors the PDF panel: the student's score for the exam they sat during the
+// report window, beside the cohort average (enrolled takers only). Renders
+// nothing when no in-window SAT exists or it had no comparable cohort.
+function ClassAvgMetric({ label, you, avg, color, last }) {
+  const hasBoth = you != null && avg != null;
+  const delta = hasBoth ? you - avg : null;
+  const deltaColor = delta == null ? '#6b7280' : delta >= 0 ? '#15803d' : '#b91c1c';
+  const deltaBg = delta == null ? '#f3f4f6' : delta >= 0 ? '#dcfce7' : '#fee2e2';
+  const deltaText = delta == null ? '—' : `${delta >= 0 ? '+' : ''}${delta}`;
+  return (
+    <div style={{ padding: '12px 16px', borderRight: last ? 'none' : '1px solid var(--border)' }}>
+      <div style={{ fontSize: '0.62rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', color: 'var(--muted)', marginBottom: 7 }}>
+        {label}
+      </div>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+        <span style={{ fontSize: '1.6rem', fontWeight: 700, color, lineHeight: 1 }}>{you ?? '—'}</span>
+        {hasBoth && (
+          <span style={{ fontSize: '0.62rem', fontWeight: 700, color: deltaColor, background: deltaBg, padding: '2px 7px', borderRadius: 5 }}>
+            {deltaText}
+          </span>
+        )}
+      </div>
+      <div style={{ fontSize: '0.7rem', color: 'var(--muted)', marginTop: 6 }}>
+        Class avg <strong style={{ color: 'var(--ink)', fontWeight: 700 }}>{avg ?? '—'}</strong>
+      </div>
+    </div>
+  );
+}
+
+function SatWeekClassAverage({ weekClassAverage }) {
+  const w = weekClassAverage;
+  if (!w) return null;
+  const a = w.classAvg || {};
+  if (a.total == null && a.rw == null && a.math == null) return null;
+  const s = w.student || {};
+  return (
+    <div style={{ border: '1.5px solid var(--border)', borderRadius: 12, overflow: 'hidden', background: 'var(--bg)', marginBottom: 24 }}>
+      <div style={{
+        display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 10,
+        padding: '10px 16px', background: 'linear-gradient(90deg,#eef2ff,#faf5ff)', borderBottom: '1px solid var(--border)',
+      }}>
+        <span style={{ fontWeight: 700, fontSize: '0.85rem', color: '#3730a3' }}>
+          This week's SAT · {w.examName || 'SAT'}
+        </span>
+        <span style={{ fontSize: '0.68rem', color: 'var(--muted)', whiteSpace: 'nowrap' }}>
+          {w.date} · class avg of {w.n === 1 ? '1 student' : `${w.n} students`}
+        </span>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)' }}>
+        <ClassAvgMetric label="Total" you={s.total} avg={a.total} color="#1a56db" />
+        <ClassAvgMetric label="Reading & Writing" you={s.rw} avg={a.rw} color="#15803d" />
+        <ClassAvgMetric label="Math" you={s.math} avg={a.math} color="#b45309" last />
+      </div>
+    </div>
+  );
+}
+
 // ── Homework completion (admin-entered, included in the PDF) ─
 // Parent-facing thresholds: ≥80% green, 60–79% orange, below 60% red.
 function hwColor(pct) {
@@ -556,6 +614,9 @@ export default function ReportViewer({
 
         {/* Full SAT score history — replaces the old Average/Highest/Lowest/Trend strip */}
         <SatScoreHistory allScores={satScores?.allScores} />
+
+        {/* This week's SAT vs. the cohort average (enrolled takers only) */}
+        <SatWeekClassAverage weekClassAverage={satScores?.weekClassAverage} />
 
         {/* Homework completion — admin sets counts here before generating the PDF */}
         {onHomeworkChange && (

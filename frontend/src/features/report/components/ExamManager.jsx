@@ -204,6 +204,18 @@ export default function ExamManager({ onExamsChanged }) {
     }
   }
 
+  // Archive ("it's over") / unarchive a program. Archiving keeps all data but
+  // pulls the program's exams out of every student's SAT report until restored.
+  async function handleArchiveProgram(program) {
+    setError(null);
+    try {
+      await updateProgram(program.programId, { archived: !program.archived });
+      await refreshAndNotify();
+    } catch (err) {
+      setError(err.response?.data?.error || err.message || 'Failed to update program');
+    }
+  }
+
   async function handleDeleteProgram(program) {
     // Exams must belong to a program, so a non-empty program can't be deleted —
     // move or delete its exams first.
@@ -424,7 +436,7 @@ export default function ExamManager({ onExamsChanged }) {
             const expanded = openPrograms.has(program.programId);
             const stop = (e) => e.stopPropagation();
             return (
-              <div key={program.programId} style={s.programCard}>
+              <div key={program.programId} style={{ ...s.programCard, ...(program.archived ? { opacity: 0.6, borderColor: '#fcd34d' } : {}) }}>
                 {/* Click the header to expand/collapse the program's exams. The
                     name, enroll chip, +Exam and Delete keep their own actions. */}
                 <div
@@ -459,6 +471,7 @@ export default function ExamManager({ onExamsChanged }) {
                     </span>
                   )}
                   <span style={s.count}>{members.length} exam{members.length === 1 ? '' : 's'}</span>
+                  {program.archived && <span style={s.archivedBadge} title="This program's exams are hidden from student SAT reports">Archived</span>}
                   <span
                     style={{ ...s.rosterChip, cursor: 'pointer' }}
                     onClick={(e) => { stop(e); setRosterOpenFor((cur) => (cur === program.programId ? null : program.programId)); }}
@@ -467,6 +480,16 @@ export default function ExamManager({ onExamsChanged }) {
                     {count} enrolled
                   </span>
                   <button type="button" style={s.btnGhost} onClick={(e) => { stop(e); openCreate(program.programId); }}>+ Exam</button>
+                  <button
+                    type="button"
+                    style={s.btnGhost}
+                    onClick={(e) => { stop(e); handleArchiveProgram(program); }}
+                    title={program.archived
+                      ? 'Bring this program’s exams back into student SAT reports'
+                      : 'Hide this finished program’s exams from student SAT reports (keeps all data)'}
+                  >
+                    {program.archived ? 'Unarchive' : 'Archive'}
+                  </button>
                   <button type="button" style={s.btnDanger} onClick={(e) => { stop(e); handleDeleteProgram(program); }}>Delete</button>
                 </div>
                 {/* Enrollment opens independently of expand so you can roster a

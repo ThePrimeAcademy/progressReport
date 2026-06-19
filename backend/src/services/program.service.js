@@ -89,21 +89,33 @@ function createProgram({ name, studentIds }) {
   return program;
 }
 
-function updateProgram(programId, { name, studentIds }) {
+function updateProgram(programId, { name, studentIds, archived }) {
   const all = load();
   const idx = all.findIndex((p) => p.programId === String(programId));
   if (idx < 0) throw Object.assign(new Error('Program not found'), { status: 404 });
   if (name != null && !String(name).trim()) {
     throw Object.assign(new Error('name cannot be empty'), { status: 400 });
   }
+  const now = new Date().toISOString();
+  // Archiving an "over" program hides every exam inside it from student SAT
+  // reports without deleting any data — flip it back on to bring them back.
+  const nextArchived = archived != null ? Boolean(archived) : Boolean(all[idx].archived);
   all[idx] = {
     ...all[idx],
     name: name != null ? String(name).trim() : all[idx].name,
     studentIds: studentIds != null ? normalizeIds(studentIds) : (all[idx].studentIds || []),
-    updatedAt: new Date().toISOString(),
+    archived: nextArchived,
+    archivedAt: nextArchived ? (all[idx].archivedAt || now) : null,
+    updatedAt: now,
   };
   save();
   return all[idx];
+}
+
+// Whether a program is archived ("over") — its exams are suppressed from
+// student SAT reports. Unknown programs are treated as not archived.
+function isProgramArchived(programId) {
+  return Boolean(getProgram(programId)?.archived);
 }
 
 // Remember that this program's exams were manually ordered — from then on the
@@ -132,6 +144,7 @@ module.exports = {
   getProgramRoster,
   createProgram,
   updateProgram,
+  isProgramArchived,
   markExamOrderCustom,
   deleteProgram,
   getProgramsVersion,

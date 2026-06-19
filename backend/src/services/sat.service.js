@@ -13,7 +13,7 @@
 const db = require('./db.service');
 const { getCurve, gradeScaled } = require('./scoring-sheet.service');
 const { getTestSectionMap, examCurveKey, getExam, listExams } = require('./exam.service');
-const { getProgram, getProgramRoster } = require('./program.service');
+const { getProgram, getProgramRoster, isProgramArchived } = require('./program.service');
 const { getStudentResultsGrouped, getResultsForTests } = require('./classmarker.service');
 
 // Only groups whose name contains "SAT" (case-insensitive) participate in SAT
@@ -183,6 +183,8 @@ function rosterPlaceholders(student, gradedKeys) {
   const placeholders = [];
   for (const exam of listExams()) {
     if (exam.isPractice) continue; // practice exams never reach the report
+    // Exams in archived programs never appear — not even as upcoming placeholders.
+    if (exam.programId && isProgramArchived(exam.programId)) continue;
     const key = examCurveKey(exam.examId);
     if (gradedKeys.has(key)) continue;
     if (!examRosteredForPlaceholder(exam, sid)) continue;
@@ -270,6 +272,9 @@ async function getSatScoresForStudent(student) {
       const exam = getExam(m[1]);
       if (!exam) return true;
       if (exam.isPractice) return false;
+      // Archived ("over") programs drop off the report entirely — scores,
+      // history cards and placeholders all disappear until unarchived.
+      if (exam.programId && isProgramArchived(exam.programId)) return false;
       return examScoreVisible(exam, sid);
     });
   if (buckets.length === 0) return empty;
@@ -478,9 +483,72 @@ async function getExamScoreboard(examId) {
   };
 }
 
+// ── Class average for one exam ────────────────────────────────
+// Mean scaled scores across the cohort that actually sat the exam. The
+// scoreboard already gates to enrolled, non-hidden students who completed at
+// least two sections, so non-takers never reach this average — and nulls are
+// skipped per metric so a student who took only RW doesn't pull Math toward 0.
+// Returns rounded { total, rw, math, n } where n is the largest contributing
+// cohort across the three metrics, or null when the exam has no takers.
+async function getExamClassAverage(examId) {
+  const board = await getExamScoreboard(examId);
+  if (!board || board.rows.length === 0) return null;
+  const meanOf = (key) => {
+    const vals = board.rows.map((r) => r[key]).filter((v) => v != null);
+    return vals.length
+      ? { value: Math.round(vals.reduce((a, b) => a + b, 0) / vals.length), n: vals.length }
+      : { value: null, n: 0 };
+  };
+  const total = meanOf('total');
+  const rw = meanOf('rwScaled');
+  const math = meanOf('mathScaled');
+  const n = Math.max(total.n, rw.n, math.n);
+  if (n === 0) return null;
+  return {
+    examId: board.examId,
+    examName: board.name,
+    date: board.date,
+    total: total.value,
+    rw: rw.value,
+    math: math.value,
+    n,
+  };
+}
+
+// The student's SAT attempt that falls inside the report window paired with
+// the class average for that same exam. "Taken that week" = a graded attempt
+// (total present) whose finished-date lands within [startDate, endDate]; the
+// latest such attempt wins. Only exam-mapped attempts have a scoreboard to
+// average, so legacy ungrouped groups return null (no class comparison).
+async function getSatWeekClassAverage(satScores, startDate, endDate) {
+  const scores = satScores?.allScores || [];
+  if (!startDate || !endDate || scores.length === 0) return null;
+  const start = String(startDate).slice(0, 10);
+  const end = String(endDate).slice(0, 10);
+  const inWeek = scores
+    .filter((s) => s.total != null && s.date && s.date >= start && s.date <= end)
+    .sort((a, b) => (b.timeFinished ?? 0) - (a.timeFinished ?? 0));
+  for (const attempt of inWeek) {
+    const m = /^exam:(.+)$/.exec(String(attempt.groupId));
+    if (!m) continue;
+    const classAvg = await getExamClassAverage(m[1]);
+    if (!classAvg) continue;
+    return {
+      examName: attempt.groupName || classAvg.examName,
+      date: attempt.date,
+      student: { total: attempt.total, rw: attempt.english, math: attempt.math },
+      classAvg: { total: classAvg.total, rw: classAvg.rw, math: classAvg.math },
+      n: classAvg.n,
+    };
+  }
+  return null;
+}
+
 module.exports = {
   getSatScoresForStudent,
   getExamScoreboard,
+  getExamClassAverage,
+  getSatWeekClassAverage,
   getExamTakenDates,
   isSatGroupName,
   deriveTestSection,
