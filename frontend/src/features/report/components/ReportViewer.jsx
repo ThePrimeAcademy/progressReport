@@ -47,13 +47,30 @@ function Card({ children, style = {} }) {
 }
 
 // ── SAT Score placeholder cards ───────────────────────────────
+// Signed delta of the student's score vs the class average — green when at or
+// above the cohort, red when below. Renders nothing when either side is missing.
+function DeltaChip({ student, avg }) {
+  if (student == null || avg == null) return null;
+  const d = student - avg;
+  const up = d >= 0;
+  return (
+    <span style={{
+      display: 'inline-block', fontSize: '0.6rem', fontWeight: 700, marginLeft: 6,
+      color: up ? '#15803d' : '#b91c1c', background: up ? '#dcfce7' : '#fee2e2',
+      padding: '1px 6px', borderRadius: 5,
+    }}>
+      {up ? '+' : ''}{d}
+    </span>
+  );
+}
+
 function SATScores({ satScores }) {
   const ca = satScores?.classAverages || {};
   const scores = [
-    { label: 'Latest Test Score', value: satScores?.latestTestScore ?? '—', color: '#1a56db', classAvg: ca.total },
-    { label: 'Latest English Score', value: satScores?.latestEnglishScore ?? '—', color: '#15803d', classAvg: ca.english },
-    { label: 'Latest Math Score', value: satScores?.latestMathScore ?? '—', color: '#b45309', classAvg: ca.math },
-    { label: 'Super Score', value: satScores?.superScore ?? '—', color: '#7c3aed', classAvg: null },
+    { label: 'Latest Test Score', value: satScores?.latestTestScore ?? '—', studentRaw: satScores?.latestTestScore, color: '#1a56db', classAvg: ca.total },
+    { label: 'Latest English Score', value: satScores?.latestEnglishScore ?? '—', studentRaw: satScores?.latestEnglishScore, color: '#15803d', classAvg: ca.english },
+    { label: 'Latest Math Score', value: satScores?.latestMathScore ?? '—', studentRaw: satScores?.latestMathScore, color: '#b45309', classAvg: ca.math },
+    { label: 'Super Score', value: satScores?.superScore ?? '—', studentRaw: null, color: '#7c3aed', classAvg: null },
   ];
   const fromWorkbook = satScores?.source === 'excel' || satScores?.source === 'sheets';
   return (
@@ -72,6 +89,7 @@ function SATScores({ satScores }) {
           {s.classAvg != null ? (
             <div style={{ marginTop: 10, fontSize: '0.66rem', color: 'var(--muted)', background: '#eef1f8', borderRadius: 7, padding: '4px 10px' }}>
               Class avg&nbsp;&nbsp;<strong style={{ color: '#475569', fontWeight: 700 }}>{s.classAvg}</strong>
+              <DeltaChip student={s.studentRaw} avg={s.classAvg} />
             </div>
           ) : (
             fromWorkbook && <div style={{ fontSize: '0.68rem', color: 'var(--muted)', marginTop: 4 }}>From SAT workbook</div>
@@ -131,8 +149,11 @@ function SatScoreHistory({ allScores }) {
               </div>
             )}
             {s.classAvg && (s.classAvg.rw != null || s.classAvg.math != null) && (
-              <div style={{ marginTop: 7, fontSize: '0.6rem', color: 'var(--muted)', background: '#eef1f8', borderRadius: 6, padding: '4px 7px', lineHeight: 1.35 }}>
-                Class avg<br /><span style={{ color: '#475569', fontWeight: 700 }}>RW {s.classAvg.rw ?? '—'} · M {s.classAvg.math ?? '—'}</span>
+              <div style={{ marginTop: 7, fontSize: '0.6rem', color: 'var(--muted)', background: '#eef1f8', borderRadius: 6, padding: '4px 7px', lineHeight: 1.6 }}>
+                Class avg<br />
+                <span style={{ color: '#475569', fontWeight: 700 }}>
+                  RW {s.classAvg.rw ?? '—'}<DeltaChip student={s.english} avg={s.classAvg.rw} /> · M {s.classAvg.math ?? '—'}<DeltaChip student={s.math} avg={s.classAvg.math} />
+                </span>
               </div>
             )}
           </div>

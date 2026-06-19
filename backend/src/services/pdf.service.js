@@ -250,7 +250,7 @@ function buildSatHistorySection(allScores) {
         <div style="font-size:1.4rem;font-weight:700;color:${accent};line-height:1;">${s.total ?? '—'}</div>
         <div style="font-size:0.7rem;color:var(--muted);margin-top:5px;white-space:nowrap;">RW ${s.english ?? '—'} &middot; M ${s.math ?? '—'}</div>
         ${s.date ? `<div style="font-size:0.66rem;color:var(--muted);margin-top:2px;white-space:nowrap;">${escapeHtml(s.date)}</div>` : ''}
-        ${historyClassAvg(s.classAvg)}
+        ${historyClassAvg(s)}
       </div>`;
   }).join('');
   // Single row — cards shrink to fit however many exams there are.
@@ -262,14 +262,24 @@ function buildSatHistorySection(allScores) {
 // only, so non-takers never drag the mean down. A headline card shows a single
 // number; a history card shows RW · M for that exam. Null averages render
 // nothing (e.g. an upcoming exam nobody has sat yet).
-function headlineClassAvg(value) {
-  if (value == null) return '';
-  return `<div style="margin-top:8px;font-size:0.64rem;color:var(--muted);background:#eef1f8;border-radius:7px;padding:4px 10px;">Class avg&nbsp;&nbsp;<strong style="color:#475569;font-weight:700;">${value}</strong></div>`;
+// Signed delta of the student's score vs the class average — green when at or
+// above the cohort, red when below. Empty when either side is missing.
+function deltaChip(student, avg) {
+  if (student == null || avg == null) return '';
+  const d = student - avg;
+  const up = d >= 0;
+  return `<span style="display:inline-block;font-size:0.6rem;font-weight:700;color:${up ? '#15803d' : '#b91c1c'};background:${up ? '#dcfce7' : '#fee2e2'};padding:1px 6px;border-radius:5px;margin-left:6px;">${up ? '+' : ''}${d}</span>`;
 }
 
-function historyClassAvg(ca) {
+function headlineClassAvg(student, value) {
+  if (value == null) return '';
+  return `<div style="margin-top:8px;font-size:0.64rem;color:var(--muted);background:#eef1f8;border-radius:7px;padding:4px 10px;">Class avg&nbsp;&nbsp;<strong style="color:#475569;font-weight:700;">${value}</strong>${deltaChip(student, value)}</div>`;
+}
+
+function historyClassAvg(s) {
+  const ca = s.classAvg;
   if (!ca || (ca.rw == null && ca.math == null)) return '';
-  return `<div style="margin-top:7px;font-size:0.6rem;color:var(--muted);background:#eef1f8;border-radius:6px;padding:4px 7px;line-height:1.35;">Class avg<br><span style="color:#475569;font-weight:700;">RW ${ca.rw ?? '—'} &middot; M ${ca.math ?? '—'}</span></div>`;
+  return `<div style="margin-top:7px;font-size:0.6rem;color:var(--muted);background:#eef1f8;border-radius:6px;padding:4px 7px;line-height:1.35;">Class avg<br><span style="color:#475569;font-weight:700;">RW ${ca.rw ?? '—'}${deltaChip(s.english, ca.rw)} &middot; M ${ca.math ?? '—'}${deltaChip(s.math, ca.math)}</span></div>`;
 }
 
 // ── Homework completion ───────────────────────────────────────
@@ -346,9 +356,9 @@ async function generateReportPDF(student, groups, stats, satScores, startDate, e
     satLatestEnglishScore: satScores?.latestEnglishScore ?? '—',
     satLatestMathScore: satScores?.latestMathScore ?? '—',
     satSuperScore: satScores?.superScore ?? '—',
-    satClassTotal: headlineClassAvg(satScores?.classAverages?.total),
-    satClassEnglish: headlineClassAvg(satScores?.classAverages?.english),
-    satClassMath: headlineClassAvg(satScores?.classAverages?.math),
+    satClassTotal: headlineClassAvg(satScores?.latestTestScore, satScores?.classAverages?.total),
+    satClassEnglish: headlineClassAvg(satScores?.latestEnglishScore, satScores?.classAverages?.english),
+    satClassMath: headlineClassAvg(satScores?.latestMathScore, satScores?.classAverages?.math),
     satHistorySection: buildSatHistorySection(satScores?.allScores),
     homeworkSection: buildHomeworkSection(homework),
     // latestTestSection: buildLatestTestSection(latestTest), // hidden from PDF — restore this line (and delete the '' line below) to bring back "Latest Test Performance"
