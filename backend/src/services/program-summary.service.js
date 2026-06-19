@@ -1,5 +1,5 @@
 // services/program-summary.service.js
-// Cohort-level summary for one program: how the whole group performed and
+// Group-level summary for one program: how the whole group performed and
 // improved across the program's exams. Built entirely from per-exam scoreboards
 // (enrolled, non-hidden takers only), so non-takers never skew the averages.
 //
@@ -74,7 +74,6 @@ async function getProgramSummary(programId) {
   // Leaderboard order — current standing first, change column tells the growth.
   students.sort((a, b) => (b.latestTotal ?? 0) - (a.latestTotal ?? 0));
 
-  const top = improvements.slice().sort((a, b) => b.change - a.change)[0] || null;
   const last = progression[progression.length - 1] || null;
 
   return {
@@ -93,8 +92,8 @@ async function getProgramSummary(programId) {
       latestAvg: last ? last.avgTotal : null,
       firstName: progression[0]?.name || null,
       lastName: last?.name || null,
-      topName: top?.name || null,
-      topChange: top?.change ?? null,
+      firstDate: progression[0]?.date || null,
+      lastDate: last?.date || null,
     },
   };
 }

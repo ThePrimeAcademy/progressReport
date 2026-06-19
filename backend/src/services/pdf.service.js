@@ -441,11 +441,17 @@ async function renderPdf(html) {
   }
 }
 
-// ── Program summary (cohort report) ───────────────────────────
-// A one-page "how did the cohort do" report: headline improvement stats, the
+// ── Program summary (group report) ────────────────────────────
+// A one-page "how did the group do" report: headline improvement stats, the
 // average-score progression across the program's exams, and a per-student
 // first→latest improvement table. Driven by a summary object from
 // program-summary.service so the rendering stays data-source agnostic.
+const SHORT_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+function fmtShort(date) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(date || ''));
+  if (!m) return date || '—';
+  return `${SHORT_MONTHS[Number(m[2]) - 1]} ${Number(m[3])}`;
+}
 function programProgressionCards(progression) {
   return progression.map((e, i) => {
     const prev = i > 0 ? progression[i - 1] : null;
@@ -480,10 +486,10 @@ function programStudentRows(students) {
 
 async function generateProgramSummaryPDF(summary) {
   const h = summary.headline || {};
-  const stat = (label, value, sub, color) => `
+  const stat = (label, value, sub, color, valueSize = '1.8rem') => `
     <div style="flex:1 1 0;border:1px solid var(--border);border-radius:12px;padding:13px 16px;background:#fff;">
       <div style="font-size:0.64rem;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:var(--muted);margin-bottom:8px;white-space:nowrap;">${label}</div>
-      <div style="font-size:1.8rem;font-weight:700;color:${color};line-height:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${value}</div>
+      <div style="font-size:${valueSize};font-weight:700;color:${color};line-height:1.05;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${value}</div>
       <div style="font-size:0.68rem;color:var(--muted);margin-top:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${sub}</div>
     </div>`;
 
@@ -501,7 +507,7 @@ async function generateProgramSummaryPDF(summary) {
     tr:nth-child(even) td{background:#fafbff;}
   </style></head><body>
     <div style="display:flex;align-items:flex-start;justify-content:space-between;border-bottom:3px solid var(--accent);padding-bottom:8px;margin-bottom:14px;">
-      <div><div class="brand">Program Summary</div><div style="font-size:0.8rem;color:var(--muted);margin-top:2px;">How the cohort is performing</div></div>
+      <div><div class="brand">Program Summary</div><div style="font-size:0.8rem;color:var(--muted);margin-top:2px;">How the group is performing</div></div>
       <div style="text-align:right;font-size:0.78rem;color:var(--muted);">${escapeHtml(summary.generatedDate || '')}</div>
     </div>
     <div style="margin-bottom:14px;">
@@ -510,11 +516,11 @@ async function generateProgramSummaryPDF(summary) {
     </div>
     <div style="display:flex;gap:10px;">
       ${stat('Avg Improvement', `${h.avgImprovement == null ? '—' : (h.avgImprovement >= 0 ? '+' : '') + h.avgImprovement}`, `${escapeHtml(h.firstName || '')} &rarr; ${escapeHtml(h.lastName || '')}`, h.avgImprovement != null && h.avgImprovement < 0 ? '#b91c1c' : '#15803d')}
-      ${stat('Students Improved', `${h.improvedCount ?? 0}/${h.comparedCount ?? 0}`, h.comparedCount ? `${Math.round((h.improvedCount / h.comparedCount) * 100)}% of the cohort` : '—', '#1a56db')}
-      ${stat('Cohort Average Now', `${h.latestAvg ?? '—'}`, `on ${escapeHtml(h.lastName || '')}`, '#1a56db')}
-      ${stat('Top Improver', h.topName ? escapeHtml(h.topName) : '—', h.topChange != null ? `${h.topChange >= 0 ? '+' : ''}${h.topChange} points` : '', '#7c3aed')}
+      ${stat('Students Improved', `${h.improvedCount ?? 0}/${h.comparedCount ?? 0}`, h.comparedCount ? `${Math.round((h.improvedCount / h.comparedCount) * 100)}% of the group` : '—', '#1a56db')}
+      ${stat('Group Average Now', `${h.latestAvg ?? '—'}`, `on ${escapeHtml(h.lastName || '')}`, '#1a56db')}
+      ${stat('Date Range', h.firstDate && h.lastDate ? `${fmtShort(h.firstDate)} &ndash; ${fmtShort(h.lastDate)}` : '—', h.lastDate ? String(h.lastDate).slice(0, 4) : `${summary.examsCompleted} exam${summary.examsCompleted === 1 ? '' : 's'}`, '#475569', '1.15rem')}
     </div>
-    <div class="section-title">Cohort progression</div>
+    <div class="section-title">Group progression</div>
     <div style="display:flex;gap:8px;flex-wrap:nowrap;">${programProgressionCards(summary.progression || [])}</div>
     <div class="section-title">Student improvement &mdash; first to latest</div>
     <table><thead><tr><th></th><th>Student</th><th>First</th><th>Latest</th><th>Change</th></tr></thead><tbody>${programStudentRows(summary.students || [])}</tbody></table>
