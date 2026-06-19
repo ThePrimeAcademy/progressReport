@@ -417,11 +417,11 @@ function programProgressionCards(progression) {
     const deltaHtml = delta == null ? ''
       : `<span style="display:inline-block;margin-left:9px;font-size:0.74rem;font-weight:700;color:${delta >= 0 ? '#15803d' : '#b91c1c'};background:${delta >= 0 ? '#dcfce7' : '#fee2e2'};padding:2px 9px;border-radius:6px;">${delta >= 0 ? '+' : ''}${delta}</span>`;
     return `
-      <div style="flex:1 1 0;min-width:0;background:#fafbff;border:1px solid var(--border);border-radius:14px;padding:18px 20px;">
-        <div style="font-size:0.82rem;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:0.07em;margin-bottom:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(e.name)}</div>
-        <div style="display:flex;align-items:baseline;"><span style="font-size:2.3rem;font-weight:700;color:#1a56db;line-height:1;">${e.avgTotal ?? '—'}</span>${deltaHtml}</div>
-        <div style="font-size:0.88rem;color:var(--muted);margin-top:12px;white-space:nowrap;">RW ${e.avgRw ?? '—'} &middot; M ${e.avgMath ?? '—'}</div>
-        <div style="font-size:0.78rem;color:var(--muted);margin-top:6px;white-space:nowrap;">${e.n} student${e.n === 1 ? '' : 's'} &middot; ${escapeHtml(e.date || '')}</div>
+      <div style="flex:1 1 0;min-width:0;background:#fafbff;border:1px solid var(--border);border-radius:12px;padding:12px 14px;">
+        <div style="font-size:0.76rem;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:0.07em;margin-bottom:7px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(e.name)}</div>
+        <div style="display:flex;align-items:baseline;"><span style="font-size:1.85rem;font-weight:700;color:#1a56db;line-height:1;">${e.avgTotal ?? '—'}</span>${deltaHtml}</div>
+        <div style="font-size:0.8rem;color:var(--muted);margin-top:8px;white-space:nowrap;">RW ${e.avgRw ?? '—'} &middot; M ${e.avgMath ?? '—'}</div>
+        <div style="font-size:0.72rem;color:var(--muted);margin-top:4px;white-space:nowrap;">${e.n} student${e.n === 1 ? '' : 's'} &middot; ${escapeHtml(e.date || '')}</div>
       </div>`;
   }).join('');
 }
@@ -431,14 +431,14 @@ function programProgressionCards(progression) {
 function buildProgressionChart(progression) {
   const pts = (progression || []).filter((e) => e.avgTotal != null);
   if (pts.length < 2) return '';
-  const W = 720; const H = 300; const padL = 30; const padR = 30; const padT = 34; const padB = 46;
+  const W = 720; const H = 360; const padL = 30; const padR = 30; const padT = 34; const padB = 44;
   const vals = pts.map((p) => p.avgTotal);
   const span = (Math.max(...vals) - Math.min(...vals)) || 1;
-  // Tight, asymmetric padding so the line nearly fills the plot — the climb
-  // reads as steep. A little extra headroom up top leaves room for the value
-  // label above the highest point.
-  const lo = Math.min(...vals) - Math.max(12, Math.round(span * 0.08));
-  const hi = Math.max(...vals) + Math.max(34, Math.round(span * 0.18));
+  // Very tight, asymmetric padding so the line nearly fills the (tall) plot —
+  // the climb reads as steep. A little extra headroom up top leaves room for
+  // the value label above the highest point.
+  const lo = Math.min(...vals) - Math.max(6, Math.round(span * 0.03));
+  const hi = Math.max(...vals) + Math.max(26, Math.round(span * 0.11));
   const x = (i) => padL + (i * (W - padL - padR)) / (pts.length - 1);
   const y = (v) => padT + (1 - (v - lo) / (hi - lo)) * (H - padT - padB);
   const line = pts.map((p, i) => `${i === 0 ? 'M' : 'L'}${x(i).toFixed(1)},${y(p.avgTotal).toFixed(1)}`).join(' ');
@@ -449,12 +449,16 @@ function buildProgressionChart(progression) {
   }).join('');
   // Anchor the first/last labels inward so long exam names don't clip the edges.
   const anchorFor = (i) => (i === 0 ? 'start' : i === pts.length - 1 ? 'end' : 'middle');
+  const minVal = Math.min(...vals);
   const dots = pts.map((p, i) => {
     const cx = x(i).toFixed(1);
     const anchor = anchorFor(i);
+    // The lowest point sits where the steep line rises through it — lift its
+    // value label clear of the line.
+    const labelDy = p.avgTotal === minVal ? 24 : 14;
     return `
     <circle cx="${cx}" cy="${y(p.avgTotal).toFixed(1)}" r="5" fill="#1a56db"/>
-    <text x="${cx}" y="${(y(p.avgTotal) - 14).toFixed(1)}" text-anchor="${anchor}" font-size="17" font-weight="700" fill="#1a56db">${p.avgTotal}</text>
+    <text x="${cx}" y="${(y(p.avgTotal) - labelDy).toFixed(1)}" text-anchor="${anchor}" font-size="17" font-weight="700" fill="#1a56db">${p.avgTotal}</text>
     <text x="${cx}" y="${(H - padB + 24).toFixed(1)}" text-anchor="${anchor}" font-size="13" fill="#6b7280">${escapeHtml(p.name)}</text>`;
   }).join('');
   return `<svg viewBox="0 0 ${W} ${H}" width="100%" style="display:block;">
@@ -469,39 +473,39 @@ async function generateProgramSummaryPDF(summary) {
   const h = summary.headline || {};
   // Labels and subs wrap (rather than clip) so the narrow four-up cards never
   // overflow the page; the value stays on one line.
-  const stat = (label, value, sub, color, valueSize = '2.5rem') => `
-    <div style="flex:1 1 0;min-width:0;border:1px solid var(--border);border-radius:16px;padding:18px 18px;background:#fff;">
-      <div style="font-size:0.7rem;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;color:var(--muted);line-height:1.25;min-height:2.5em;">${label}</div>
-      <div style="font-size:${valueSize};font-weight:700;color:${color};line-height:1.02;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:4px;">${value}</div>
-      <div style="font-size:0.78rem;color:var(--muted);margin-top:10px;line-height:1.3;">${sub}</div>
+  const stat = (label, value, sub, color, valueSize = '2.05rem') => `
+    <div style="flex:1 1 0;min-width:0;border:1px solid var(--border);border-radius:14px;padding:13px 14px;background:#fff;">
+      <div style="font-size:0.66rem;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;color:var(--muted);line-height:1.25;min-height:2.3em;">${label}</div>
+      <div style="font-size:${valueSize};font-weight:700;color:${color};line-height:1.02;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:3px;">${value}</div>
+      <div style="font-size:0.72rem;color:var(--muted);margin-top:7px;line-height:1.3;">${sub}</div>
     </div>`;
 
   const html = `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"/><style>
     @import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=DM+Sans:wght@300;400;500;600;700&display=swap');
     *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
     :root{--ink:#0f1623;--accent:#1a56db;--muted:#6b7280;--border:#dde3f0;}
-    html{font-size:15px;} body{font-family:'DM Sans',Arial,sans-serif;color:var(--ink);background:#fff;padding:30px 36px;line-height:1.5;}
-    .brand{font-family:'DM Serif Display',Georgia,serif;font-size:2.1rem;color:var(--accent);letter-spacing:-0.5px;}
-    .section-title{font-family:'DM Serif Display',Georgia,serif;font-size:1.5rem;color:var(--ink);margin:30px 0 16px;padding-bottom:6px;border-bottom:2px solid #e8f0fe;}
+    html{font-size:14px;} body{font-family:'DM Sans',Arial,sans-serif;color:var(--ink);background:#fff;padding:22px 28px;line-height:1.5;}
+    .brand{font-family:'DM Serif Display',Georgia,serif;font-size:1.85rem;color:var(--accent);letter-spacing:-0.5px;}
+    .section-title{font-family:'DM Serif Display',Georgia,serif;font-size:1.3rem;color:var(--ink);margin:18px 0 11px;padding-bottom:5px;border-bottom:2px solid #e8f0fe;}
   </style></head><body>
-    <div style="display:flex;align-items:flex-start;justify-content:space-between;border-bottom:3px solid var(--accent);padding-bottom:12px;margin-bottom:22px;">
-      <div><div class="brand">Program Summary</div><div style="font-size:0.92rem;color:var(--muted);margin-top:4px;">How the group is performing</div></div>
-      <div style="text-align:right;font-size:0.86rem;color:var(--muted);">${escapeHtml(summary.generatedDate || '')}</div>
+    <div style="display:flex;align-items:flex-start;justify-content:space-between;border-bottom:3px solid var(--accent);padding-bottom:9px;margin-bottom:14px;">
+      <div><div class="brand">Program Summary</div><div style="font-size:0.86rem;color:var(--muted);margin-top:3px;">How the group is performing</div></div>
+      <div style="text-align:right;font-size:0.8rem;color:var(--muted);">${escapeHtml(summary.generatedDate || '')}</div>
     </div>
-    <div style="margin-bottom:22px;">
-      <div style="font-family:'DM Serif Display',Georgia,serif;font-size:2rem;">${escapeHtml(summary.programName || 'Program')}</div>
-      <div style="font-size:0.95rem;color:var(--muted);margin-top:4px;">${summary.studentCount} students enrolled &middot; ${summary.examsCompleted} of ${summary.examCount} exams completed</div>
+    <div style="margin-bottom:14px;">
+      <div style="font-family:'DM Serif Display',Georgia,serif;font-size:1.65rem;">${escapeHtml(summary.programName || 'Program')}</div>
+      <div style="font-size:0.86rem;color:var(--muted);margin-top:3px;">${summary.studentCount} students enrolled &middot; ${summary.examsCompleted} of ${summary.examCount} exams completed</div>
     </div>
-    <div style="display:flex;gap:14px;">
+    <div style="display:flex;gap:11px;">
       ${stat('Avg Improvement', `${h.avgImprovement == null ? '—' : (h.avgImprovement >= 0 ? '+' : '') + h.avgImprovement}`, `${escapeHtml(h.firstName || 'Initial')} &rarr; Superscore`, h.avgImprovement != null && h.avgImprovement < 0 ? '#b91c1c' : '#15803d')}
       ${stat('Students Improved', `${h.improvedCount ?? 0}/${h.comparedCount ?? 0}`, h.comparedCount ? `${Math.round((h.improvedCount / h.comparedCount) * 100)}% of the group` : '—', '#1a56db')}
       ${stat('Group Average Now', `${h.latestAvg ?? '—'}`, `on ${escapeHtml(h.lastName || '')}`, '#1a56db')}
-      ${stat('Date Range', h.firstDate && h.lastDate ? `${fmtShort(h.firstDate)}&nbsp;&ndash;&nbsp;${fmtShort(h.lastDate)}` : '—', h.lastDate ? String(h.lastDate).slice(0, 4) : `${summary.examsCompleted} exam${summary.examsCompleted === 1 ? '' : 's'}`, '#475569', '1.05rem')}
+      ${stat('Date Range', h.firstDate && h.lastDate ? `${fmtShort(h.firstDate)}&nbsp;&ndash;&nbsp;${fmtShort(h.lastDate)}` : '—', h.lastDate ? String(h.lastDate).slice(0, 4) : `${summary.examsCompleted} exam${summary.examsCompleted === 1 ? '' : 's'}`, '#475569', '0.95rem')}
     </div>
     <div class="section-title">Group progression</div>
     <div style="display:flex;gap:12px;flex-wrap:nowrap;">${programProgressionCards(summary.progression || [])}</div>
     <div class="section-title">Average score trend</div>
-    <div style="border:1px solid var(--border);border-radius:16px;padding:20px 22px;background:#fff;">${buildProgressionChart(summary.progression || [])}</div>
+    <div style="border:1px solid var(--border);border-radius:14px;padding:14px 16px;background:#fff;">${buildProgressionChart(summary.progression || [])}</div>
   </body></html>`;
 
   try {
