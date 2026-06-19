@@ -92,6 +92,8 @@ function gradeRecordsByGroup(records) {
         groupName: gname,
         rwRaw: 0,
         mathRaw: 0,
+        rwSeen: false,
+        mathSeen: false,
         latestFinished: 0,
       };
     }
@@ -105,8 +107,8 @@ function gradeRecordsByGroup(records) {
     if (section == null) continue;
 
     const correct = rawCorrect(r);
-    if (section === 1 || section === 2) bucket.rwRaw += correct;
-    else if (section === 3 || section === 4) bucket.mathRaw += correct;
+    if (section === 1 || section === 2) { bucket.rwRaw += correct; bucket.rwSeen = true; }
+    else if (section === 3 || section === 4) { bucket.mathRaw += correct; bucket.mathSeen = true; }
   }
 
   // Fold the deduped exam attempts into per-exam buckets. The bucket keeps the
@@ -121,6 +123,8 @@ function gradeRecordsByGroup(records) {
         groupName: examName,
         rwRaw: 0,
         mathRaw: 0,
+        rwSeen: false,
+        mathSeen: false,
         latestFinished: 0,
       };
     }
@@ -129,8 +133,8 @@ function gradeRecordsByGroup(records) {
       bucket.latestFinished = r.timeFinished;
     }
     const correct = rawCorrect(r);
-    if (section === 1 || section === 2) bucket.rwRaw += correct;
-    else if (section === 3 || section === 4) bucket.mathRaw += correct;
+    if (section === 1 || section === 2) { bucket.rwRaw += correct; bucket.rwSeen = true; }
+    else if (section === 3 || section === 4) { bucket.mathRaw += correct; bucket.mathSeen = true; }
   }
 
   return Object.values(buckets);
@@ -139,8 +143,11 @@ function gradeRecordsByGroup(records) {
 function applyCurves(bucket) {
   const mathCurve = getCurve(bucket.groupId, 'math');
   const rwCurve = getCurve(bucket.groupId, 'rw');
-  const mathScaled = mathCurve ? gradeScaled(mathCurve, bucket.mathRaw) : null;
-  const rwScaled = rwCurve ? gradeScaled(rwCurve, bucket.rwRaw) : null;
+  // Only scale a section the student actually attempted — a bucket exists as
+  // soon as ANY section is taken, so an unattempted section would otherwise be
+  // graded as 0 raw and floor to ~200, fabricating a score that was never sat.
+  const mathScaled = bucket.mathSeen && mathCurve ? gradeScaled(mathCurve, bucket.mathRaw) : null;
+  const rwScaled = bucket.rwSeen && rwCurve ? gradeScaled(rwCurve, bucket.rwRaw) : null;
   const total = mathScaled != null && rwScaled != null ? mathScaled + rwScaled : null;
   return { ...bucket, mathScaled, rwScaled, total };
 }

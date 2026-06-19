@@ -276,10 +276,22 @@ function headlineClassAvg(student, value) {
   return `<div style="margin-top:8px;font-size:0.64rem;color:var(--muted);background:#eef1f8;border-radius:7px;padding:4px 10px;">Class avg&nbsp;&nbsp;<strong style="color:#475569;font-weight:700;">${value}</strong>${deltaChip(student, value)}</div>`;
 }
 
+// Compact plain-text delta (no background chip) for the tight history cards, so
+// the whole class-average row fits on a single line.
+function deltaText(student, avg) {
+  if (student == null || avg == null) return '';
+  const d = student - avg;
+  const up = d >= 0;
+  return ` <span style="color:${up ? '#15803d' : '#b91c1c'};font-weight:700;">${up ? '+' : ''}${d}</span>`;
+}
+
 function historyClassAvg(s) {
   const ca = s.classAvg;
   if (!ca || (ca.rw == null && ca.math == null)) return '';
-  return `<div style="margin-top:7px;font-size:0.6rem;color:var(--muted);background:#eef1f8;border-radius:6px;padding:4px 7px;line-height:1.35;">Class avg<br><span style="color:#475569;font-weight:700;">RW ${ca.rw ?? '—'}${deltaChip(s.english, ca.rw)} &middot; M ${ca.math ?? '—'}${deltaChip(s.math, ca.math)}</span></div>`;
+  // Single line, sized to fit the narrow cards: a tiny "avg" tag instead of the
+  // longer "Class average" label, with the cohort RW/M and the student's signed
+  // delta beside each.
+  return `<div style="margin-top:7px;font-size:0.56rem;color:var(--muted);background:#eef1f8;border-radius:6px;padding:4px 6px;white-space:nowrap;overflow:hidden;"><span style="font-size:0.5rem;text-transform:uppercase;letter-spacing:0.04em;">avg</span> <strong style="color:#475569;font-weight:700;">RW ${ca.rw ?? '—'}${deltaText(s.english, ca.rw)} &middot; M ${ca.math ?? '—'}${deltaText(s.math, ca.math)}</strong></div>`;
 }
 
 // ── Homework completion ───────────────────────────────────────

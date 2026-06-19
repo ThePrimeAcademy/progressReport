@@ -64,6 +64,14 @@ function DeltaChip({ student, avg }) {
   );
 }
 
+// Plain-text delta (no chip) for the tight one-line history class-average row.
+function DeltaText({ student, avg }) {
+  if (student == null || avg == null) return null;
+  const d = student - avg;
+  const up = d >= 0;
+  return <span style={{ color: up ? '#15803d' : '#b91c1c', fontWeight: 700 }}> {up ? '+' : ''}{d}</span>;
+}
+
 function SATScores({ satScores }) {
   const ca = satScores?.classAverages || {};
   const scores = [
@@ -149,11 +157,11 @@ function SatScoreHistory({ allScores }) {
               </div>
             )}
             {s.classAvg && (s.classAvg.rw != null || s.classAvg.math != null) && (
-              <div style={{ marginTop: 7, fontSize: '0.6rem', color: 'var(--muted)', background: '#eef1f8', borderRadius: 6, padding: '4px 7px', lineHeight: 1.6 }}>
-                Class avg<br />
-                <span style={{ color: '#475569', fontWeight: 700 }}>
-                  RW {s.classAvg.rw ?? '—'}<DeltaChip student={s.english} avg={s.classAvg.rw} /> · M {s.classAvg.math ?? '—'}<DeltaChip student={s.math} avg={s.classAvg.math} />
-                </span>
+              <div style={{ marginTop: 7, fontSize: '0.62rem', color: 'var(--muted)', background: '#eef1f8', borderRadius: 6, padding: '4px 7px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                <span style={{ fontSize: '0.54rem', textTransform: 'uppercase', letterSpacing: '0.04em' }}>avg</span>{' '}
+                <strong style={{ color: '#475569', fontWeight: 700 }}>
+                  RW {s.classAvg.rw ?? '—'}<DeltaText student={s.english} avg={s.classAvg.rw} /> · M {s.classAvg.math ?? '—'}<DeltaText student={s.math} avg={s.classAvg.math} />
+                </strong>
               </div>
             )}
           </div>
