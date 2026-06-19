@@ -174,6 +174,12 @@ export async function deleteProgram(programId) {
   return response.data;
 }
 
+// Absolute URL of a program's cohort summary PDF — open in a new tab to view
+// or download the "how the cohort did" report.
+export function programSummaryUrl(programId) {
+  return `${apiClient.defaults.baseURL}/programs/${encodeURIComponent(programId)}/summary.pdf`;
+}
+
 export async function fetchStudentContacts(studentId) {
   const response = await apiClient.get(
     `/students/${encodeURIComponent(studentId)}/contacts`

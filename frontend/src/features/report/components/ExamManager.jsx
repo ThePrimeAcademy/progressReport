@@ -20,6 +20,7 @@ import {
   createProgram,
   updateProgram,
   deleteProgram,
+  programSummaryUrl,
 } from '../api/reportApi.js';
 import ExamRow, { SECTION_DEFS } from './ExamRow.jsx';
 import ProgramRosterPanel from './ProgramRosterPanel.jsx';
@@ -480,6 +481,14 @@ export default function ExamManager({ onExamsChanged }) {
                     {count} enrolled
                   </span>
                   <button type="button" style={s.btnGhost} onClick={(e) => { stop(e); openCreate(program.programId); }}>+ Exam</button>
+                  <button
+                    type="button"
+                    style={s.btnGhost}
+                    onClick={(e) => { stop(e); window.open(programSummaryUrl(program.programId), '_blank', 'noopener'); }}
+                    title="Open the cohort summary report — overall improvement and per-student performance"
+                  >
+                    Summary
+                  </button>
                   <button
                     type="button"
                     style={s.btnGhost}

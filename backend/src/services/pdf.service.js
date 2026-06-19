@@ -441,4 +441,92 @@ async function renderPdf(html) {
   }
 }
 
-module.exports = { generateReportPDF };
+// ── Program summary (cohort report) ───────────────────────────
+// A one-page "how did the cohort do" report: headline improvement stats, the
+// average-score progression across the program's exams, and a per-student
+// first→latest improvement table. Driven by a summary object from
+// program-summary.service so the rendering stays data-source agnostic.
+function programProgressionCards(progression) {
+  return progression.map((e, i) => {
+    const prev = i > 0 ? progression[i - 1] : null;
+    const delta = prev && e.avgTotal != null && prev.avgTotal != null ? e.avgTotal - prev.avgTotal : null;
+    const deltaHtml = delta == null ? ''
+      : `<span style="display:inline-block;margin-left:7px;font-size:0.62rem;font-weight:700;color:${delta >= 0 ? '#15803d' : '#b91c1c'};background:${delta >= 0 ? '#dcfce7' : '#fee2e2'};padding:1px 7px;border-radius:5px;">${delta >= 0 ? '+' : ''}${delta}</span>`;
+    return `
+      <div style="flex:1 1 0;min-width:0;background:#fafbff;border:1px solid var(--border);border-radius:10px;padding:11px 13px;">
+        <div style="font-size:0.7rem;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:0.07em;margin-bottom:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(e.name)}</div>
+        <div style="display:flex;align-items:baseline;"><span style="font-size:1.5rem;font-weight:700;color:#1a56db;line-height:1;">${e.avgTotal ?? '—'}</span>${deltaHtml}</div>
+        <div style="font-size:0.68rem;color:var(--muted);margin-top:5px;white-space:nowrap;">RW ${e.avgRw ?? '—'} &middot; M ${e.avgMath ?? '—'}</div>
+        <div style="font-size:0.64rem;color:var(--muted);margin-top:3px;white-space:nowrap;">${e.n} student${e.n === 1 ? '' : 's'} &middot; ${escapeHtml(e.date || '')}</div>
+      </div>`;
+  }).join('');
+}
+
+function programStudentRows(students) {
+  return students.map((s, i) => {
+    const ch = s.change;
+    const color = ch == null ? '#6b7280' : ch >= 0 ? '#15803d' : '#b91c1c';
+    const chText = ch == null ? '—' : `${ch >= 0 ? '+' : ''}${ch}`;
+    return `
+      <tr>
+        <td class="num-cell">${i + 1}</td>
+        <td style="font-weight:600;">${escapeHtml(s.name)}</td>
+        <td style="color:#6b7280;white-space:nowrap;">${s.firstTotal ?? '—'} <span style="color:#9ca3af;">${s.firstExam ? `(${escapeHtml(s.firstExam)})` : ''}</span></td>
+        <td style="font-weight:700;color:#1a56db;">${s.latestTotal ?? '—'}</td>
+        <td style="font-weight:700;color:${color};">${chText}</td>
+      </tr>`;
+  }).join('');
+}
+
+async function generateProgramSummaryPDF(summary) {
+  const h = summary.headline || {};
+  const stat = (label, value, sub, color) => `
+    <div style="flex:1 1 0;border:1px solid var(--border);border-radius:12px;padding:13px 16px;background:#fff;">
+      <div style="font-size:0.64rem;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:var(--muted);margin-bottom:8px;white-space:nowrap;">${label}</div>
+      <div style="font-size:1.8rem;font-weight:700;color:${color};line-height:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${value}</div>
+      <div style="font-size:0.68rem;color:var(--muted);margin-top:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${sub}</div>
+    </div>`;
+
+  const html = `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"/><style>
+    @import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=DM+Sans:wght@300;400;500;600;700&display=swap');
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+    :root{--ink:#0f1623;--accent:#1a56db;--muted:#6b7280;--border:#dde3f0;}
+    html{font-size:13.5px;} body{font-family:'DM Sans',Arial,sans-serif;color:var(--ink);background:#fff;padding:20px 28px;line-height:1.5;}
+    .brand{font-family:'DM Serif Display',Georgia,serif;font-size:1.7rem;color:var(--accent);letter-spacing:-0.5px;}
+    .section-title{font-family:'DM Serif Display',Georgia,serif;font-size:1.2rem;color:var(--ink);margin:18px 0 10px;padding-bottom:4px;border-bottom:2px solid #e8f0fe;}
+    table{width:100%;border-collapse:collapse;font-size:0.82rem;}
+    th{text-align:left;font-size:0.62rem;text-transform:uppercase;letter-spacing:0.06em;color:var(--muted);font-weight:700;padding:7px 10px;border-bottom:1.5px solid var(--border);}
+    td{padding:7px 10px;border-bottom:1px solid #eef1f8;}
+    .num-cell{color:#9ca3af;font-weight:600;width:26px;}
+    tr:nth-child(even) td{background:#fafbff;}
+  </style></head><body>
+    <div style="display:flex;align-items:flex-start;justify-content:space-between;border-bottom:3px solid var(--accent);padding-bottom:8px;margin-bottom:14px;">
+      <div><div class="brand">Program Summary</div><div style="font-size:0.8rem;color:var(--muted);margin-top:2px;">How the cohort is performing</div></div>
+      <div style="text-align:right;font-size:0.78rem;color:var(--muted);">${escapeHtml(summary.generatedDate || '')}</div>
+    </div>
+    <div style="margin-bottom:14px;">
+      <div style="font-family:'DM Serif Display',Georgia,serif;font-size:1.5rem;">${escapeHtml(summary.programName || 'Program')}</div>
+      <div style="font-size:0.82rem;color:var(--muted);margin-top:2px;">${summary.studentCount} students enrolled &middot; ${summary.examsCompleted} of ${summary.examCount} exams completed</div>
+    </div>
+    <div style="display:flex;gap:10px;">
+      ${stat('Avg Improvement', `${h.avgImprovement == null ? '—' : (h.avgImprovement >= 0 ? '+' : '') + h.avgImprovement}`, `${escapeHtml(h.firstName || '')} &rarr; ${escapeHtml(h.lastName || '')}`, h.avgImprovement != null && h.avgImprovement < 0 ? '#b91c1c' : '#15803d')}
+      ${stat('Students Improved', `${h.improvedCount ?? 0}/${h.comparedCount ?? 0}`, h.comparedCount ? `${Math.round((h.improvedCount / h.comparedCount) * 100)}% of the cohort` : '—', '#1a56db')}
+      ${stat('Cohort Average Now', `${h.latestAvg ?? '—'}`, `on ${escapeHtml(h.lastName || '')}`, '#1a56db')}
+      ${stat('Top Improver', h.topName ? escapeHtml(h.topName) : '—', h.topChange != null ? `${h.topChange >= 0 ? '+' : ''}${h.topChange} points` : '', '#7c3aed')}
+    </div>
+    <div class="section-title">Cohort progression</div>
+    <div style="display:flex;gap:8px;flex-wrap:nowrap;">${programProgressionCards(summary.progression || [])}</div>
+    <div class="section-title">Student improvement &mdash; first to latest</div>
+    <table><thead><tr><th></th><th>Student</th><th>First</th><th>Latest</th><th>Change</th></tr></thead><tbody>${programStudentRows(summary.students || [])}</tbody></table>
+  </body></html>`;
+
+  try {
+    return await renderPdf(html);
+  } catch (err) {
+    console.warn('[pdf] Program summary render failed, relaunching browser:', err.message);
+    browserPromise = null;
+    return renderPdf(html);
+  }
+}
+
+module.exports = { generateReportPDF, generateProgramSummaryPDF };
