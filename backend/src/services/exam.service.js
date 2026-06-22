@@ -130,20 +130,9 @@ function validateExam(name, sections, ignoreExamId) {
   if (new Set(ids).size !== ids.length) {
     throw Object.assign(new Error('The same test cannot fill two sections'), { status: 400 });
   }
-  // A test may belong to only one exam — otherwise its raw score would count
-  // toward two different scaled scores.
-  for (const exam of load()) {
-    if (exam.examId === ignoreExamId) continue;
-    for (const key of SECTION_KEYS) {
-      const s = exam.sections?.[key];
-      if (s && ids.includes(s.testId)) {
-        throw Object.assign(
-          new Error(`Test "${s.testName || s.testId}" is already used by exam "${exam.name}"`),
-          { status: 400 }
-        );
-      }
-    }
-  }
+  // A test may be reused across different exams (e.g. the same SAT material
+  // given to multiple groups) — it just cannot fill two sections of the same
+  // exam, which the duplicate check above already prevents.
 }
 
 function createExam({ name, date, programId, sections, studentIds, hiddenStudentIds, isPractice }) {

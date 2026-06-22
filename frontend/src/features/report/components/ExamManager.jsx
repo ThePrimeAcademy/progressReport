@@ -115,8 +115,8 @@ export default function ExamManager({ onExamsChanged }) {
     return t.groupName === groupName;
   }, []);
 
-  // Tests available for a section slot of the CREATE form: not assigned to
-  // another exam and not already chosen in a different slot.
+  // Tests available for a section slot of the CREATE form: not already chosen
+  // in a different slot of this exam. A test may be reused across exams.
   const optionsForSection = useCallback((sectionKey) => {
     const chosenElsewhere = new Set(
       Object.entries(form.sections)
@@ -126,7 +126,6 @@ export default function ExamManager({ onExamsChanged }) {
     return tests.filter((t) => {
       if (!inGroup(t, groupFilter)) return false;
       if (chosenElsewhere.has(t.testId)) return false;
-      if (t.assignedToExamId) return false;
       return true;
     });
   }, [tests, form.sections, groupFilter, inGroup]);
@@ -375,7 +374,7 @@ export default function ExamManager({ onExamsChanged }) {
             <option value="">All groups</option>
             {groups.map((g) => <option key={g} value={g}>{g}</option>)}
           </select>
-          <div style={s.hint}>Narrows the section dropdowns below — tests already used by another exam are hidden.</div>
+          <div style={s.hint}>Narrows the section dropdowns below to the chosen group.</div>
         </div>
 
         <div style={s.grid2}>

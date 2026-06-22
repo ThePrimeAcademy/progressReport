@@ -72,18 +72,15 @@ export default function ExamRow({
     patchExam({ date: date.trim() });
   }
 
-  // Options for one section chip: unassigned tests + the exam's own.
+  // Options for one section chip. A test may be reused across exams, so the
+  // only restriction is that it can't fill two sections of *this* exam.
   function sectionOptions(sectionKey) {
     const usedElsewhereInExam = new Set(
       SECTION_DEFS.filter((d) => d.key !== sectionKey)
         .map((d) => exam.sections?.[d.key]?.testId)
         .filter(Boolean)
     );
-    return tests.filter((t) => {
-      if (usedElsewhereInExam.has(t.testId)) return false;
-      if (t.assignedToExamId && t.assignedToExamId !== exam.examId) return false;
-      return true;
-    });
+    return tests.filter((t) => !usedElsewhereInExam.has(t.testId));
   }
 
   // First group a test appears under (to pre-select the drill-down).
