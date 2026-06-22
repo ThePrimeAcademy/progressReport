@@ -17,9 +17,14 @@ export default function ProgramRosterPanel({ program, roster, exams = [], tests 
   const [pulling, setPulling] = useState(false);
   const [pullNote, setPullNote] = useState(null);
 
+  // Only this program's own exams can be a pull source — the roster is
+  // program-scoped, so pulling takers from another program's exam would be
+  // meaningless here.
+  const programExams = exams.filter((e) => e.programId === program.programId);
+
   // ClassMarker groups linked to the chosen exam's tests — the same test can
   // be linked to several groups, so the pull can be narrowed to one cohort.
-  const pullExam = exams.find((e) => e.examId === pullExamId);
+  const pullExam = programExams.find((e) => e.examId === pullExamId);
   const pullGroups = (() => {
     if (!pullExam) return [];
     const ids = new Set(Object.values(pullExam.sections || {}).filter(Boolean).map((sec) => String(sec.testId)));
@@ -95,7 +100,7 @@ export default function ProgramRosterPanel({ program, roster, exams = [], tests 
           onChange={(e) => { setPullExamId(e.target.value); setPullGroup(''); setPullNote(null); }}
         >
           <option value="">Pull students from an exam…</option>
-          {exams.map((e) => (
+          {programExams.map((e) => (
             <option key={e.examId} value={e.examId}>{e.name}</option>
           ))}
         </select>
