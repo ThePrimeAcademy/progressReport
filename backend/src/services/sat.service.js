@@ -12,7 +12,7 @@
 
 const db = require('./db.service');
 const { getCurve, gradeScaled, getCurvesVersion } = require('./scoring-sheet.service');
-const { getTestSectionMap, examCurveKey, getExam, listExams, getExamsVersion } = require('./exam.service');
+const { getTestSectionMap, getTestExamsMap, examCurveKey, getExam, listExams, getExamsVersion } = require('./exam.service');
 const { getProgram, getProgramRoster, isProgramArchived, getProgramsVersion } = require('./program.service');
 const { getStudentResultsGrouped, getResultsForTests, getDataVersion } = require('./classmarker.service');
 
@@ -60,7 +60,7 @@ function rawCorrect(record) {
 }
 
 function gradeRecordsByGroup(records) {
-  const examMap = getTestSectionMap();
+  const examMap = getTestExamsMap();
   const buckets = {};
 
   // Tests assigned to an admin-defined exam bucket per EXAM, not per group —
@@ -71,10 +71,9 @@ function gradeRecordsByGroup(records) {
   for (const r of records) {
     const testId = String(r.test?.testId ?? r.test_id ?? '');
     if (testId && examMap.has(testId)) {
-      // Per-exam hidden students: their attempts on the exam's tests are
-      // ignored entirely (not even legacy-bucketed — the exam owns the test).
-      const uid = String(r.student?.userId ?? r.user_id ?? '');
-      if (examMap.get(testId).hidden?.has(uid)) continue;
+      // Keep the latest attempt per test regardless of exam; per-exam hidden
+      // students are filtered when the attempt is folded into each exam below
+      // (a student hidden from one exam may still score in another).
       const prev = latestExamAttempts.get(testId);
       if (!prev || (r.timeFinished || 0) > (prev.timeFinished || 0)) {
         latestExamAttempts.set(testId, r);
@@ -111,30 +110,37 @@ function gradeRecordsByGroup(records) {
     else if (section === 3 || section === 4) { bucket.mathRaw += correct; bucket.mathSeen = true; }
   }
 
-  // Fold the deduped exam attempts into per-exam buckets. The bucket keeps the
-  // groupId/groupName field names (key = exam:<id>, label = exam name) so
-  // curve lookup and downstream consumers work unchanged.
+  // Fold each deduped attempt into EVERY exam that uses its test. A test shared
+  // across programs feeds each exam's bucket; the program-enrollment gate in
+  // getSatScoresForStudent then drops the exams the student isn't enrolled in,
+  // so each student's score resolves to their own program's exam. The bucket
+  // keeps the groupId/groupName field names (key = exam:<id>, label = exam
+  // name) so curve lookup and downstream consumers work unchanged.
   for (const [testId, r] of latestExamAttempts) {
-    const { examId, examName, section } = examMap.get(testId);
-    const key = examCurveKey(examId);
-    if (!buckets[key]) {
-      buckets[key] = {
-        groupId: key,
-        groupName: examName,
-        rwRaw: 0,
-        mathRaw: 0,
-        rwSeen: false,
-        mathSeen: false,
-        latestFinished: 0,
-      };
+    const uid = String(r.student?.userId ?? r.user_id ?? '');
+    for (const { examId, examName, section, hidden } of examMap.get(testId)) {
+      // Per-exam hidden students: their attempt is ignored for THIS exam only.
+      if (hidden?.has(uid)) continue;
+      const key = examCurveKey(examId);
+      if (!buckets[key]) {
+        buckets[key] = {
+          groupId: key,
+          groupName: examName,
+          rwRaw: 0,
+          mathRaw: 0,
+          rwSeen: false,
+          mathSeen: false,
+          latestFinished: 0,
+        };
+      }
+      const bucket = buckets[key];
+      if (r.timeFinished && r.timeFinished > bucket.latestFinished) {
+        bucket.latestFinished = r.timeFinished;
+      }
+      const correct = rawCorrect(r);
+      if (section === 1 || section === 2) { bucket.rwRaw += correct; bucket.rwSeen = true; }
+      else if (section === 3 || section === 4) { bucket.mathRaw += correct; bucket.mathSeen = true; }
     }
-    const bucket = buckets[key];
-    if (r.timeFinished && r.timeFinished > bucket.latestFinished) {
-      bucket.latestFinished = r.timeFinished;
-    }
-    const correct = rawCorrect(r);
-    if (section === 1 || section === 2) { bucket.rwRaw += correct; bucket.rwSeen = true; }
-    else if (section === 3 || section === 4) { bucket.mathRaw += correct; bucket.mathSeen = true; }
   }
 
   return Object.values(buckets);
@@ -235,7 +241,7 @@ async function getSatScoresForStudent(student) {
   // grade, so fill the gaps with pseudo-records (points_scored = raw correct
   // for DSAT, where every question is worth 1 point). Tests with ANY webhook
   // record stay webhook-only to avoid double counting.
-  const examMap = getTestSectionMap();
+  const examMap = getTestExamsMap();
   if (examMap.size > 0 && student.id && !String(student.id).startsWith('sheets:')) {
     const covered = new Set();
     for (const r of records) {
@@ -248,7 +254,10 @@ async function getSatScoresForStudent(student) {
         for (const r of g.results) {
           const tid = String(r.testId ?? '');
           if (!tid || !examMap.has(tid) || covered.has(tid)) continue;
-          if (examMap.get(tid).hidden?.has(String(student.id))) continue;
+          // Only skip the fill when hidden from EVERY exam using the test —
+          // gradeRecordsByGroup applies per-exam hidden when folding, so a
+          // student visible in at least one exam still needs the record.
+          if (examMap.get(tid).every((e) => e.hidden?.has(String(student.id)))) continue;
           records.push({
             test: { testId: tid, testName: r.testName },
             group: { groupId: g.groupId, groupName: g.groupName },
@@ -360,15 +369,18 @@ function modeDate(dates) {
 // to default an exam's date when no date was set by hand; one cheap DB read
 // covers all exams so the list endpoint stays fast. Returns { examId: date }.
 async function getExamTakenDates() {
-  const examMap = getTestSectionMap(); // testId → { examId, section, hidden }
+  const examMap = getTestExamsMap(); // testId → [{ examId, section, hidden }]
   if (examMap.size === 0) return {};
   const perExam = new Map(); // examId → [date, ...]
   const push = (testId, timeFinished) => {
-    const info = examMap.get(String(testId ?? ''));
-    if (!info || !timeFinished) return;
+    const infos = examMap.get(String(testId ?? ''));
+    if (!infos || !timeFinished) return;
     const date = new Date(timeFinished * 1000).toISOString().split('T')[0];
-    if (!perExam.has(info.examId)) perExam.set(info.examId, []);
-    perExam.get(info.examId).push(date);
+    // A shared test dates every exam that uses it (each program's sitting).
+    for (const info of infos) {
+      if (!perExam.has(info.examId)) perExam.set(info.examId, []);
+      perExam.get(info.examId).push(date);
+    }
   };
   // Webhook store …
   for (const r of await db.getAllRecords()) {

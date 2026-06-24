@@ -241,19 +241,22 @@ function deleteExam(examId) {
   return true;
 }
 
-// testId → { examId, examName, section: 1|2|3|4, hidden: Set<userId> } across
-// all defined exams. Consumed by sat.service (score bucketing) and
-// webhook.service (latest-exam selection + English/Math split). `hidden`
-// carries the exam's excluded student ids so consumers can skip their
-// attempts without re-reading the exam list.
-function getTestSectionMap() {
+// testId → [{ examId, examName, section: 1|2|3|4, hidden: Set<userId> }] for
+// EVERY exam that uses the test. A test may be reused across exams in different
+// programs, so a single attempt can feed more than one exam's score — the
+// program-enrollment gate in sat.service then keeps only the exam(s) the
+// student is actually enrolled in. `hidden` carries each exam's excluded
+// student ids so consumers can skip their attempts without re-reading the list.
+function getTestExamsMap() {
   const map = new Map();
   for (const exam of load()) {
     const hidden = new Set(exam.hiddenStudentIds || []);
     for (const key of SECTION_KEYS) {
       const s = exam.sections?.[key];
       if (s?.testId != null) {
-        map.set(String(s.testId), {
+        const tid = String(s.testId);
+        if (!map.has(tid)) map.set(tid, []);
+        map.get(tid).push({
           examId: exam.examId,
           examName: exam.name,
           section: Number(key),
@@ -262,6 +265,16 @@ function getTestSectionMap() {
       }
     }
   }
+  return map;
+}
+
+// testId → a single representative { examId, examName, section, hidden } (the
+// first exam that uses the test). Sufficient for consumers that only need the
+// section split or an "is this test exam-assigned?" check; score bucketing and
+// taken-date aggregation use getTestExamsMap so a shared test spans every exam.
+function getTestSectionMap() {
+  const map = new Map();
+  for (const [tid, entries] of getTestExamsMap()) map.set(tid, entries[0]);
   return map;
 }
 
@@ -280,6 +293,7 @@ module.exports = {
   deleteExam,
   reorderExams,
   getTestSectionMap,
+  getTestExamsMap,
   examCurveKey,
   getExamsVersion,
   SECTION_KEYS,
