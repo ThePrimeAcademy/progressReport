@@ -1,6 +1,6 @@
 // routes/students.routes.js
 const express = require('express');
-const { getAllStudents, getStudentById, clearCache, fetchCategoryMap, getCategoryName, getActiveStudentIds } = require('../services/classmarker.service');
+const { getAllStudents, getStudentById, clearCache, fetchCategoryMap, getCategoryName } = require('../services/classmarker.service');
 const db = require('../services/db.service');
 
 const router = express.Router();
@@ -112,30 +112,21 @@ router.get('/debug/categories', async (req, res) => {
 });
 
 /**
- * GET /api/students/active?startDate=YYYY-MM-DD&endDate=YYYY-MM-DD&dayOfWeek=1,3
- * Returns an array of ClassMarker user_ids that have at least one finished
- * test inside the given date range (+ optional day-of-week filter). Uses the
- * already-cached ClassMarker results so there is NO outbound API call to
- * ClassMarker — pure in-memory scan.
+ * GET /api/students/active
+ * Returns the ids of every student, unconditionally. The startDate/endDate/
+ * dayOfWeek query params are still accepted but intentionally ignored:
+ * filtering to "has a finished test in the range" hid any student with no
+ * results in the selected window (e.g. joined late or missed a week), making
+ * them unselectable in the report picker. The picker must always list
+ * everyone, so no date filtering happens here anymore.
  *
  * Note: this MUST be declared before /:id/contacts so it isn't matched as
  * a student id called "active".
  */
 router.get('/active', async (req, res, next) => {
   try {
-    const { startDate, endDate } = req.query;
-    let { dayOfWeek } = req.query;
-    if (typeof dayOfWeek === 'string' && dayOfWeek.length > 0) {
-      dayOfWeek = dayOfWeek.split(',').filter(Boolean);
-    } else {
-      dayOfWeek = null;
-    }
-    if (!startDate || !endDate) {
-      const all = await getAllStudents();
-      return res.json({ success: true, data: all.map((s) => s.id) });
-    }
-    const ids = await getActiveStudentIds(startDate, endDate, dayOfWeek);
-    res.json({ success: true, data: ids });
+    const all = await getAllStudents();
+    res.json({ success: true, data: all.map((s) => s.id) });
   } catch (err) {
     next(err);
   }
