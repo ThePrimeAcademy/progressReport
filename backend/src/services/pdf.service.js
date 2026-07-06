@@ -369,17 +369,14 @@ async function getBrowser() {
     } catch (_) { /* fall through and relaunch */ }
     browserPromise = null;
   }
-   browserPromise = puppeteer.launch({
+  browserPromise = puppeteer.launch({
     headless: 'new',
     executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
-    args: [
-      '--no-sandbox', 
-      '--disable-setuid-sandbox',
-      '--disable-dev-shm-usage',
-      '--disable-gpu',
-      '--no-zygote',
-      '--single-process'
-    ],
+    // --disable-dev-shm-usage: containers get a 64MB /dev/shm by default and
+    // Chrome's renderer crashes when it fills; use /tmp instead. Do not add
+    // --single-process/--no-zygote here: unsupported, and they did not fix
+    // the 2026-07-05 launch failures (root cause was a chromium version bump).
+    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
   });
   return browserPromise;
 }

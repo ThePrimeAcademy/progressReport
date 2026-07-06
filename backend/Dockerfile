@@ -1,10 +1,17 @@
 FROM node:20-bookworm-slim
 
 ENV NODE_ENV=production
-ENV PUPPETEER_SKIP_DOWNLOAD=true
+# Chrome is installed by Puppeteer below, version-matched to the puppeteer
+# release in package-lock.json. Do NOT switch back to Debian's `chromium`
+# apt package: it is unpinned, so any image rebuild silently picks up
+# whatever Debian ships that day. A rebuild on 2026-07-05 bumped chromium
+# 149 -> 150, which Puppeteer 22.x (pinned to Chrome 127) could not launch,
+# and every PDF render in production failed until this was replaced.
+ENV PUPPETEER_CACHE_DIR=/app/.chrome
 
+# Shared libraries Chrome needs on a -slim image (it is not an apt package,
+# so nothing pulls these in for us).
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    chromium \
     python3 \
     ca-certificates \
     fonts-liberation \
@@ -35,6 +42,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxext6 \
     libxfixes3 \
     libxi6 \
+    libxkbcommon0 \
     libxrandr2 \
     libxrender1 \
     libxshmfence1 \
@@ -47,12 +55,13 @@ WORKDIR /app
 
 COPY package*.json ./
 RUN npm ci --omit=dev
+# Idempotent if the npm postinstall already downloaded it; guarantees the
+# browser is present even if that step is ever skipped.
+RUN npx puppeteer browsers install chrome
 
 COPY src ./src
-# v2
 
 ENV PORT=5000
-ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 
 EXPOSE 5000
 
