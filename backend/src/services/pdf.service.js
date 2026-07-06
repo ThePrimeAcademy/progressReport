@@ -369,10 +369,17 @@ async function getBrowser() {
     } catch (_) { /* fall through and relaunch */ }
     browserPromise = null;
   }
-  browserPromise = puppeteer.launch({
+   browserPromise = puppeteer.launch({
     headless: 'new',
     executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
-    args: ['--no-sandbox', '--disable-setuid-sandbox'],
+    args: [
+      '--no-sandbox', 
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-gpu',
+      '--no-zygote',
+      '--single-process'
+    ],
   });
   return browserPromise;
 }
