@@ -17,10 +17,10 @@ const crypto = require('crypto');
 const router = express.Router();
 
 // ── Async send + job tracking for /api/report/email ────────────────────────
-// Railway's edge closes idle HTTP connections at ~30s but PDF render + Gmail
+// Railway's edge closes idle HTTP connections at ~30s but PDF render + SMTP
 // send commonly takes 30-45s. If the route blocked on the full pipeline, the
 // browser saw "network error" mid-flight even though the email had already
-// been queued (or even delivered) by Gmail.
+// been queued (or even delivered) by Zoho.
 //
 // New shape: POST returns immediately with a jobId. The actual work runs in
 // the background. The frontend polls GET /email/job/:jobId every 2s for the

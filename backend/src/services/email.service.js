@@ -1,29 +1,27 @@
 // services/email.service.js
-// Sends progress-report emails via the Gmail API (HTTPS, not SMTP) using a
-// long-lived OAuth refresh token. Works from any cloud host because it never
-// opens an SMTP port — Gmail's REST endpoint is on standard HTTPS.
+// Sends progress-report emails via Zoho Mail over SMTP using nodemailer.
+// We use an app-specific password (not the account password) so 2FA on the
+// Zoho account doesn't block programmatic sending.
 //
 // Required env vars (set on Railway):
-//   GOOGLE_CLIENT_ID       — from Google Cloud Console > Credentials
-//   GOOGLE_CLIENT_SECRET   — same place
-//   GOOGLE_REFRESH_TOKEN   — generated locally via scripts/get-gmail-refresh-token.js
+//   ZOHO_USER           — the full Zoho mailbox address, e.g. admin@primeacademynova.com
+//   ZOHO_APP_PASSWORD   — Zoho > Settings > Security > App Passwords. Spaces in
+//                         the displayed value are ignored (we strip them).
 //
-// Optional env var:
-//   EMAIL_FROM   — display name + address used in the From: header. Must
-//                  match the authenticated Gmail account or one of its
-//                  Send-As aliases, otherwise Gmail rejects the send.
-//                  If unset, Gmail uses the authenticated account directly.
-//
-// Local first-time setup is documented in scripts/get-gmail-refresh-token.js.
+// Optional env vars:
+//   ZOHO_HOST    — SMTP host. Defaults to smtp.zoho.com (US data center).
+//                  Use smtp.zoho.eu / smtp.zoho.in / smtp.zoho.com.au for
+//                  other data centers, or smtppro.zoho.com for some org plans.
+//   ZOHO_PORT    — 465 (implicit TLS, default) or 587 (STARTTLS).
+//   EMAIL_FROM   — display name + address used in the From: header, e.g.
+//                  "Prime Academy <admin@primeacademynova.com>". Must be the
+//                  Zoho mailbox or one of its verified aliases, otherwise Zoho
+//                  rejects the send. Defaults to ZOHO_USER.
 
-const { google } = require('googleapis');
+const nodemailer = require('nodemailer');
 
 function isConfigured() {
-  return Boolean(
-    process.env.GOOGLE_CLIENT_ID &&
-    process.env.GOOGLE_CLIENT_SECRET &&
-    process.env.GOOGLE_REFRESH_TOKEN
-  );
+  return Boolean(process.env.ZOHO_USER && process.env.ZOHO_APP_PASSWORD);
 }
 
 function buildDefaultSubject(_studentName) {
@@ -72,74 +70,33 @@ function buildHtmlBody(studentName, startDate, endDate) {
 <p>Best regards,<br />Prime Academy</p>`;
 }
 
-let _oauth2Client = null;
-function getOAuth2Client() {
-  if (_oauth2Client) return _oauth2Client;
-  _oauth2Client = new google.auth.OAuth2(
-    process.env.GOOGLE_CLIENT_ID,
-    process.env.GOOGLE_CLIENT_SECRET
-  );
-  _oauth2Client.setCredentials({ refresh_token: process.env.GOOGLE_REFRESH_TOKEN });
-  return _oauth2Client;
-}
-
-function getGmail() {
-  return google.gmail({ version: 'v1', auth: getOAuth2Client() });
-}
-
-// RFC 2047 encoding for non-ASCII in headers (subject, names) — wraps in
-// =?UTF-8?B?...?= so Gmail and other clients render unicode correctly.
-function encodeHeader(value) {
-  // eslint-disable-next-line no-control-regex
-  if (/^[\x00-\x7F]*$/.test(value)) return value;
-  return `=?UTF-8?B?${Buffer.from(value, 'utf-8').toString('base64')}?=`;
-}
-
-function buildRfc822Message({ from, to, subject, html, attachments }) {
-  const boundary = `----=_PrimeReport_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
-
-  const lines = [];
-  if (from) lines.push(`From: ${encodeHeader(from)}`);
-  lines.push(`To: ${to.join(', ')}`);
-  lines.push(`Subject: ${encodeHeader(subject)}`);
-  lines.push('MIME-Version: 1.0');
-  lines.push(`Content-Type: multipart/mixed; boundary="${boundary}"`);
-  lines.push('');
-  lines.push(`--${boundary}`);
-  lines.push('Content-Type: text/html; charset="UTF-8"');
-  lines.push('Content-Transfer-Encoding: 7bit');
-  lines.push('');
-  lines.push(html);
-  lines.push('');
-  for (const att of attachments) {
-    const pdfBase64 = Buffer.from(att.content).toString('base64');
-    // RFC 5322: lines must be <= 998 chars; base64 typically wraps at 76.
-    const pdfWrapped = pdfBase64.match(/.{1,76}/g).join('\r\n');
-    lines.push(`--${boundary}`);
-    lines.push(`Content-Type: application/pdf; name="${att.filename}"`);
-    lines.push(`Content-Disposition: attachment; filename="${att.filename}"`);
-    lines.push('Content-Transfer-Encoding: base64');
-    lines.push('');
-    lines.push(pdfWrapped);
-    lines.push('');
-  }
-  lines.push(`--${boundary}--`);
-  return lines.join('\r\n');
-}
-
-// Gmail expects URL-safe base64 with no padding.
-function toBase64Url(input) {
-  return Buffer.from(input, 'utf-8')
-    .toString('base64')
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=+$/, '');
+let _transporter = null;
+function getTransporter() {
+  if (_transporter) return _transporter;
+  const host = process.env.ZOHO_HOST || 'smtp.zoho.com';
+  const port = Number(process.env.ZOHO_PORT) || 465;
+  _transporter = nodemailer.createTransport({
+    host,
+    port,
+    secure: port === 465, // 465 = implicit TLS; 587 uses STARTTLS
+    auth: {
+      user: process.env.ZOHO_USER,
+      // App passwords are displayed in space-separated groups; the spaces are
+      // cosmetic, so strip them to tolerate copy-paste either way.
+      pass: String(process.env.ZOHO_APP_PASSWORD || '').replace(/\s+/g, ''),
+    },
+    // Fail fast with a clear error if the host blocks outbound SMTP instead of
+    // letting the send job hang.
+    connectionTimeout: 15000,
+    greetingTimeout: 15000,
+  });
+  return _transporter;
 }
 
 async function sendReportEmail({ studentName, recipients, pdfBuffer, filename, startDate, endDate, subject, attachments = [] }) {
   if (!isConfigured()) {
     const err = new Error(
-      'Email service not configured. Set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, and GOOGLE_REFRESH_TOKEN on the backend.'
+      'Email service not configured. Set ZOHO_USER and ZOHO_APP_PASSWORD on the backend.'
     );
     err.status = 503;
     throw err;
@@ -154,54 +111,51 @@ async function sendReportEmail({ studentName, recipients, pdfBuffer, filename, s
 
   const finalSubject = (subject && String(subject).trim()) || buildDefaultSubject(studentName);
   const html = buildHtmlBody(studentName, startDate, endDate);
-  const from = process.env.EMAIL_FROM || '';
+  const from = process.env.EMAIL_FROM || process.env.ZOHO_USER;
 
-  const rfc822 = buildRfc822Message({
-    from,
-    to,
-    subject: finalSubject,
-    html,
-    attachments: [
-      { filename: filename || 'progress-report.pdf', content: pdfBuffer },
-      ...(attachments || []),
-    ],
-  });
+  const mailAttachments = [
+    { filename: filename || 'progress-report.pdf', content: pdfBuffer, contentType: 'application/pdf' },
+    ...(attachments || []).map((a) => ({
+      filename: a.filename,
+      content: a.content,
+      contentType: a.contentType || 'application/pdf',
+    })),
+  ];
 
   try {
-    const res = await getGmail().users.messages.send({
-      userId: 'me',
-      requestBody: { raw: toBase64Url(rfc822) },
+    const info = await getTransporter().sendMail({
+      from,
+      to,
+      subject: finalSubject,
+      html,
+      attachments: mailAttachments,
     });
-    return { id: res?.data?.id || null, to, subject: finalSubject };
+    return { id: info?.messageId || null, to, subject: finalSubject };
   } catch (e) {
-    const upstream = e?.errors?.[0]?.message || e.message;
-    const err = new Error(`Gmail API send failed: ${upstream}`);
+    const err = new Error(`Zoho SMTP send failed: ${e.message}`);
     err.status = 502;
     throw err;
   }
 }
 
-// verifyConnection — confirms the OAuth refresh token + client credentials
-// are valid by exchanging the refresh token for a fresh access token. This
-// works regardless of which Gmail scope was granted (we only request
-// gmail.send, which is insufficient for users.getProfile).
+// verifyConnection — opens an SMTP connection and runs the AUTH handshake
+// against Zoho without sending anything, confirming the host, port, and
+// app-password credentials are all valid.
 async function verifyConnection() {
   if (!isConfigured()) {
-    const err = new Error('Gmail API not configured (set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REFRESH_TOKEN)');
+    const err = new Error('Zoho SMTP not configured (set ZOHO_USER, ZOHO_APP_PASSWORD)');
     err.status = 503;
     throw err;
   }
   try {
-    const { token } = await getOAuth2Client().getAccessToken();
-    if (!token) throw new Error('No access token returned');
+    await getTransporter().verify();
     return {
       ok: true,
-      scope: 'gmail.send',
-      tokenPreview: token.slice(0, 12) + '…',
+      host: process.env.ZOHO_HOST || 'smtp.zoho.com',
+      user: process.env.ZOHO_USER,
     };
   } catch (e) {
-    const upstream = e?.errors?.[0]?.message || e.response?.data?.error_description || e.message;
-    const err = new Error(`Gmail API verify failed: ${upstream}`);
+    const err = new Error(`Zoho SMTP verify failed: ${e.message}`);
     err.status = 502;
     throw err;
   }

@@ -236,7 +236,7 @@ export default function EmailReportPanel({
 
       {!configured && (
         <div style={s.warn}>
-          Email sending isn't configured. Set <code>GOOGLE_CLIENT_ID</code>, <code>GOOGLE_CLIENT_SECRET</code>, and <code>GOOGLE_REFRESH_TOKEN</code> on the backend (see <code>backend/.env.example</code>).
+          Email sending isn't configured. Set <code>ZOHO_USER</code> and <code>ZOHO_APP_PASSWORD</code> on the backend (see <code>backend/.env.example</code>).
         </div>
       )}
       {error && <div style={s.error}>{error}</div>}

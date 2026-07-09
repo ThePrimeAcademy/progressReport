@@ -271,7 +271,7 @@ export function useGenerateReport() {
       if (!jobId) throw new Error('Server did not return a job id.');
 
       // Poll every 2s; total budget ~3 minutes which is well past any realistic
-      // PDF + Gmail latency. The dedupe key/jobId is stable across retries, so
+      // PDF + SMTP latency. The dedupe key/jobId is stable across retries, so
       // re-clicking Send while a job is pending just rejoins the same job.
       const maxAttempts = 90;
       let job = null;
