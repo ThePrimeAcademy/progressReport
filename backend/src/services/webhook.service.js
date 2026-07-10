@@ -300,6 +300,7 @@ const qSec = Number(q.sectionNumber);
       if (!map[name]) map[name] = { name, correct: 0, total: 0 };
       map[name].total += 1;
       if (q.correct) map[name].correct += 1;}
+  }
 
   const toArray = (map) =>
     Object.values(map)
