@@ -2,7 +2,8 @@ const crypto = require('crypto');
 const db = require('./db.service');
 const { getCategoryName, fetchCategoryMap, mergeWebhookResult } = require('./classmarker.service');
 const { deriveTestSection, isSatGroupName } = require('./sat.service');
-const { getTestSectionMap } = require('./exam.service');
+const { getTestSectionMap, getExam } = require('./exam.service');
+
 
 // Pre-fetch category map on startup
 fetchCategoryMap().catch(() => { });
@@ -282,20 +283,23 @@ async function getWebhookCategoryPerformanceSplit(student, startDate, endDate, d
       const name = resolveName(cur?.categoryId ?? q.categoryId, cur?.categoryName ?? q.categoryName);
       if (!name || name === 'Unknown') continue;
 
-      const qSec = Number(q.sectionNumber);
-      // Exam mapping wins over the per-question section number — standalone
-      // ClassMarker tests report every question as section 1 regardless of
-      // which DSAT section the test actually represents.
+const qSec = Number(q.sectionNumber);
       const section = examSection ?? ((qSec >= 1 && qSec <= 4) ? qSec : recordSection);
       if (!section) continue;
 
       hasSectionData = true;
-      const map = section <= 2 ? enMap : maMap;
+      
+      // DYNAMIC SECTION CHECK
+      const mappedExamId = examMap.get(String(testId))?.examId;
+      const examObj = mappedExamId ? getExam(mappedExamId) : null;
+      const isTwoSection = examObj && !examObj.sections?.['3'] && !examObj.sections?.['4'];
+      
+      const isRw = isTwoSection ? (section === 1) : (section <= 2);
+      const map = isRw ? enMap : maMap;
+      
       if (!map[name]) map[name] = { name, correct: 0, total: 0 };
       map[name].total += 1;
       if (q.correct) map[name].correct += 1;
-    }
-  }
 
   const toArray = (map) =>
     Object.values(map)
