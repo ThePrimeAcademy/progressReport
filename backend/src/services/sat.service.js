@@ -138,8 +138,16 @@ function gradeRecordsByGroup(records) {
         bucket.latestFinished = r.timeFinished;
       }
       const correct = rawCorrect(r);
-      if (section === 1 || section === 2) { bucket.rwRaw += correct; bucket.rwSeen = true; }
-      else if (section === 3 || section === 4) { bucket.mathRaw += correct; bucket.mathSeen = true; }
+     const examObj = getExam(examId);
+      
+      // DYNAMIC SECTION CHECK: Is this a 2-section or 4-section exam?
+      const isTwoSection = examObj && !examObj.sections?.['3'] && !examObj.sections?.['4'];
+      
+      const isRw = isTwoSection ? (section === 1) : (section === 1 || section === 2);
+      const isMath = isTwoSection ? (section === 2) : (section === 3 || section === 4);
+
+      if (isRw) { bucket.rwRaw += correct; bucket.rwSeen = true; }
+      else if (isMath) { bucket.mathRaw += correct; bucket.mathSeen = true; }
     }
   }
 
