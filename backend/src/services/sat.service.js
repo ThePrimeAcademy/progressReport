@@ -459,17 +459,25 @@ async function getExamScoreboard(examId) {
     }
   }
 
-  const rwCurve = getCurve(examCurveKey(examId), 'rw');
+ const rwCurve = getCurve(examCurveKey(examId), 'rw');
   const mathCurve = getCurve(examCurveKey(examId), 'math');
+
+  // DYNAMIC SECTION CHECK
+  const isTwoSection = !exam.sections?.['3'] && !exam.sections?.['4'];
 
   const rows = Array.from(perStudent.entries()).map(([uid, entry]) => {
     let rwRaw = null;
     let mathRaw = null;
     let latestFinished = 0;
+    
     for (const [tid, attempt] of entry.tests) {
       const section = sectionOfTest.get(tid);
-      if (section <= 2) rwRaw = (rwRaw || 0) + attempt.correct;
+      
+      const isRw = isTwoSection ? (section === 1) : (section <= 2);
+      
+      if (isRw) rwRaw = (rwRaw || 0) + attempt.correct;
       else mathRaw = (mathRaw || 0) + attempt.correct;
+      
       if (attempt.timeFinished > latestFinished) latestFinished = attempt.timeFinished;
     }
     const rwScaled = rwRaw != null && rwCurve ? gradeScaled(rwCurve, rwRaw) : null;
