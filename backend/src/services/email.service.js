@@ -94,7 +94,7 @@ async function sendReportEmail({ studentName, recipients, pdfBuffer, filename, s
   }
 
   try {
-    const to = (recipients || []).map((e) => String(e || '').trim()).filter(Boolean);
+  const to = (recipients || []).map((e) => String(e || '').trim()).filter((e) => e && e.includes('@') && !e.includes('example.com'));
     if (to.length === 0) {
       const err = new Error('At least one recipient email is required.');
       err.status = 400;
