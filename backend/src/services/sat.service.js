@@ -49,7 +49,7 @@ function deriveTestSection(testName, groupName, questions) {
     if (sec >= 1 && sec <= 4) return sec;
   }
   return null;
-}
+
 }
 
 // Raw correct count for a record. Prefer counting correct questions when
