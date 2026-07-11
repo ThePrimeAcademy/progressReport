@@ -264,63 +264,55 @@ export default function ExamRow({
       {expanded && (
         <>
           <div style={s.sectionList}>
-       {(() => {
-              // Hide Sections 3 & 4 if they have no test assigned
-              const isTwoSection = !exam.sections?.['3']?.testId && !exam.sections?.['4']?.testId;
-              const visibleSections = isTwoSection 
-                ? SECTION_DEFS.filter(d => d.key === '1' || d.key === '2')
-                : SECTION_DEFS;
-
-              return visibleSections.map(({ key, label }) => {
-                const assigned = exam.sections?.[key];
-                const editing = sectionEditing?.key === key;
-                return (
-                  <div
-                    key={key}
-                    style={{ ...s.sectionChip, cursor: 'pointer', ...(editing ? s.sectionChipEditing : null) }}
-                    onClick={() => !editing && setSectionEditing({ key, group: testGroup(assigned?.testId) })}
-                    title="Click to change this section's test"
-                  >
-                    <span style={s.sectionLabel}>{label}</span>
-                    {editing ? (
-                      <div
-                        style={s.sectionEditPanel}
-                        onClick={(e) => e.stopPropagation()}
-                        onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setSectionEditing(null); }}
+            {SECTION_DEFS.map(({ key, label }) => {
+              const assigned = exam.sections?.[key];
+              const editing = sectionEditing?.key === key;
+              return (
+                <div
+                  key={key}
+                  style={{ ...s.sectionChip, cursor: 'pointer', ...(editing ? s.sectionChipEditing : null) }}
+                  onClick={() => !editing && setSectionEditing({ key, group: testGroup(assigned?.testId) })}
+                  title="Click to change this section's test"
+                >
+                  <span style={s.sectionLabel}>{label}</span>
+                  {editing ? (
+                    <div
+                      style={s.sectionEditPanel}
+                      onClick={(e) => e.stopPropagation()}
+                      onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setSectionEditing(null); }}
+                    >
+                      <select
+                        style={s.select}
+                        autoFocus
+                        value={sectionEditing.group || ''}
+                        onChange={(e) => setSectionEditing((cur) => ({ ...cur, group: e.target.value }))}
                       >
-                        <select
-                          style={s.select}
-                          autoFocus
-                          value={sectionEditing.group || ''}
-                          onChange={(e) => setSectionEditing((cur) => ({ ...cur, group: e.target.value }))}
-                        >
-                          <option value="">All groups</option>
-                          {groupsForSlot(key).map((g) => <option key={g} value={g}>{g}</option>)}
-                        </select>
-                        <select
-                          style={s.select}
-                          value={assigned?.testId || ''}
-                          onChange={(e) => setSection(key, e.target.value)}
-                        >
-                          <option value="">— none —</option>
-                          {sectionOptions(key)
-                            .filter((t) => inGroup(t, sectionEditing.group))
-                            .map((t) => (
-                              <option key={t.testId} value={t.testId}>
-                                {t.testName} ({t.attempts} attempt{t.attempts === 1 ? '' : 's'})
-                              </option>
-                            ))}
-                        </select>
-                      </div>
-                    ) : assigned ? (
-                      <span>{assigned.testName || `Test #${assigned.testId}`}</span>
-                    ) : (
-                      <span style={s.sectionEmpty}>not assigned</span>
-                    )}
-                  </div>
-                );
-              });
-            })()}
+                        <option value="">All groups</option>
+                        {groupsForSlot(key).map((g) => (
+                          <option key={g} value={g}>{g}</option>
+                        ))}
+                      </select>
+                      <select
+                        style={s.select}
+                        value={assigned?.testId || ''}
+                        onChange={(e) => setSection(key, e.target.value)}
+                      >
+                        <option value="">— none —</option>
+                        {sectionOptions(key)
+                          .filter((t) => inGroup(t, sectionEditing.group))
+                          .map((t) => (
+                            <option key={t.testId} value={t.testId}>
+                              {t.testName} ({t.attempts} attempt{t.attempts === 1 ? '' : 's'})
+                            </option>
+                          ))}
+                      </select>
+                    </div>
+                  ) : assigned
+                    ? <span>{assigned.testName || `Test #${assigned.testId}`}</span>
+                    : <span style={s.sectionEmpty}>not assigned</span>}
+                </div>
+              );
+            })}
           </div>
           <ScoringSheetUpload
             groupId={exam.curveKey}
