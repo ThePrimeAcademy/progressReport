@@ -40,7 +40,7 @@ function deriveTestSection(testName, groupName, questions) {
   if (m) {
     const n = Number(m[1]);
     if (n >= 1 && n <= 4) return n;
-  }
+  
   // ... rest of function
   }
   const gn = String(groupName || '');
