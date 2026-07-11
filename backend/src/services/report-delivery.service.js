@@ -113,7 +113,10 @@ async function buildAndSendReport({
     }
   }
 
-  const sendResult = await sendReportEmail({
+ // Inside buildAndSendReport
+let sendResult;
+try {
+  sendResult = await sendReportEmail({
     studentName: data.student.name,
     recipients,
     pdfBuffer,
@@ -123,17 +126,11 @@ async function buildAndSendReport({
     subject,
     attachments,
   });
-
-  // Persist whichever of student/parent emails were supplied so the contact
-  // pills stay accurate. A scheduled batch always carries its recipients.
-  if (studentEmail !== undefined || parentEmail !== undefined) {
-    await db.setContacts(studentId, {
-      studentEmail: studentEmail || '',
-      parentEmail: parentEmail || '',
-    });
-  }
-
-  return sendResult;
+} catch (err) {
+  // Log the actual error from Zoho, not just "send failed"
+  console.error(`[report] SMTP failure for ${data.student.id}:`, err.message, err.stack);
+  throw err; // Re-throw so the caller knows the job failed
+}
 }
 
 module.exports = {
