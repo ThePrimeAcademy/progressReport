@@ -138,16 +138,8 @@ function gradeRecordsByGroup(records) {
         bucket.latestFinished = r.timeFinished;
       }
       const correct = rawCorrect(r);
-     const examObj = getExam(examId);
-      
-      // DYNAMIC SECTION CHECK: Is this a 2-section or 4-section exam?
-      const isTwoSection = examObj && !examObj.sections?.['3'] && !examObj.sections?.['4'];
-      
-      const isRw = isTwoSection ? (section === 1) : (section === 1 || section === 2);
-      const isMath = isTwoSection ? (section === 2) : (section === 3 || section === 4);
-
-      if (isRw) { bucket.rwRaw += correct; bucket.rwSeen = true; }
-      else if (isMath) { bucket.mathRaw += correct; bucket.mathSeen = true; }
+      if (section === 1 || section === 2) { bucket.rwRaw += correct; bucket.rwSeen = true; }
+      else if (section === 3 || section === 4) { bucket.mathRaw += correct; bucket.mathSeen = true; }
     }
   }
 
@@ -459,25 +451,17 @@ async function getExamScoreboard(examId) {
     }
   }
 
- const rwCurve = getCurve(examCurveKey(examId), 'rw');
+  const rwCurve = getCurve(examCurveKey(examId), 'rw');
   const mathCurve = getCurve(examCurveKey(examId), 'math');
-
-  // DYNAMIC SECTION CHECK
-  const isTwoSection = !exam.sections?.['3'] && !exam.sections?.['4'];
 
   const rows = Array.from(perStudent.entries()).map(([uid, entry]) => {
     let rwRaw = null;
     let mathRaw = null;
     let latestFinished = 0;
-    
     for (const [tid, attempt] of entry.tests) {
       const section = sectionOfTest.get(tid);
-      
-      const isRw = isTwoSection ? (section === 1) : (section <= 2);
-      
-      if (isRw) rwRaw = (rwRaw || 0) + attempt.correct;
+      if (section <= 2) rwRaw = (rwRaw || 0) + attempt.correct;
       else mathRaw = (mathRaw || 0) + attempt.correct;
-      
       if (attempt.timeFinished > latestFinished) latestFinished = attempt.timeFinished;
     }
     const rwScaled = rwRaw != null && rwCurve ? gradeScaled(rwCurve, rwRaw) : null;
