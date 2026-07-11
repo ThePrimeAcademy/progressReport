@@ -119,15 +119,36 @@ async function sendReportEmail({ studentName, recipients, pdfBuffer, filename, s
     })),
   ];
 
-  try {
-    const info = await getTransporter().sendMail({
-      from,
-      to,
-      subject: finalSubject,
-      html,
-      attachments: mailAttachments,
-    });
-    return { id: info?.messageId || null, to, subject: finalSubject };
+  const results = [];
+  
+  for (const recipient of to) {
+    try {
+      const info = await getTransporter().sendMail({
+        from,
+        to: recipient, // Send individually
+        subject: finalSubject,
+        html,
+        attachments: mailAttachments,
+      });
+      results.push(info);
+      
+      // Delay for 2 seconds to avoid rate limiting
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      
+    } catch (e) {
+      console.error(`Failed to send to ${recipient}: ${e.message}`);
+    }
+  }
+
+  if (results.length === 0) {
+    throw new Error('All email sends failed.');
+  }
+
+  return { 
+    id: results.map(r => r?.messageId).join(','), 
+    to: to, 
+    subject: finalSubject 
+  };
   } catch (e) {
     const err = new Error(`Zoho SMTP send failed: ${e.message}`);
     err.status = 502;
