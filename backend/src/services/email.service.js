@@ -78,15 +78,12 @@ function getTransporter() {
   _transporter = nodemailer.createTransport({
     host,
     port,
-    secure: port === 465, // 465 = implicit TLS; 587 uses STARTTLS
+    secure: port === 465, // true for 465, false for 587
+    requireTLS: port === 587, // <--- THIS LINE IS CRITICAL
     auth: {
       user: process.env.ZOHO_USER,
-      // App passwords are displayed in space-separated groups; the spaces are
-      // cosmetic, so strip them to tolerate copy-paste either way.
       pass: String(process.env.ZOHO_APP_PASSWORD || '').replace(/\s+/g, ''),
     },
-    // Fail fast with a clear error if the host blocks outbound SMTP instead of
-    // letting the send job hang.
     connectionTimeout: 15000,
     greetingTimeout: 15000,
   });
