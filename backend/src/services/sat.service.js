@@ -34,9 +34,14 @@ function isSatGroupName(name) {
 // Returns 1|2|3|4 or null if the section can't be determined.
 function deriveTestSection(testName, groupName, questions) {
   const m = String(testName || '').match(/^\s*section\s*(\d+)/i);
+  // ADD THIS LOG:
+  if (!m) console.log(`[DEBUG] Section match failed for: ${testName}`);
+  
   if (m) {
     const n = Number(m[1]);
     if (n >= 1 && n <= 4) return n;
+  }
+  // ... rest of function
   }
   const gn = String(groupName || '');
   if (/\bmath\b/i.test(gn)) return 3;
