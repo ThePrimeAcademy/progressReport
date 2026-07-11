@@ -321,9 +321,6 @@ export default function ExamRow({
                 );
               });
             })()}
-                </div>
-              );
-            })}
           </div>
           <ScoringSheetUpload
             groupId={exam.curveKey}
