@@ -18,6 +18,7 @@
 //                  Zoho mailbox or one of its verified aliases, otherwise Zoho
 //                  rejects the send. Defaults to ZOHO_USER.
 
+// services/email.service.js
 const nodemailer = require('nodemailer');
 
 function isConfigured() {
@@ -44,8 +45,6 @@ function ordinal(n) {
   }
 }
 
-// "2025-10-10" -> "October 10th". Returns the input unchanged if it doesn't
-// match the expected ISO YYYY-MM-DD shape.
 function formatPrettyDate(iso) {
   if (!iso) return '';
   const m = String(iso).match(/^(\d{4})-(\d{2})-(\d{2})/);
@@ -62,9 +61,6 @@ function buildHtmlBody(studentName, startDate, endDate) {
   const sameYear = startISO.slice(0, 4) && startISO.slice(0, 4) === endISO.slice(0, 4);
   const startPretty = formatPrettyDate(startISO);
   const endPretty = formatPrettyDate(endISO) + (sameYear ? '' : (endISO ? `, ${endISO.slice(0, 4)}` : ''));
-  const range = startPretty && endPretty
-    ? ` covering ${startPretty} to ${endPretty}`
-    : '';
   return `<p>Hi,</p>
 <p>Attached is the most recent weekly progress report for ${studentName}.</p>
 <p>Best regards,<br />Prime Academy</p>`;
@@ -78,8 +74,8 @@ function getTransporter() {
   _transporter = nodemailer.createTransport({
     host,
     port,
-    secure: port === 465, // true for 465, false for 587
-    requireTLS: port === 587, // <--- THIS LINE IS CRITICAL
+    secure: port === 465,
+    requireTLS: port === 587,
     auth: {
       user: process.env.ZOHO_USER,
       pass: String(process.env.ZOHO_APP_PASSWORD || '').replace(/\s+/g, ''),
@@ -92,63 +88,58 @@ function getTransporter() {
 
 async function sendReportEmail({ studentName, recipients, pdfBuffer, filename, startDate, endDate, subject, attachments = [] }) {
   if (!isConfigured()) {
-    const err = new Error(
-      'Email service not configured. Set ZOHO_USER and ZOHO_APP_PASSWORD on the backend.'
-    );
+    const err = new Error('Email service not configured. Set ZOHO_USER and ZOHO_APP_PASSWORD on the backend.');
     err.status = 503;
     throw err;
   }
 
-  const to = (recipients || []).map((e) => String(e || '').trim()).filter(Boolean);
-  if (to.length === 0) {
-    const err = new Error('At least one recipient email is required.');
-    err.status = 400;
-    throw err;
-  }
-
-  const finalSubject = (subject && String(subject).trim()) || buildDefaultSubject(studentName);
-  const html = buildHtmlBody(studentName, startDate, endDate);
-  const from = process.env.EMAIL_FROM || process.env.ZOHO_USER;
-
-  const mailAttachments = [
-    { filename: filename || 'progress-report.pdf', content: pdfBuffer, contentType: 'application/pdf' },
-    ...(attachments || []).map((a) => ({
-      filename: a.filename,
-      content: a.content,
-      contentType: a.contentType || 'application/pdf',
-    })),
-  ];
-
-  const results = [];
-  
-  for (const recipient of to) {
-    try {
-      const info = await getTransporter().sendMail({
-        from,
-        to: recipient, // Send individually
-        subject: finalSubject,
-        html,
-        attachments: mailAttachments,
-      });
-      results.push(info);
-      
-      // Delay for 2 seconds to avoid rate limiting
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      
-    } catch (e) {
-      console.error(`Failed to send to ${recipient}: ${e.message}`);
+  try {
+    const to = (recipients || []).map((e) => String(e || '').trim()).filter(Boolean);
+    if (to.length === 0) {
+      const err = new Error('At least one recipient email is required.');
+      err.status = 400;
+      throw err;
     }
-  }
 
-  if (results.length === 0) {
-    throw new Error('All email sends failed.');
-  }
+    const finalSubject = (subject && String(subject).trim()) || buildDefaultSubject(studentName);
+    const html = buildHtmlBody(studentName, startDate, endDate);
+    const from = process.env.EMAIL_FROM || process.env.ZOHO_USER;
 
-  return { 
-    id: results.map(r => r?.messageId).join(','), 
-    to: to, 
-    subject: finalSubject 
-  };
+    const mailAttachments = [
+      { filename: filename || 'progress-report.pdf', content: pdfBuffer, contentType: 'application/pdf' },
+      ...(attachments || []).map((a) => ({
+        filename: a.filename,
+        content: a.content,
+        contentType: a.contentType || 'application/pdf',
+      })),
+    ];
+
+    const results = [];
+    for (const recipient of to) {
+      try {
+        const info = await getTransporter().sendMail({
+          from,
+          to: recipient,
+          subject: finalSubject,
+          html,
+          attachments: mailAttachments,
+        });
+        results.push(info);
+        await new Promise(resolve => setTimeout(resolve, 2000));
+      } catch (e) {
+        console.error(`Failed to send to ${recipient}: ${e.message}`);
+      }
+    }
+
+    if (results.length === 0) {
+      throw new Error('All email sends failed.');
+    }
+
+    return { 
+      id: results.map(r => r?.messageId).join(','), 
+      to: to, 
+      subject: finalSubject 
+    };
   } catch (e) {
     const err = new Error(`Zoho SMTP send failed: ${e.message}`);
     err.status = 502;
@@ -156,9 +147,6 @@ async function sendReportEmail({ studentName, recipients, pdfBuffer, filename, s
   }
 }
 
-// verifyConnection — opens an SMTP connection and runs the AUTH handshake
-// against Zoho without sending anything, confirming the host, port, and
-// app-password credentials are all valid.
 async function verifyConnection() {
   if (!isConfigured()) {
     const err = new Error('Zoho SMTP not configured (set ZOHO_USER, ZOHO_APP_PASSWORD)');
@@ -167,11 +155,7 @@ async function verifyConnection() {
   }
   try {
     await getTransporter().verify();
-    return {
-      ok: true,
-      host: process.env.ZOHO_HOST || 'smtp.zoho.com',
-      user: process.env.ZOHO_USER,
-    };
+    return { ok: true, host: process.env.ZOHO_HOST || 'smtp.zoho.com', user: process.env.ZOHO_USER };
   } catch (e) {
     const err = new Error(`Zoho SMTP verify failed: ${e.message}`);
     err.status = 502;
@@ -179,9 +163,4 @@ async function verifyConnection() {
   }
 }
 
-module.exports = {
-  isConfigured,
-  sendReportEmail,
-  buildDefaultSubject,
-  verifyConnection,
-};
+module.exports = { isConfigured, sendReportEmail, buildDefaultSubject, verifyConnection };
