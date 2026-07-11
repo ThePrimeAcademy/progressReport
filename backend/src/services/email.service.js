@@ -127,7 +127,7 @@ async function sendReportEmail({ studentName, recipients, pdfBuffer, filename, s
         results.push(info);
         await new Promise(resolve => setTimeout(resolve, 2000));
       } catch (e) {
-        console.error(`Failed to send to ${recipient}: ${e.message}`);
+      console.error(`[SMTP ERROR] Failed to send to ${recipient}:`, e);
       }
     }
 
