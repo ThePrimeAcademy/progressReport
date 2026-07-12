@@ -12,11 +12,9 @@ import {
   scheduleBulkEmail,
 } from '../api/reportApi.js';
 
-// One at a time: 3 concurrent PDF+SMTP jobs on Railway often hung in
-// "Sending…" forever (shared Chromium + Zoho). Serial is slower but finishes.
-const MAX_CONCURRENCY = 1;
+const MAX_CONCURRENCY = 3;
 const POLL_INTERVAL_MS = 2000;
-// ~4 minutes — PDF + optional program summary + SMTP can exceed 2 min each.
+// ~4 minutes — PDF + optional program summary + Zoho SMTP can exceed 2 min each.
 const MAX_POLL_ATTEMPTS = 120;
 
 const STATUS_LABEL = {
