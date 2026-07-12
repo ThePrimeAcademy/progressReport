@@ -1,5 +1,6 @@
 require('dotenv').config();
 const cm = require('./services/classmarker.service');
+cm.clearCache(); 
 cm.fetchCategoryMap().catch((err) => console.error('Category fetch failed:', err));
 
 const express = require('express');
