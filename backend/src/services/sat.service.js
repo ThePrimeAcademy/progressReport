@@ -461,8 +461,6 @@ async function getExamScoreboard(examId) {
   const rwCurve = getCurve(examCurveKey(examId), 'rw');
   const mathCurve = getCurve(examCurveKey(examId), 'math');
 
-  // Automatically detect if this is a 2-section combined test layout
-  const isTwoSectionLayout = !Array.from(sectionOfTest.values()).some(sec => sec === 3 || sec === 4);
 
   const rows = Array.from(perStudent.entries()).map(([uid, entry]) => {
     let rwRaw = null;
@@ -471,9 +469,8 @@ async function getExamScoreboard(examId) {
     for (const [tid, attempt] of entry.tests) {
       const section = sectionOfTest.get(tid);
       
-      // If 2-section layout: Section 1 is English, Section 2 is Math. 
-      // Otherwise fallback to legacy 4-section layout rules.
-      const isMath = isTwoSectionLayout ? (section === 2) : (section > 2);
+   // Sections 1-2 = RW, sections 3-4 = Math (combined tests go in 1 and 3)
+const isMath = section > 2;
       
       if (!isMath) rwRaw = (rwRaw || 0) + attempt.correct;
       else mathRaw = (mathRaw || 0) + attempt.correct;
