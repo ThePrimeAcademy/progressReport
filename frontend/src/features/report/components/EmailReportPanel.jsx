@@ -236,7 +236,7 @@ export default function EmailReportPanel({
 
       {!configured && (
         <div style={s.warn}>
-          Email sending isn't configured. Set <code>ZOHO_USER</code> and <code>ZOHO_APP_PASSWORD</code> on the backend (see <code>backend/.env.example</code>).
+          Email sending isn't configured. On Railway Hobby set <code>ZEPTOMAIL_TOKEN</code> (HTTPS — SMTP ports are blocked). See <code>backend/.env.example</code>.
         </div>
       )}
       {error && <div style={s.error}>{error}</div>}
