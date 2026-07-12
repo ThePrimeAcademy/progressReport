@@ -26,8 +26,9 @@ app.use(cors({
   credentials: true,
 }));
 
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
 app.use('/api/webhooks', webhookRoutes);
-app.use(express.json());
 
 app.get('/healthz', (req, res) => {
   res.json({ ok: true });
