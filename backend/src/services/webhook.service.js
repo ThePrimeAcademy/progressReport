@@ -118,7 +118,6 @@ async function findMatchingRecords(student, startDate, endDate, dayOfWeek) {
 //   3. Same groupId as the latest such record, within a 24h window of its timeFinished
 // Whichever side holds the most recent attempt wins. Returns [] if no
 // qualifying records exist.
-const SAT_SECTION_TEST_RE = /^\s*section\s*[1-4]\s*:/i;
 const SAT_EXAM_WINDOW_SECONDS = 24 * 3600;
 
 function selectLatestSatExamRecords(records) {
@@ -132,8 +131,7 @@ function selectLatestSatExamRecords(records) {
     if (examMap.has(recordTestId(r))) return false;
     const gn = r.group?.groupName ?? r.group_name ?? null;
     const tn = r.test?.testName ?? r.test_name ?? '';
-    return isSatGroupName(gn) && SAT_SECTION_TEST_RE.test(String(tn));
-  });
+      return isSatGroupName(gn) && deriveTestSection(tn, gn, r.questions) !== null;
   if (examCandidates.length === 0 && legacyCandidates.length === 0) return [];
 
   const newest = (arr) => arr.reduce(
@@ -286,7 +284,7 @@ async function getWebhookCategoryPerformanceSplit(student, startDate, endDate, d
       // Exam mapping wins over the per-question section number — standalone
       // ClassMarker tests report every question as section 1 regardless of
       // which DSAT section the test actually represents.
-      const section = examSection ?? ((qSec >= 1 && qSec <= 4) ? qSec : recordSection);
+          const section = examSection ?? recordSection ?? ((qSec >= 1 && qSec <= 4) ? qSec : null);
       if (!section) continue;
 
       hasSectionData = true;
