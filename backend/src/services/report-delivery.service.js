@@ -88,13 +88,21 @@ async function buildAndSendReport({
   studentId, startDate, endDate, dayOfWeek,
   recipients, studentEmail, parentEmail, subject, homework,
 }) {
-  const data = await gatherReportData({ studentId, startDate, endDate, dayOfWeek });
+  const t0 = Date.now();
+  const tag = `[report-delivery ${studentId}]`;
 
+  console.log(`${tag} gather data…`);
+  const data = await gatherReportData({ studentId, startDate, endDate, dayOfWeek });
+  console.log(`${tag} gather done in ${Date.now() - t0}ms name=${data.student?.name || '?'}`);
+
+  const tPdf = Date.now();
+  console.log(`${tag} render PDF…`);
   const pdfBuffer = await generateReportPDF(
     data.student, data.groups, data.stats, data.satScores,
     startDate, endDate, data.latestTest, data.categoryPerf, data.categoryPerfSplit, homework
   );
   const filename = `${buildReportFilename(data.student.name)}.pdf`;
+  console.log(`${tag} PDF ready in ${Date.now() - tPdf}ms (${Math.round((pdfBuffer?.length || 0) / 1024)}KB)`);
 
   // Ride the student's program summary along with the report card so families
   // get the group-level "how we're doing" context. Best-effort: a summary
@@ -103,16 +111,20 @@ async function buildAndSendReport({
   const program = getProgramForStudent(data.student.id);
   if (program) {
     try {
+      const tSum = Date.now();
       const summary = await getProgramSummary(program.programId);
       if (summary) {
         const summaryPdf = await generateProgramSummaryPDF(summary);
         attachments.push({ filename: `${program.name} Summary.pdf`, content: summaryPdf });
+        console.log(`${tag} program summary attached in ${Date.now() - tSum}ms`);
       }
     } catch (err) {
-      console.warn(`[report] program summary attach failed for ${data.student.id}:`, err.message);
+      console.warn(`${tag} program summary attach failed:`, err.message);
     }
   }
 
+  const tSmtp = Date.now();
+  console.log(`${tag} SMTP send → ${(recipients || []).join(', ')}`);
   const sendResult = await sendReportEmail({
     studentName: data.student.name,
     recipients,
@@ -123,6 +135,7 @@ async function buildAndSendReport({
     subject,
     attachments,
   });
+  console.log(`${tag} SMTP done in ${Date.now() - tSmtp}ms (total ${Date.now() - t0}ms)`);
 
   // Persist whichever of student/parent emails were supplied so the contact
   // pills stay accurate. A scheduled batch always carries its recipients.

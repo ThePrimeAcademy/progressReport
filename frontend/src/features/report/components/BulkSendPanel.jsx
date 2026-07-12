@@ -12,9 +12,12 @@ import {
   scheduleBulkEmail,
 } from '../api/reportApi.js';
 
-const MAX_CONCURRENCY = 3;
+// One at a time: 3 concurrent PDF+SMTP jobs on Railway often hung in
+// "Sending…" forever (shared Chromium + Zoho). Serial is slower but finishes.
+const MAX_CONCURRENCY = 1;
 const POLL_INTERVAL_MS = 2000;
-const MAX_POLL_ATTEMPTS = 90;
+// ~4 minutes — PDF + optional program summary + SMTP can exceed 2 min each.
+const MAX_POLL_ATTEMPTS = 120;
 
 const STATUS_LABEL = {
   pending: '⏳ Queued',
@@ -219,10 +222,22 @@ function toDatetimeLocalValue(date) {
 async function pollJobUntilTerminal(jobId) {
   for (let i = 0; i < MAX_POLL_ATTEMPTS; i++) {
     await new Promise((r) => setTimeout(r, i === 0 ? 800 : POLL_INTERVAL_MS));
-    const job = await fetchEmailJobStatus(jobId);
+    let job;
+    try {
+      job = await fetchEmailJobStatus(jobId);
+    } catch (err) {
+      // Job map is in-memory — a Railway restart mid-send yields 404.
+      const msg = err.response?.data?.error || err.message || 'Job status check failed';
+      if (err.response?.status === 404) {
+        throw new Error('Send job lost (server restarted mid-send). Try again.');
+      }
+      throw new Error(msg);
+    }
     if (job?.status === 'sent' || job?.status === 'failed') return job;
   }
-  throw new Error('Job did not complete in time.');
+  throw new Error(
+    'Send timed out waiting for the server (~4 min). Check Railway logs for [report-delivery] / [SMTP ERROR].'
+  );
 }
 
 export default function BulkSendPanel({

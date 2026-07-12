@@ -89,19 +89,36 @@ function getTransporter() {
   if (_transporter && _transporterKey === key) return _transporter;
 
   _transporterKey = key;
+  // Timeouts so a stuck Zoho session can't leave bulk-send jobs "pending"
+  // forever (UI would show "Sending…" until the client poll timed out).
+  const connectMs = Number(process.env.SMTP_CONNECTION_TIMEOUT_MS) || 15000;
+  const socketMs = Number(process.env.SMTP_SOCKET_TIMEOUT_MS) || 45000;
   _transporter = nodemailer.createTransport({
     host,
     port,
     secure: port === 465,
     requireTLS: port === 587,
     auth: { user, pass },
-    connectionTimeout: 15000,
-    greetingTimeout: 15000,
+    connectionTimeout: connectMs,
+    greetingTimeout: connectMs,
+    socketTimeout: socketMs,
     // STARTTLS on 587 needs this; on 465 secure already encrypts the socket.
     tls: { minVersion: 'TLSv1.2' },
   });
-  console.log(`[email] SMTP transporter → ${host}:${port} as ${user}`);
+  console.log(`[email] SMTP transporter → ${host}:${port} as ${user} (connect ${connectMs}ms, socket ${socketMs}ms)`);
   return _transporter;
+}
+
+// Hard cap around a single sendMail — nodemailer timeouts are not always
+// reliable on half-open sockets, and large PDF attachments can stall silently.
+function withTimeout(promise, ms, label) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      reject(new Error(`${label} timed out after ${ms}ms`));
+    }, ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
 async function sendReportEmail({ studentName, recipients, pdfBuffer, filename, startDate, endDate, subject, attachments = [] }) {
@@ -136,20 +153,37 @@ async function sendReportEmail({ studentName, recipients, pdfBuffer, filename, s
 
     const results = [];
     const errors = [];
+    const sendTimeoutMs = Number(process.env.SMTP_SEND_TIMEOUT_MS) || 60000;
+    const attachBytes = mailAttachments.reduce((n, a) => n + (a.content?.length || 0), 0);
+    console.log(
+      `[email] sending "${finalSubject}" to ${to.length} recipient(s) ` +
+      `from=${from} attach=${mailAttachments.length} (~${Math.round(attachBytes / 1024)}KB)`
+    );
+
     for (const recipient of to) {
+      const t0 = Date.now();
       try {
-        const info = await getTransporter().sendMail({
-          from,
-          to: recipient,
-          subject: finalSubject,
-          html,
-          attachments: mailAttachments,
-        });
+        const info = await withTimeout(
+          getTransporter().sendMail({
+            from,
+            to: recipient,
+            subject: finalSubject,
+            html,
+            attachments: mailAttachments,
+          }),
+          sendTimeoutMs,
+          `SMTP send to ${recipient}`
+        );
+        console.log(`[email] sent → ${recipient} in ${Date.now() - t0}ms id=${info?.messageId || '?'}`);
         results.push(info);
-        await new Promise(resolve => setTimeout(resolve, 2000));
+        // Brief pause so Zoho's hourly reputation limits are less likely to trip.
+        await new Promise(resolve => setTimeout(resolve, 1500));
       } catch (e) {
-        console.error(`[SMTP ERROR] Failed to send to ${recipient}:`, e);
+        console.error(`[SMTP ERROR] Failed to send to ${recipient} after ${Date.now() - t0}ms:`, e.message || e);
         errors.push(`${recipient}: ${e.message}`);
+        // Drop the cached transporter after a failure — next attempt re-auths clean.
+        _transporter = null;
+        _transporterKey = null;
       }
     }
 

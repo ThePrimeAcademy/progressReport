@@ -10,7 +10,9 @@ const db = require('./db.service');
 const { buildAndSendReport } = require('./report-delivery.service');
 
 const SCHEDULER_INTERVAL_MS = 30 * 1000;
-const ITEM_CONCURRENCY = 3;
+// Serial delivery — concurrent Puppeteer pages + SMTP on a small Railway
+// instance routinely hung bulk jobs. One-at-a-time is slower but reliable.
+const ITEM_CONCURRENCY = 1;
 // Delay the first poll so the DB load + ClassMarker cache warm finishes first.
 const INITIAL_DELAY_MS = 5 * 1000;
 
