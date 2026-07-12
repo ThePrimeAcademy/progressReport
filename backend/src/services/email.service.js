@@ -9,20 +9,34 @@
 //                         the displayed value are ignored (we strip them).
 //
 // Optional env vars:
-//   ZOHO_HOST    — SMTP host. Defaults to smtp.zoho.com (US data center).
-//                  Use smtp.zoho.eu / smtp.zoho.in / smtp.zoho.com.au for
-//                  other data centers, or smtppro.zoho.com for some org plans.
-//   ZOHO_PORT    — 465 (implicit TLS, default) or 587 (STARTTLS).
-//   EMAIL_FROM   — display name + address used in the From: header, e.g.
-//                  "Prime Academy <admin@primeacademynova.com>". Must be the
-//                  Zoho mailbox or one of its verified aliases, otherwise Zoho
-//                  rejects the send. Defaults to ZOHO_USER.
+//   ZOHO_HOST / SMTP_HOST  — SMTP host. Defaults to smtp.zoho.com (US).
+//                            Org plans often use smtppro.zoho.com.
+//                            Other DCs: smtp.zoho.eu / smtp.zoho.in / smtp.zoho.com.au
+//   ZOHO_PORT / SMTP_PORT  — 465 (implicit TLS, default) or 587 (STARTTLS).
+//   EMAIL_FROM             — display name + address used in the From: header, e.g.
+//                            "Prime Academy <admin@primeacademynova.com>". Must be the
+//                            Zoho mailbox or one of its verified aliases, otherwise Zoho
+//                            rejects the send. Defaults to ZOHO_USER.
 
-// services/email.service.js
 const nodemailer = require('nodemailer');
 
 function isConfigured() {
   return Boolean(process.env.ZOHO_USER && process.env.ZOHO_APP_PASSWORD);
+}
+
+function getSmtpConfig() {
+  const host =
+    process.env.ZOHO_HOST ||
+    process.env.SMTP_HOST ||
+    'smtp.zoho.com';
+  const port = Number(
+    process.env.ZOHO_PORT ||
+    process.env.SMTP_PORT ||
+    465
+  );
+  const user = process.env.ZOHO_USER;
+  const pass = String(process.env.ZOHO_APP_PASSWORD || '').replace(/\s+/g, '');
+  return { host, port, user, pass };
 }
 
 function buildDefaultSubject(_studentName) {
@@ -67,22 +81,26 @@ function buildHtmlBody(studentName, startDate, endDate) {
 }
 
 let _transporter = null;
+let _transporterKey = null;
+
 function getTransporter() {
-  if (_transporter) return _transporter;
-  const host = process.env.ZOHO_HOST || 'smtp.zoho.com';
-  const port = Number(process.env.ZOHO_PORT) || 465;
+  const { host, port, user, pass } = getSmtpConfig();
+  const key = `${host}:${port}:${user}:${pass}`;
+  if (_transporter && _transporterKey === key) return _transporter;
+
+  _transporterKey = key;
   _transporter = nodemailer.createTransport({
     host,
     port,
     secure: port === 465,
     requireTLS: port === 587,
-    auth: {
-      user: process.env.ZOHO_USER,
-      pass: String(process.env.ZOHO_APP_PASSWORD || '').replace(/\s+/g, ''),
-    },
+    auth: { user, pass },
     connectionTimeout: 15000,
     greetingTimeout: 15000,
+    // STARTTLS on 587 needs this; on 465 secure already encrypts the socket.
+    tls: { minVersion: 'TLSv1.2' },
   });
+  console.log(`[email] SMTP transporter → ${host}:${port} as ${user}`);
   return _transporter;
 }
 
@@ -94,7 +112,9 @@ async function sendReportEmail({ studentName, recipients, pdfBuffer, filename, s
   }
 
   try {
-  const to = (recipients || []).map((e) => String(e || '').trim()).filter((e) => e && e.includes('@') && !e.includes('example.com'));
+    const to = (recipients || [])
+      .map((e) => String(e || '').trim())
+      .filter((e) => e && e.includes('@') && !e.includes('example.com'));
     if (to.length === 0) {
       const err = new Error('At least one recipient email is required.');
       err.status = 400;
@@ -115,6 +135,7 @@ async function sendReportEmail({ studentName, recipients, pdfBuffer, filename, s
     ];
 
     const results = [];
+    const errors = [];
     for (const recipient of to) {
       try {
         const info = await getTransporter().sendMail({
@@ -127,18 +148,20 @@ async function sendReportEmail({ studentName, recipients, pdfBuffer, filename, s
         results.push(info);
         await new Promise(resolve => setTimeout(resolve, 2000));
       } catch (e) {
-      console.error(`[SMTP ERROR] Failed to send to ${recipient}:`, e);
+        console.error(`[SMTP ERROR] Failed to send to ${recipient}:`, e);
+        errors.push(`${recipient}: ${e.message}`);
       }
     }
 
     if (results.length === 0) {
-      throw new Error('All email sends failed.');
+      throw new Error(errors.length ? errors.join(' | ') : 'All email sends failed.');
     }
 
-    return { 
-      id: results.map(r => r?.messageId).join(','), 
-      to: to, 
-      subject: finalSubject 
+    return {
+      id: results.map(r => r?.messageId).join(','),
+      to: to,
+      subject: finalSubject,
+      partialErrors: errors.length ? errors : undefined,
     };
   } catch (e) {
     const err = new Error(`Zoho SMTP send failed: ${e.message}`);
@@ -153,11 +176,14 @@ async function verifyConnection() {
     err.status = 503;
     throw err;
   }
+  const { host, port, user } = getSmtpConfig();
   try {
     await getTransporter().verify();
-    return { ok: true, host: process.env.ZOHO_HOST || 'smtp.zoho.com', user: process.env.ZOHO_USER };
+    return { ok: true, host, port, user };
   } catch (e) {
-    const err = new Error(`Zoho SMTP verify failed: ${e.message}`);
+    const err = new Error(
+      `Zoho SMTP verify failed (${host}:${port} as ${user}): ${e.message}`
+    );
     err.status = 502;
     throw err;
   }
