@@ -231,7 +231,6 @@ router.get('/classmarker/export', async (req, res, next) => {
 router.post(
   '/classmarker',
   express.raw({
-    limit: '50mb', // FIX: Allow the raw parser to accept the combined test payload
     type: (req) => (req.headers['content-type'] || '').includes('application/json'),
   }),
   async (req, res, next) => {
