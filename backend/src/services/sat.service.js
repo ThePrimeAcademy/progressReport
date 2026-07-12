@@ -32,15 +32,28 @@ function isSatGroupName(name) {
 //   3. Group name contains an RW keyword (en/english/rw/reading/verbal/writing) → RW.
 //   4. Per-question sectionNumber, if populated.
 // Returns 1|2|3|4 or null if the section can't be determined.
+// services/sat.service.js
+
 function deriveTestSection(testName, groupName, questions) {
-  const m = String(testName || '').match(/^\s*section\s*(\d+)/i);
+  const tn = String(testName || '');
+  const gn = String(groupName || '');
+
+  // 1. Explicit keyword matches in the test name win first (handles 2-part tests)
+  if (/\bmath\b/i.test(tn)) return 3;
+  if (/\b(en|english|rw|reading|verbal|writing|vocab)\b/i.test(tn)) return 1;
+
+  // 2. Legacy "Section N:" prefix fallback
+  const m = tn.match(/^\s*section\s*(\d+)/i);
   if (m) {
     const n = Number(m[1]);
     if (n >= 1 && n <= 4) return n;
   }
-  const gn = String(groupName || '');
+
+  // 3. Group name keyword fallback
   if (/\bmath\b/i.test(gn)) return 3;
   if (/\b(en|english|rw|reading|verbal|writing|vocab)\b/i.test(gn)) return 1;
+
+  // 4. Per-question metadata fallback
   for (const q of (questions || [])) {
     const sec = Number(q.sectionNumber);
     if (sec >= 1 && sec <= 4) return sec;
