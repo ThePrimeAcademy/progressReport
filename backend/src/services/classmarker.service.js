@@ -23,8 +23,6 @@ const WINDOW_DAYS = 85;
 const INCREMENTAL_OVERLAP_SECONDS = 3600;
 const PAGE_CAP = 30;
 
-let rateLimitUnlockTime = 0;
-
 function loadCache() {
   // Any age is acceptable — stale data beats no data, and the incremental
   // refresh catches up cheaply on the first fetchAllResults call.
@@ -75,30 +73,13 @@ async function fetchCategoryMap() {
   if (Object.keys(categoryMap).length > 0 && Date.now() - categoryFetchedAt < CATEGORY_CACHE_TTL) {
     return categoryMap;
   }
-
-  if (Math.floor(Date.now() / 1000) < rateLimitUnlockTime) {
-    console.warn(`[categories] Rate limit active until ${rateLimitUnlockTime}. Serving stale map.`);
-    return categoryMap;
-  }
-
   try {
-       const url = `${BASE_URL}/categories.json?${authParams()}`;
+    const url = `${BASE_URL}/categories.json?${authParams()}`;
     console.log("[categories] Fetching categories...");
     const res = await fetch(url);
     console.log("[categories] Status:", res.status);
-    
-    const data = await res.json().catch(() => ({}));
-    
-    if (data.status === 'error' || data.error) {
-      const errObj = data.error || data;
-      if (errObj.next_request_after) {
-        rateLimitUnlockTime = Number(errObj.next_request_after);
-        throw new Error(`ClassMarker Rate Limit: next request after ${rateLimitUnlockTime}`);
-      }
-      throw new Error(`ClassMarker: ${errObj.error_message || 'Unknown error'}`);
-    }
-
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
     console.log("[categories] Raw:", JSON.stringify(data).slice(0, 300));
     const newMap = {};
     const addCat = (c) => {
@@ -145,31 +126,12 @@ function authParams() {
 }
 
 async function fetchResultsPage(finishedAfterTimestamp) {
-  if (Math.floor(Date.now() / 1000) < rateLimitUnlockTime) {
-    throw new Error(`Rate limit active. Next request allowed at ${rateLimitUnlockTime}`);
-  }
-
   const res = await fetch(
     `${BASE_URL}/groups/recent_results.json?${authParams()}&finishedAfterTimestamp=${finishedAfterTimestamp}&limit=200`
   );
-  
-  let data;
-  try {
-    data = await res.json();
-  } catch(e) {
-    if (!res.ok) throw new Error(`ClassMarker HTTP error: ${res.status}`);
-    throw e;
-  }
-
-  if (data.status === 'error' || data.error) {
-    const errObj = data.error || data;
-    if (errObj.next_request_after) {
-      rateLimitUnlockTime = Number(errObj.next_request_after);
-      throw new Error(`ClassMarker Rate Limit: next request after ${rateLimitUnlockTime}`);
-    }
-    throw new Error(`ClassMarker: ${errObj.error_message || 'Unknown error'}`);
-  }
-  
+  if (!res.ok) throw new Error(`ClassMarker HTTP error: ${res.status}`);
+  const data = await res.json();
+  if (data.status === 'error') throw new Error(`ClassMarker: ${data.error.error_message}`);
   return data;
 }
 
@@ -247,17 +209,12 @@ async function fetchAllResults() {
       dataVersion++;
       saveCache(memCache);
       return memCache;
-      } catch (e) {
+    } catch (e) {
       if (memCache) {
+        // Serve stale data and back off — a rate-limited refresh must never
+        // leave the app dataless or retry on every request.
         console.error('[classmarker] Refresh failed — serving stale cache:', e.message);
-        
-        const nowSec = Math.floor(Date.now() / 1000);
-        if (rateLimitUnlockTime > nowSec) {
-          const waitMs = (rateLimitUnlockTime - nowSec) * 1000;
-          memCache.cacheTime = Date.now() - CACHE_TTL + waitMs + 2000;
-        } else {
-          memCache.cacheTime = Date.now() - CACHE_TTL + FETCH_FAILURE_BACKOFF_MS;
-        }
+        memCache.cacheTime = Date.now() - CACHE_TTL + FETCH_FAILURE_BACKOFF_MS;
         return memCache;
       }
       throw e;
