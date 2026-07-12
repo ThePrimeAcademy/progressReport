@@ -32,8 +32,6 @@ function isSatGroupName(name) {
 //   3. Group name contains an RW keyword (en/english/rw/reading/verbal/writing) → RW.
 //   4. Per-question sectionNumber, if populated.
 // Returns 1|2|3|4 or null if the section can't be determined.
-// services/sat.service.js
-
 function deriveTestSection(testName, groupName, questions) {
   const tn = String(testName || '');
   const gn = String(groupName || '');
@@ -475,61 +473,6 @@ async function getExamScoreboard(examId) {
       
       // If 2-section layout: Section 1 is English, Section 2 is Math. 
       // Otherwise fallback to legacy 4-section layout rules.
-      const isMath = isTwoSectionLayout ? (section === 2) : (section > 2);
-      
-      if (!isMath) rwRaw = (rwRaw || 0) + attempt.correct;
-      else mathRaw = (mathRaw || 0) + attempt.correct;
-      
-      if (attempt.timeFinished > latestFinished) latestFinished = attempt.timeFinished;
-    }
-    const rwScaled = rwRaw != null && rwCurve ? gradeScaled(rwCurve, rwRaw) : null;
-    const mathScaled = mathRaw != null && mathCurve ? gradeScaled(mathCurve, mathRaw) : null;
-    const total = rwScaled != null && mathScaled != null ? rwScaled + mathScaled : null;
-    return {
-      studentId: uid,
-      name: entry.name,
-      rwRaw,
-      mathRaw,
-      rwScaled,
-      mathScaled,
-      total,
-      testsCompleted: entry.tests.size,
-      date: latestFinished ? new Date(latestFinished * 1000).toISOString().split('T')[0] : null,
-    };
-  })
-    // Allow students to show up on the scoreboard as long as they finished at least 1 test
-    .filter((row) => row.testsCompleted >= 1);
-
-  // Rank: full totals first (desc), then partials by whatever is scaled,
-  // then raw-only rows by combined raw.
-  rows.sort((a, b) =>
-    (b.total ?? -1) - (a.total ?? -1) ||
-    ((b.rwScaled ?? 0) + (b.mathScaled ?? 0)) - ((a.rwScaled ?? 0) + (a.mathScaled ?? 0)) ||
-    ((b.rwRaw ?? 0) + (b.mathRaw ?? 0)) - ((a.rwRaw ?? 0) + (a.mathRaw ?? 0))
-  );
-
-  return {
-    examId: exam.examId,
-    name: exam.name,
-    date: exam.date || modeDate(rows.map((r) => r.date)) || null,
-    hasRwCurve: Boolean(rwCurve),
-    hasMathCurve: Boolean(mathCurve),
-    rows,
-  };
-}
-
-  // Automatically detect if this is a 2-section combined test layout
-  const isTwoSectionLayout = !Array.from(sectionOfTest.values()).some(sec => sec === 3 || sec === 4);
-
-  const rows = Array.from(perStudent.entries()).map(([uid, entry]) => {
-    let rwRaw = null;
-    let mathRaw = null;
-    let latestFinished = 0;
-    for (const [tid, attempt] of entry.tests) {
-      const section = sectionOfTest.get(tid);
-      
-      // If 2-section layout: Section 1 is English, Section 2 is Math. 
-      // Otherwise fallback to legacy legacy 4-section layout rules.
       const isMath = isTwoSectionLayout ? (section === 2) : (section > 2);
       
       if (!isMath) rwRaw = (rwRaw || 0) + attempt.correct;
