@@ -69,20 +69,6 @@ async function gatherReportData({ studentId, startDate, endDate, dayOfWeek }) {
 
   const allResults = groups.flatMap((g) => g.results);
   const stats = computeStats(allResults);
-  
-  // FIX: Split the standard API results if the webhook split isn't available
-  let finalCategorySplit = webhookCategorySplit;
-  
-  if (!finalCategorySplit && groups.length > 0) {
-    const englishTest = groups[0]?.results?.[0]; // Test 1 (index 0)
-    const mathTest = groups[0]?.results?.[1];    // Test 2 (index 1)
-    
-    finalCategorySplit = {
-      english: englishTest ? computeCategoryPerformance([{ results: [englishTest] }]) : [],
-      math: mathTest ? computeCategoryPerformance([{ results: [mathTest] }]) : []
-    };
-  }
-
   const categoryPerf = webhookCategoryPerf.length
     ? webhookCategoryPerf
     : computeCategoryPerformance(groups);
@@ -90,7 +76,7 @@ async function gatherReportData({ studentId, startDate, endDate, dayOfWeek }) {
 
   return {
     student, groups, stats, satScores, startDate, endDate,
-    latestTest, categoryPerf, categoryPerfSplit: finalCategorySplit,
+    latestTest, categoryPerf, categoryPerfSplit: webhookCategorySplit,
   };
 }
 
@@ -127,10 +113,7 @@ async function buildAndSendReport({
     }
   }
 
- // Inside buildAndSendReport
-let sendResult;
-try {
-  sendResult = await sendReportEmail({
+  const sendResult = await sendReportEmail({
     studentName: data.student.name,
     recipients,
     pdfBuffer,
@@ -140,11 +123,17 @@ try {
     subject,
     attachments,
   });
-} catch (err) {
-  // Log the actual error from Zoho, not just "send failed"
-  console.error(`[report] SMTP failure for ${data.student.id}:`, err.message, err.stack);
-  throw err; // Re-throw so the caller knows the job failed
-}
+
+  // Persist whichever of student/parent emails were supplied so the contact
+  // pills stay accurate. A scheduled batch always carries its recipients.
+  if (studentEmail !== undefined || parentEmail !== undefined) {
+    await db.setContacts(studentId, {
+      studentEmail: studentEmail || '',
+      parentEmail: parentEmail || '',
+    });
+  }
+
+  return sendResult;
 }
 
 module.exports = {
