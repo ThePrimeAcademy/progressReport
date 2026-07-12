@@ -26,11 +26,10 @@ const router = express.Router();
 // the background. The frontend polls GET /email/job/:jobId every 2s for the
 // terminal status. No long-lived HTTP connection = no edge timeout.
 //
-// The same jobId derives from a sha256 hash of inputs, so it doubles as a
-// dedupe key — identical POSTs within 5 min reuse the already-pending or
-// already-completed job instead of starting a parallel send.
-const JOB_TTL_MS = 5 * 60 * 1000;
-const sendJobs = new Map(); // key -> { status, startedAt, finishedAt?, result?, error? }
+// Jobs are persisted in SQLite (DATA_DIR) so a redeploy can't make the poll
+// 404 with "Job not found". The same jobId derives from a sha256 of inputs,
+// so identical POSTs within 5 min rejoin an in-flight or successful send
+// instead of duplicating work. Failed jobs are retriable immediately.
 
 function dedupeKey({ studentId, startDate, endDate, dayOfWeek, recipients, subject, homework }) {
   const days = Array.isArray(dayOfWeek)
@@ -63,51 +62,38 @@ function homeworkKey(homework) {
   return homework ? `hw${homework.completed}/${homework.total}` : '';
 }
 
-function readJob(key) {
-  const job = sendJobs.get(key);
-  if (!job) return null;
-  // Pending jobs never expire (they're still running). Completed/failed jobs
-  // expire after the TTL so duplicate-detection has a reasonable window.
-  if (job.status !== 'pending' && job.finishedAt && Date.now() - job.finishedAt > JOB_TTL_MS) {
-    sendJobs.delete(key);
-    return null;
-  }
-  return job;
-}
-
-function pruneJobs() {
-  const cutoff = Date.now() - JOB_TTL_MS;
-  for (const [k, v] of sendJobs.entries()) {
-    if (v.status !== 'pending' && v.finishedAt && v.finishedAt < cutoff) sendJobs.delete(k);
-  }
-}
-
-function startOrReuseJob(key, doWork) {
-  const existing = readJob(key);
-  if (existing) {
+async function startOrReuseJob(key, doWork) {
+  const existing = await db.getEmailJob(key);
+  // Rejoin in-flight or recently-successful sends. Failed jobs are NOT reused
+  // so the user can hit Send again without waiting for TTL expiry.
+  if (existing && (existing.status === 'pending' || existing.status === 'sent')) {
     return { jobId: key, status: existing.status, deduplicated: true };
   }
-  sendJobs.set(key, { status: 'pending', startedAt: Date.now() });
+
+  const startedAt = Date.now();
+  await db.upsertEmailJob(key, { status: 'pending', startedAt, finishedAt: null, result: null, error: null });
+
   // Fire and forget — no await, no res.send blocking on this.
   (async () => {
     try {
       const result = await doWork();
-      sendJobs.set(key, {
+      await db.upsertEmailJob(key, {
         status: 'sent',
-        startedAt: sendJobs.get(key)?.startedAt || Date.now(),
+        startedAt,
         finishedAt: Date.now(),
         result,
+        error: null,
       });
     } catch (err) {
       console.error(`[email job ${key}] FAILED:`, err.message);
-      sendJobs.set(key, {
+      await db.upsertEmailJob(key, {
         status: 'failed',
-        startedAt: sendJobs.get(key)?.startedAt || Date.now(),
+        startedAt,
         finishedAt: Date.now(),
         error: err.message,
       });
     } finally {
-      if (sendJobs.size > 200) pruneJobs();
+      db.pruneEmailJobs().catch(() => {});
     }
   })();
   return { jobId: key, status: 'pending' };
@@ -382,7 +368,7 @@ router.post('/email', validate, async (req, res, next) => {
     const key = dedupeKey({ studentId, startDate, endDate, dayOfWeek, recipients, subject, homework });
     console.log(`[email] queued studentId=${studentId} recipients=${recipients.length} key=${key}`);
 
-    const start = startOrReuseJob(key, async () => {
+    const start = await startOrReuseJob(key, async () => {
       const sendResult = await buildAndSendReport({
         studentId, startDate, endDate, dayOfWeek,
         recipients, studentEmail, parentEmail, subject, homework,
@@ -399,20 +385,28 @@ router.post('/email', validate, async (req, res, next) => {
 });
 
 // GET /api/report/email/job/:jobId — frontend polls this every 2s after POST
-router.get('/email/job/:jobId', (req, res) => {
-  const job = readJob(req.params.jobId);
-  if (!job) {
-    return res.status(404).json({ success: false, error: 'Job not found (it may have expired after 5 minutes).' });
+router.get('/email/job/:jobId', async (req, res) => {
+  try {
+    const job = await db.getEmailJob(req.params.jobId);
+    if (!job) {
+      return res.status(404).json({
+        success: false,
+        error: 'Job not found (server may have restarted — try Send again).',
+      });
+    }
+    res.json({
+      success: true,
+      data: {
+        status: job.status,
+        result: job.result,
+        error: job.error,
+        durationMs: (job.finishedAt || Date.now()) - job.startedAt,
+      },
+    });
+  } catch (err) {
+    console.error('[email job status]', err.message);
+    res.status(500).json({ success: false, error: err.message });
   }
-  res.json({
-    success: true,
-    data: {
-      status: job.status,
-      result: job.result,
-      error: job.error,
-      durationMs: (job.finishedAt || Date.now()) - job.startedAt,
-    },
-  });
 });
 
 // ── Scheduled bulk send ─────────────────────────────────────────────────────

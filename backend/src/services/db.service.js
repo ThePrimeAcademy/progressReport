@@ -120,6 +120,20 @@ async function getDb() {
 
     _db.run('CREATE INDEX IF NOT EXISTS idx_batch_items_batch ON scheduled_batch_items (batch_id)');
 
+    // On-demand email send jobs (POST /api/report/email). Stored on disk so a
+    // Railway restart / second replica can't make the browser's job poll 404
+    // with "Job not found" while the send is still in flight (or just finished).
+    _db.run(`
+    CREATE TABLE IF NOT EXISTS email_jobs (
+      id          TEXT PRIMARY KEY,
+      status      TEXT NOT NULL,
+      started_at  INTEGER NOT NULL,
+      finished_at INTEGER,
+      result_json TEXT,
+      error       TEXT
+    )
+  `);
+
     flush();
     return _db;
 }
@@ -172,6 +186,19 @@ async function setContacts(studentId, { studentEmail, parentEmail }) {
 
 function flush() {
     _dirty = true;
+}
+
+// Force a synchronous write — used for email job status so the next poll after
+// a redeploy can still see the row if the volume is shared.
+function flushNow() {
+    if (!_db) return;
+    try {
+        fs.writeFileSync(DB_PATH, Buffer.from(_db.export()));
+        _dirty = false;
+    } catch (e) {
+        console.error('[db] flushNow failed:', e.message);
+        _dirty = true;
+    }
 }
 
 async function upsertRecord(record) {
@@ -457,6 +484,98 @@ async function recoverInterruptedBatches() {
     const db = await getDb();
     db.run("UPDATE scheduled_batch_items SET status = 'pending' WHERE status = 'sending'");
     db.run("UPDATE scheduled_batches SET status = 'scheduled', started_at = NULL WHERE status = 'running'");
+    // Email jobs that were mid-flight die with the process — mark them failed
+    // so the UI doesn't poll forever and a retry can start a new job.
+    db.run(
+        `UPDATE email_jobs SET status = 'failed', finished_at = ?, error = ?
+         WHERE status = 'pending'`,
+        [
+            Date.now(),
+            'Server restarted while this send was in progress. Please try again.',
+        ]
+    );
+    flushNow();
+}
+
+// ── On-demand email jobs ───────────────────────────────────────────────────
+const EMAIL_JOB_TTL_MS = 5 * 60 * 1000;
+const EMAIL_JOB_STALE_PENDING_MS = 10 * 60 * 1000;
+
+async function upsertEmailJob(id, { status, startedAt, finishedAt, result, error }) {
+    const db = await getDb();
+    const existing = rowsToObjects(db.exec('SELECT * FROM email_jobs WHERE id = ?', [String(id)]));
+    const prev = existing[0] || null;
+    const started = startedAt != null ? startedAt : (prev ? Number(prev.started_at) : Date.now());
+    const finished = finishedAt != null ? finishedAt : (prev?.finished_at != null ? Number(prev.finished_at) : null);
+    const resultJson = result !== undefined
+        ? JSON.stringify(result)
+        : (prev?.result_json || null);
+    const err = error !== undefined ? error : (prev?.error || null);
+
+    db.run(
+        `INSERT INTO email_jobs (id, status, started_at, finished_at, result_json, error)
+         VALUES (?,?,?,?,?,?)
+         ON CONFLICT(id) DO UPDATE SET
+           status = excluded.status,
+           started_at = excluded.started_at,
+           finished_at = excluded.finished_at,
+           result_json = excluded.result_json,
+           error = excluded.error`,
+        [String(id), status, started, finished, resultJson, err]
+    );
+    flushNow();
+}
+
+async function getEmailJob(id) {
+    const db = await getDb();
+    const rows = rowsToObjects(db.exec('SELECT * FROM email_jobs WHERE id = ?', [String(id)]));
+    if (!rows.length) return null;
+    const row = rows[0];
+    let status = row.status;
+    let finishedAt = row.finished_at != null ? Number(row.finished_at) : null;
+    let error = row.error || null;
+    const startedAt = Number(row.started_at);
+
+    // Abandoned mid-flight (process died before we could mark failed).
+    if (status === 'pending' && Date.now() - startedAt > EMAIL_JOB_STALE_PENDING_MS) {
+        status = 'failed';
+        finishedAt = Date.now();
+        error = error || 'Send timed out on the server. Please try again.';
+        db.run(
+            `UPDATE email_jobs SET status = ?, finished_at = ?, error = ? WHERE id = ?`,
+            [status, finishedAt, error, String(id)]
+        );
+        flushNow();
+    }
+
+    // Completed jobs expire so dedupe doesn't pin forever.
+    if (status !== 'pending' && finishedAt && Date.now() - finishedAt > EMAIL_JOB_TTL_MS) {
+        db.run('DELETE FROM email_jobs WHERE id = ?', [String(id)]);
+        flushNow();
+        return null;
+    }
+
+    let result = null;
+    if (row.result_json) {
+        try { result = JSON.parse(row.result_json); } catch (_) { result = null; }
+    }
+
+    return {
+        status,
+        startedAt,
+        finishedAt: finishedAt || undefined,
+        result: result || undefined,
+        error: error || undefined,
+    };
+}
+
+async function pruneEmailJobs() {
+    const db = await getDb();
+    const cutoff = Date.now() - EMAIL_JOB_TTL_MS;
+    db.run(
+        `DELETE FROM email_jobs WHERE status != 'pending' AND finished_at IS NOT NULL AND finished_at < ?`,
+        [cutoff]
+    );
     flush();
 }
 
@@ -479,4 +598,7 @@ module.exports = {
     markItemStatus,
     cancelScheduledBatch,
     recoverInterruptedBatches,
+    upsertEmailJob,
+    getEmailJob,
+    pruneEmailJobs,
 };
