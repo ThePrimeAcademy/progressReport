@@ -9,10 +9,11 @@
 //                         the displayed value are ignored (we strip them).
 //
 // Optional env vars:
-//   ZOHO_HOST / SMTP_HOST  — SMTP host. Defaults to smtp.zoho.com (US).
-//                            Org plans often use smtppro.zoho.com.
-//                            Other DCs: smtp.zoho.eu / smtp.zoho.in / smtp.zoho.com.au
-//   ZOHO_PORT / SMTP_PORT  — 465 (implicit TLS, default) or 587 (STARTTLS).
+//   ZOHO_HOST / SMTP_HOST  — SMTP host. Defaults to smtppro.zoho.com (org/domain mail).
+//                            Personal Zoho: smtp.zoho.com. Other DCs: smtp.zoho.eu etc.
+//   ZOHO_PORT / SMTP_PORT  — Prefer 465 (SSL). 587 = STARTTLS. Cloud hosts often
+//                            time out on one port and work on the other — we try
+//                            both automatically on connection failure.
 //   EMAIL_FROM             — display name + address used in the From: header, e.g.
 //                            "Prime Academy <admin@primeacademynova.com>". Must be the
 //                            Zoho mailbox or one of its verified aliases, otherwise Zoho
@@ -28,7 +29,7 @@ function getSmtpConfig() {
   const host =
     process.env.ZOHO_HOST ||
     process.env.SMTP_HOST ||
-    'smtp.zoho.com';
+    'smtppro.zoho.com';
   const port = Number(
     process.env.ZOHO_PORT ||
     process.env.SMTP_PORT ||
@@ -37,6 +38,49 @@ function getSmtpConfig() {
   const user = process.env.ZOHO_USER;
   const pass = String(process.env.ZOHO_APP_PASSWORD || '').replace(/\s+/g, '');
   return { host, port, user, pass };
+}
+
+// Prefer the configured host/port first, then common Zoho combos. Org domain
+// mailboxes usually need smtppro.*; personal mailboxes use smtp.zoho.*.
+// 465 (implicit TLS) is tried early — many cloud providers reach it more
+// reliably than 587 STARTTLS.
+function smtpCandidates() {
+  const primary = getSmtpConfig();
+  const hosts = [
+    primary.host,
+    'smtppro.zoho.com',
+    'smtp.zoho.com',
+  ];
+  const ports = [primary.port, 465, 587];
+  const seen = new Set();
+  const out = [];
+  for (const host of hosts) {
+    for (const port of ports) {
+      const key = `${host}:${port}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({ host, port, user: primary.user, pass: primary.pass });
+    }
+  }
+  return out;
+}
+
+function isConnectFailure(err) {
+  const msg = String(err?.message || err || '').toLowerCase();
+  const code = err?.code || err?.errno || '';
+  return (
+    msg.includes('connection timeout') ||
+    msg.includes('connect etimedout') ||
+    msg.includes('connect econnrefused') ||
+    msg.includes('connect enotfound') ||
+    msg.includes('greeting never received') ||
+    msg.includes('socket closed') ||
+    msg.includes('esocket') ||
+    code === 'ETIMEDOUT' ||
+    code === 'ECONNREFUSED' ||
+    code === 'ECONNECTION' ||
+    code === 'ESOCKET'
+  );
 }
 
 function buildDefaultSubject(_studentName) {
@@ -72,9 +116,6 @@ function formatPrettyDate(iso) {
 function buildHtmlBody(studentName, startDate, endDate) {
   const startISO = startDate ? String(startDate).slice(0, 10) : '';
   const endISO = endDate ? String(endDate).slice(0, 10) : '';
-  const sameYear = startISO.slice(0, 4) && startISO.slice(0, 4) === endISO.slice(0, 4);
-  const startPretty = formatPrettyDate(startISO);
-  const endPretty = formatPrettyDate(endISO) + (sameYear ? '' : (endISO ? `, ${endISO.slice(0, 4)}` : ''));
   return `<p>Hi,</p>
 <p>Attached is the most recent weekly progress report for ${studentName}.</p>
 <p>Best regards,<br />Prime Academy</p>`;
@@ -82,18 +123,14 @@ function buildHtmlBody(studentName, startDate, endDate) {
 
 let _transporter = null;
 let _transporterKey = null;
+// Once we find a host:port that works from this network, stick to it for the
+// process lifetime so bulk sends don't re-probe on every message.
+let _workingEndpoint = null;
 
-function getTransporter() {
-  const { host, port, user, pass } = getSmtpConfig();
-  const key = `${host}:${port}:${user}:${pass}`;
-  if (_transporter && _transporterKey === key) return _transporter;
-
-  _transporterKey = key;
-  // Timeouts so a stuck Zoho session can't leave bulk-send jobs "pending"
-  // forever (UI would show "Sending…" until the client poll timed out).
-  const connectMs = Number(process.env.SMTP_CONNECTION_TIMEOUT_MS) || 15000;
+function createTransporter({ host, port, user, pass }) {
+  const connectMs = Number(process.env.SMTP_CONNECTION_TIMEOUT_MS) || 20000;
   const socketMs = Number(process.env.SMTP_SOCKET_TIMEOUT_MS) || 45000;
-  _transporter = nodemailer.createTransport({
+  return nodemailer.createTransport({
     host,
     port,
     secure: port === 465,
@@ -102,11 +139,64 @@ function getTransporter() {
     connectionTimeout: connectMs,
     greetingTimeout: connectMs,
     socketTimeout: socketMs,
-    // STARTTLS on 587 needs this; on 465 secure already encrypts the socket.
     tls: { minVersion: 'TLSv1.2' },
   });
-  console.log(`[email] SMTP transporter → ${host}:${port} as ${user} (connect ${connectMs}ms, socket ${socketMs}ms)`);
+}
+
+function getTransporter(endpoint) {
+  const cfg = endpoint || _workingEndpoint || getSmtpConfig();
+  const key = `${cfg.host}:${cfg.port}:${cfg.user}:${cfg.pass}`;
+  if (_transporter && _transporterKey === key) return _transporter;
+
+  _transporterKey = key;
+  _transporter = createTransporter(cfg);
+  console.log(
+    `[email] SMTP transporter → ${cfg.host}:${cfg.port} as ${cfg.user}`
+  );
   return _transporter;
+}
+
+function clearTransporter() {
+  _transporter = null;
+  _transporterKey = null;
+}
+
+// Try configured + fallback Zoho endpoints until one accepts a connection.
+async function resolveWorkingTransporter() {
+  if (_workingEndpoint) {
+    return getTransporter(_workingEndpoint);
+  }
+
+  const candidates = smtpCandidates();
+  const errors = [];
+  for (const cfg of candidates) {
+    const transport = createTransporter(cfg);
+    try {
+      console.log(`[email] probing ${cfg.host}:${cfg.port}…`);
+      await transport.verify();
+      _workingEndpoint = { host: cfg.host, port: cfg.port, user: cfg.user, pass: cfg.pass };
+      clearTransporter();
+      console.log(`[email] using ${cfg.host}:${cfg.port}`);
+      return getTransporter(_workingEndpoint);
+    } catch (e) {
+      console.warn(`[email] ${cfg.host}:${cfg.port} failed: ${e.message}`);
+      errors.push(`${cfg.host}:${cfg.port} → ${e.message}`);
+      try { transport.close(); } catch (_) { /* ignore */ }
+      if (!isConnectFailure(e) && candidates.indexOf(cfg) === 0) {
+        // Auth/config error on the primary endpoint — don't burn through
+        // every host with the same bad password.
+        break;
+      }
+    }
+  }
+
+  const err = new Error(
+    `Could not reach Zoho SMTP from this server. Tried: ${errors.join(' | ')}. ` +
+    `Set SMTP_HOST/SMTP_PORT on Railway (try smtppro.zoho.com + 465). ` +
+    `Connection timeout is a network path issue, not a missing Zoho app password.`
+  );
+  err.status = 502;
+  throw err;
 }
 
 // Hard cap around a single sendMail — nodemailer timeouts are not always
@@ -160,11 +250,14 @@ async function sendReportEmail({ studentName, recipients, pdfBuffer, filename, s
       `from=${from} attach=${mailAttachments.length} (~${Math.round(attachBytes / 1024)}KB)`
     );
 
+    // Resolve a reachable Zoho endpoint once before the recipient loop.
+    let transport = await resolveWorkingTransporter();
+
     for (const recipient of to) {
       const t0 = Date.now();
       try {
         const info = await withTimeout(
-          getTransporter().sendMail({
+          transport.sendMail({
             from,
             to: recipient,
             subject: finalSubject,
@@ -176,14 +269,20 @@ async function sendReportEmail({ studentName, recipients, pdfBuffer, filename, s
         );
         console.log(`[email] sent → ${recipient} in ${Date.now() - t0}ms id=${info?.messageId || '?'}`);
         results.push(info);
-        // Brief pause so Zoho's hourly reputation limits are less likely to trip.
         await new Promise(resolve => setTimeout(resolve, 1500));
       } catch (e) {
         console.error(`[SMTP ERROR] Failed to send to ${recipient} after ${Date.now() - t0}ms:`, e.message || e);
         errors.push(`${recipient}: ${e.message}`);
-        // Drop the cached transporter after a failure — next attempt re-auths clean.
-        _transporter = null;
-        _transporterKey = null;
+        clearTransporter();
+        _workingEndpoint = null;
+        if (isConnectFailure(e)) {
+          try {
+            transport = await resolveWorkingTransporter();
+          } catch (probeErr) {
+            errors.push(probeErr.message);
+            break;
+          }
+        }
       }
     }
 
@@ -199,7 +298,7 @@ async function sendReportEmail({ studentName, recipients, pdfBuffer, filename, s
     };
   } catch (e) {
     const err = new Error(`Zoho SMTP send failed: ${e.message}`);
-    err.status = 502;
+    err.status = e.status || 502;
     throw err;
   }
 }
@@ -210,13 +309,16 @@ async function verifyConnection() {
     err.status = 503;
     throw err;
   }
-  const { host, port, user } = getSmtpConfig();
   try {
-    await getTransporter().verify();
+    _workingEndpoint = null;
+    clearTransporter();
+    const transport = await resolveWorkingTransporter();
+    const { host, port, user } = _workingEndpoint || getSmtpConfig();
     return { ok: true, host, port, user };
   } catch (e) {
+    const cfg = getSmtpConfig();
     const err = new Error(
-      `Zoho SMTP verify failed (${host}:${port} as ${user}): ${e.message}`
+      `Zoho SMTP verify failed (${cfg.host}:${cfg.port} as ${cfg.user}): ${e.message}`
     );
     err.status = 502;
     throw err;
