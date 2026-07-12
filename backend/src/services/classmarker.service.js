@@ -20,7 +20,7 @@ const LEGACY_CACHE_FILE = path.join(__dirname, '../../cache.json');
 const CACHE_TTL = 55 * 60 * 1000;
 const FETCH_FAILURE_BACKOFF_MS = 10 * 60 * 1000;
 const WINDOW_DAYS = 85;
-const INCREMENTAL_OVERLAP_SECONDS = 7 * 24 * 3600; 
+const INCREMENTAL_OVERLAP_SECONDS = 24 * 3600; 
 const PAGE_CAP = 30;
 
 function loadCache() {
