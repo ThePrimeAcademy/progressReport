@@ -419,8 +419,6 @@ async function getExamScoreboard(examId) {
   const exam = getExam(examId);
   if (!exam) return null;
   const hidden = new Set(exam.hiddenStudentIds || []);
-  // Only enrolled students are part of the exam — a non-enrolled student's
-  // attempt never reaches the scoreboard, even if they took the tests.
   const enrolled = exam.programId ? getProgramRoster(exam.programId) : null;
   const excluded = (uid) => hidden.has(uid) || (enrolled !== null && !enrolled.has(uid));
   const sectionOfTest = new Map(); // testId → 1|2|3|4
@@ -429,7 +427,6 @@ async function getExamScoreboard(examId) {
     if (s?.testId != null) sectionOfTest.set(String(s.testId), Number(key));
   }
 
-  // uid → { name, tests: Map(testId → { correct, timeFinished, webhook }) }
   const perStudent = new Map();
   const entryFor = (uid, name) => {
     if (!perStudent.has(uid)) perStudent.set(uid, { name, tests: new Map() });
@@ -453,7 +450,6 @@ async function getExamScoreboard(examId) {
         if (excluded(a.userId)) continue;
         const entry = entryFor(a.userId, a.name);
         const prev = entry.tests.get(a.testId);
-        // Webhook data always wins; among API attempts keep the latest.
         if (prev?.webhook) continue;
         if (!prev || a.timeFinished > prev.timeFinished) {
           entry.tests.set(a.testId, { correct: a.correct, timeFinished: a.timeFinished, webhook: false });
@@ -463,24 +459,12 @@ async function getExamScoreboard(examId) {
       console.warn('[sat] Scoreboard API fallback unavailable:', e.message);
     }
   }
-The reason the scoreboard is completely blank ("No results yet for this exam's tests.") comes down to how the layout configuration interacts with the scoring logic in services/sat.service.js.
-There are two major issues happening here:
-1. The "Minimum 2 Tests" Gate Filter
-In your getExamScoreboard function, there is a strict filter at the very bottom of the function designed for the old format:
-.filter((row) => sectionOfTest.size <= 1 || row.testsCompleted >= 2);
 
-Because you have assigned two tests (Section 1 and Section 2), sectionOfTest.size equals 2. This forces the scoreboard to completely hide any student who hasn't finished both the English and Math tests yet. If your students have only completed one of the sections so far, they are completely invisible on this board.
-2. Section 2 is Misclassified as English
-Your backend code has a hardcoded legacy rule assuming that Sections 1 and 2 are always Reading/Writing (English), while Sections 3 and 4 are Math:
-if (section <= 2) rwRaw = (rwRaw || 0) + attempt.correct;
-else mathRaw = (mathRaw || 0) + attempt.correct;
-
-Because your new combined Math test is mapped to Section 2, the scoreboard is currently trying to pile those Math scores into the student's English total.
-How to Fix It
-Open services/sat.service.js and find the getExamScoreboard function. We will make it smart enough to recognize a 2-section layout automatically (if sections 3 and 4 are empty) and lower the filter threshold so students appear as soon as they complete at least one test.
-Find this exact block inside getExamScoreboard:
   const rwCurve = getCurve(examCurveKey(examId), 'rw');
   const mathCurve = getCurve(examCurveKey(examId), 'math');
+
+  // Automatically detect if this is a 2-section combined test layout
+  const isTwoSectionLayout = !Array.from(sectionOfTest.values()).some(sec => sec === 3 || sec === 4);
 
   const rows = Array.from(perStudent.entries()).map(([uid, entry]) => {
     let rwRaw = null;
@@ -488,8 +472,14 @@ Find this exact block inside getExamScoreboard:
     let latestFinished = 0;
     for (const [tid, attempt] of entry.tests) {
       const section = sectionOfTest.get(tid);
-      if (section <= 2) rwRaw = (rwRaw || 0) + attempt.correct;
+      
+      // If 2-section layout: Section 1 is English, Section 2 is Math. 
+      // Otherwise fallback to legacy 4-section layout rules.
+      const isMath = isTwoSectionLayout ? (section === 2) : (section > 2);
+      
+      if (!isMath) rwRaw = (rwRaw || 0) + attempt.correct;
       else mathRaw = (mathRaw || 0) + attempt.correct;
+      
       if (attempt.timeFinished > latestFinished) latestFinished = attempt.timeFinished;
     }
     const rwScaled = rwRaw != null && rwCurve ? gradeScaled(rwCurve, rwRaw) : null;
@@ -507,14 +497,26 @@ Find this exact block inside getExamScoreboard:
       date: latestFinished ? new Date(latestFinished * 1000).toISOString().split('T')[0] : null,
     };
   })
-    // A single completed section isn't a comparable result — keep the student
-    // off the board until they've done at least two (unless the exam itself
-    // only has one test assigned).
-    .filter((row) => sectionOfTest.size <= 1 || row.testsCompleted >= 2);
+    // Allow students to show up on the scoreboard as long as they finished at least 1 test
+    .filter((row) => row.testsCompleted >= 1);
 
-Replace it entirely with this corrected block:
-  const rwCurve = getCurve(examCurveKey(examId), 'rw');
-  const mathCurve = getCurve(examCurveKey(examId), 'math');
+  // Rank: full totals first (desc), then partials by whatever is scaled,
+  // then raw-only rows by combined raw.
+  rows.sort((a, b) =>
+    (b.total ?? -1) - (a.total ?? -1) ||
+    ((b.rwScaled ?? 0) + (b.mathScaled ?? 0)) - ((a.rwScaled ?? 0) + (a.mathScaled ?? 0)) ||
+    ((b.rwRaw ?? 0) + (b.mathRaw ?? 0)) - ((a.rwRaw ?? 0) + (a.mathRaw ?? 0))
+  );
+
+  return {
+    examId: exam.examId,
+    name: exam.name,
+    date: exam.date || modeDate(rows.map((r) => r.date)) || null,
+    hasRwCurve: Boolean(rwCurve),
+    hasMathCurve: Boolean(mathCurve),
+    rows,
+  };
+}
 
   // Automatically detect if this is a 2-section combined test layout
   const isTwoSectionLayout = !Array.from(sectionOfTest.values()).some(sec => sec === 3 || sec === 4);
@@ -553,7 +555,6 @@ Replace it entirely with this corrected block:
     // Allow students to show up on the scoreboard as long as they finished at least 1 test
     .filter((row) => row.testsCompleted >= 1);
 
-Save the file and restart your server. This will fix the classification mapping and immediately display any student who has completed either part of Test 2.
   // Rank: full totals first (desc), then partials by whatever is scaled,
   // then raw-only rows by combined raw.
   rows.sort((a, b) =>
