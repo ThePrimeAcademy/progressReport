@@ -27,9 +27,12 @@ app.use(cors({
   credentials: true,
 }));
 
+// 1. Webhooks load FIRST so they can access the raw unparsed body
+app.use('/api/webhooks', webhookRoutes);
+
+// 2. Global parsers load AFTER for standard app traffic
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
-app.use('/api/webhooks', webhookRoutes);
 
 app.get('/healthz', (req, res) => {
   res.json({ ok: true });
