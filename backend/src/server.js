@@ -1,6 +1,10 @@
 require('dotenv').config();
+// Do NOT clearCache() on boot — that deletes the on-disk ClassMarker results
+// cache and forces a full 85-day paginated re-pull (up to 30 API pages). With
+// ClassMarker's 30 req/hour limit, a single Railway redeploy can exhaust the
+// budget. Cache is loaded from DATA_DIR and refreshed incrementally (~1 req
+// every 55 min). Use the UI "Refresh" button only when you need a hard wipe.
 const cm = require('./services/classmarker.service');
-cm.clearCache(); 
 cm.fetchCategoryMap().catch((err) => console.error('Category fetch failed:', err));
 
 const express = require('express');

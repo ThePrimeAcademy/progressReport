@@ -282,42 +282,92 @@ export default function BulkSendPanel({
     [programs, scope]
   );
 
+  // ClassMarker sometimes returns bare user_ids with no first/last/email —
+  // those surface as "User 123". Prefer any richer name we already have.
+  function isPlaceholderName(name, id) {
+    if (!name) return true;
+    return String(name) === `User ${id}` || String(name) === `User ${String(id)}`;
+  }
+
+  // Merge full ClassMarker roster + the active-students list. Always key by
+  // String(id) so program enrollment (which may have been stored as numbers)
+  // still resolves to real names.
+  const rosterById = useMemo(() => {
+    const map = new Map();
+    const add = (st) => {
+      if (!st || st.id == null) return;
+      const id = String(st.id);
+      const incoming = {
+        id,
+        name: st.name || `User ${id}`,
+        email: st.email || '',
+      };
+      const prev = map.get(id);
+      if (!prev) {
+        map.set(id, incoming);
+        return;
+      }
+      const name = !isPlaceholderName(incoming.name, id)
+        ? incoming.name
+        : !isPlaceholderName(prev.name, id)
+          ? prev.name
+          : (incoming.name || prev.name);
+      map.set(id, {
+        id,
+        name,
+        email: incoming.email || prev.email || '',
+      });
+    };
+    for (const st of fullRoster || []) add(st);
+    for (const st of students || []) add(st);
+    return map;
+  }, [fullRoster, students]);
+
   // Students shown in the list. For a program scope, map each enrolled id to
-  // its full-roster entry (falling back to a bare row so nobody is silently
+  // its roster entry (falling back to a bare row so nobody is silently
   // dropped); otherwise use the active-students list as before.
   const sortedStudents = useMemo(() => {
     const base = activeProgram
-      ? (activeProgram.studentIds || []).map(
-          (id) => fullRoster.find((st) => st.id === id) || { id, name: `User ${id}`, email: '' }
-        )
-      : (students || []);
+      ? (activeProgram.studentIds || []).map((rawId) => {
+          const id = String(rawId);
+          return rosterById.get(id) || { id, name: `User ${id}`, email: '' };
+        })
+      : (students || []).map((st) => {
+          const id = String(st.id);
+          return rosterById.get(id) || { id, name: st.name || `User ${id}`, email: st.email || '' };
+        });
     return [...base].sort((a, b) => a.name.localeCompare(b.name));
-  }, [activeProgram, fullRoster, students]);
+  }, [activeProgram, rosterById, students]);
 
   // Switching to a program pre-selects its whole roster (omit by unchecking);
   // switching back to "all students" clears the selection.
   useEffect(() => {
-    if (activeProgram) setSelectedIds(new Set(activeProgram.studentIds || []));
-    else setSelectedIds(new Set());
+    if (activeProgram) {
+      setSelectedIds(new Set((activeProgram.studentIds || []).map(String)));
+    } else {
+      setSelectedIds(new Set());
+    }
   }, [activeProgram]);
 
   // Effective email for a student row. Priority:
   //   1. user's edit in this batch
   //   2. saved contact in DB
   //   3. (student field only) the ClassMarker-registered email
-  function effectiveEmail(id, field) {
+  function effectiveEmail(rawId, field) {
+    const id = String(rawId);
     const edit = rowEdits[id]?.[field];
     if (edit !== undefined) return edit;
-    const saved = allContacts[id]?.[field] || '';
+    const saved = allContacts[id]?.[field] || allContacts[rawId]?.[field] || '';
     if (saved) return saved;
     if (field === 'studentEmail') {
-      const stu = sortedStudents.find((s) => s.id === id);
+      const stu = sortedStudents.find((s) => String(s.id) === id);
       return stu?.email || '';
     }
     return '';
   }
 
-  function setEdit(id, field, value) {
+  function setEdit(rawId, field, value) {
+    const id = String(rawId);
     setRowEdits((prev) => ({
       ...prev,
       [id]: { ...(prev[id] || {}), [field]: value },
@@ -334,11 +384,12 @@ export default function BulkSendPanel({
   // Persist one row's contacts. No-ops when nothing was typed or the values
   // already match the saved contact; skips (with an inline error) when an
   // email is malformed so a half-typed address never overwrites a good one.
-  async function persistRow(id) {
+  async function persistRow(rawId) {
+    const id = String(rawId);
     if (!rowEdits[id]) return;
     const studentEmail = (effectiveEmail(id, 'studentEmail') || '').trim();
     const parentEmail = (effectiveEmail(id, 'parentEmail') || '').trim();
-    const saved = allContacts[id] || {};
+    const saved = allContacts[id] || allContacts[rawId] || {};
     if ((saved.studentEmail || '') === studentEmail && (saved.parentEmail || '') === parentEmail) return;
     if ((studentEmail && !EMAIL_RX.test(studentEmail)) || (parentEmail && !EMAIL_RX.test(parentEmail))) {
       setSaveStates((prev) => ({ ...prev, [id]: 'error:Invalid email — not saved yet' }));
@@ -386,7 +437,8 @@ export default function BulkSendPanel({
     none:        { label: 'No contacts',       style: s.contactsNone },
   };
 
-  function toggle(id) {
+  function toggle(rawId) {
+    const id = String(rawId);
     setSelectedIds((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
@@ -394,10 +446,10 @@ export default function BulkSendPanel({
       return next;
     });
   }
-  function selectAll() { setSelectedIds(new Set(sortedStudents.map((s) => s.id))); }
+  function selectAll() { setSelectedIds(new Set(sortedStudents.map((s) => String(s.id)))); }
   function selectNone() { setSelectedIds(new Set()); }
   function selectWithContacts() {
-    setSelectedIds(new Set(sortedStudents.filter((s) => hasSavedContacts(s.id)).map((s) => s.id)));
+    setSelectedIds(new Set(sortedStudents.filter((s) => hasSavedContacts(s.id)).map((s) => String(s.id))));
   }
 
   const totalSelected = selectedIds.size;

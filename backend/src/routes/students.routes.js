@@ -1,6 +1,13 @@
 // routes/students.routes.js
 const express = require('express');
-const { getAllStudents, getStudentById, clearCache, fetchCategoryMap, getCategoryName } = require('../services/classmarker.service');
+const {
+  getAllStudents,
+  getStudentById,
+  clearCache,
+  invalidateCache,
+  fetchCategoryMap,
+  getCategoryName,
+} = require('../services/classmarker.service');
 const db = require('../services/db.service');
 
 const router = express.Router();
@@ -20,17 +27,24 @@ router.get('/', async (req, res, next) => {
 
 /**
  * POST /api/students/refresh
- * Clears the cache and re-fetches fresh data from ClassMarker.
+ * Soft-refresh by default: mark the in-memory cache stale so the next fetch
+ * is incremental (usually 1 ClassMarker request). Pass ?hard=1 to wipe the
+ * disk cache and re-pull the full window — that can burn the entire 30/hour
+ * budget and should only be used when data is clearly corrupt/stale.
  */
 router.post('/refresh', async (req, res, next) => {
   try {
-    clearCache();
+    const hard = req.query.hard === '1' || req.query.hard === 'true'
+      || req.body?.hard === true || req.body?.hard === '1';
+    if (hard) clearCache();
+    else invalidateCache();
     const [students, categoryMap] = await Promise.all([getAllStudents(), fetchCategoryMap()]);
     const categoriesLoaded = Object.keys(categoryMap || {}).length;
     res.json({
       success: true,
-      message: `Cache refreshed — ${students.length} students, ${categoriesLoaded} categories loaded`,
+      message: `Cache ${hard ? 'hard-' : ''}refreshed — ${students.length} students, ${categoriesLoaded} categories loaded`,
       categoriesLoaded,
+      hard: Boolean(hard),
       data: students,
     });
   } catch (err) {

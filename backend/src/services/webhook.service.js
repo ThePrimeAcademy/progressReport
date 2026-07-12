@@ -131,7 +131,8 @@ function selectLatestSatExamRecords(records) {
     if (examMap.has(recordTestId(r))) return false;
     const gn = r.group?.groupName ?? r.group_name ?? null;
     const tn = r.test?.testName ?? r.test_name ?? '';
-      return isSatGroupName(gn) && deriveTestSection(tn, gn, r.questions) !== null;
+    return isSatGroupName(gn) && deriveTestSection(tn, gn, r.questions) !== null;
+  });
   if (examCandidates.length === 0 && legacyCandidates.length === 0) return [];
 
   const newest = (arr) => arr.reduce(

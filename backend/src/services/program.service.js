@@ -42,6 +42,12 @@ function load() {
     console.error('[programs] Could not read programs.json:', e.message);
   }
   if (!Array.isArray(programs)) programs = [];
+  // Older writes sometimes stored ClassMarker user ids as numbers; coerce so
+  // frontend roster lookups (string ids from /api/students) always match.
+  programs = programs.map((p) => ({
+    ...p,
+    studentIds: normalizeIds(p?.studentIds),
+  }));
   return programs;
 }
 

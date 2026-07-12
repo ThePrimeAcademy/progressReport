@@ -278,16 +278,57 @@ function mergeWebhookResult(payload) {
   return true;
 }
 
+function isPlaceholderStudentName(name, id) {
+  if (!name) return true;
+  return String(name) === `User ${id}` || String(name) === `User ${String(id)}`;
+}
+
 async function getAllStudents() {
   const { results } = await fetchAllResults();
 
   const seen = new Map();
   for (const r of results) {
     const id = String(r.user_id);
-    if (!seen.has(id)) {
-      const fullName = `${r.first || ''} ${r.last || ''}`.trim() || r.email || `User ${id}`;
-      seen.set(id, { id, name: fullName, email: r.email });
+    const fullName = `${r.first || ''} ${r.last || ''}`.trim() || r.email || `User ${id}`;
+    const email = r.email || null;
+    const prev = seen.get(id);
+    if (!prev) {
+      seen.set(id, { id, name: fullName, email });
+      continue;
     }
+    // Prefer a real name/email when a later attempt has better metadata.
+    const name = !isPlaceholderStudentName(fullName, id)
+      ? fullName
+      : prev.name;
+    seen.set(id, { id, name, email: prev.email || email });
+  }
+
+  // Webhook store often has first/last when the recent-results API cache only
+  // has a bare user_id — merge so program rosters / bulk send show real names.
+  try {
+    const db = require('./db.service');
+    const records = await db.getAllRecords();
+    for (const r of records) {
+      const id = String(r.student?.userId ?? r.user_id ?? '');
+      if (!id) continue;
+      const webhookName = String(r.student?.name || r.name || '').trim();
+      const webhookEmail = r.student?.email || r.email || null;
+      const prev = seen.get(id);
+      if (!prev) {
+        seen.set(id, {
+          id,
+          name: webhookName || webhookEmail || `User ${id}`,
+          email: webhookEmail,
+        });
+        continue;
+      }
+      const name = webhookName && isPlaceholderStudentName(prev.name, id)
+        ? webhookName
+        : prev.name;
+      seen.set(id, { id, name, email: prev.email || webhookEmail });
+    }
+  } catch (e) {
+    // DB may not be ready on a cold path — API-cache names are still usable.
   }
 
   return Array.from(seen.values()).sort((a, b) => a.name.localeCompare(b.name));
@@ -448,10 +489,24 @@ function computeCategoryPerformance(groups) {
     .sort((a, b) => b.percentage - a.percentage);
 }
 
+// Soft invalidate: next fetchAllResults does an incremental API pull but
+// keeps the disk/memory results as a base (and as a fallback if rate-limited).
+function invalidateCache() {
+  if (memCache) {
+    memCache.cacheTime = 0;
+    console.log('[classmarker] Cache marked stale (incremental refresh on next fetch).');
+  } else {
+    console.log('[classmarker] No in-memory cache to invalidate — next fetch will load disk/full.');
+  }
+  // Categories are cheap (1 request) and rarely change — leave their TTL alone
+  // so a soft refresh doesn't always spend an extra API call.
+}
+
+// Hard wipe: deletes memory + disk. Full 85-day re-pull on next fetch. Can
+// exhaust ClassMarker's 30 req/hour budget alone — avoid on every boot.
 function clearCache() {
   memCache = null;
   try {
-    const fs = require('fs');
     if (fs.existsSync(CACHE_FILE)) fs.unlinkSync(CACHE_FILE);
   } catch (e) {
     console.warn('Could not delete cache file:', e.message);
@@ -563,6 +618,7 @@ module.exports = {
   getActiveStudentIds,
   computeCategoryPerformance,
   clearCache,
+  invalidateCache,
   fetchCategoryMap,
   getCategoryName,
   getKnownTests,
