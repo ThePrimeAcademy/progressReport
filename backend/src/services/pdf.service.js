@@ -207,28 +207,34 @@ function buildWeeklySection(categoryPerfSplit, categoryPerf) {
 
   if (!enCats.length && !maCats.length) return '';
 
- const TOP = 3;
+const TOP = 3;
   const MIN_QUESTIONS = 2;  // 1-question categories are noise — skip them
   const STRENGTH_MIN = 70;  // a strength must actually be strong
-  const WEAKNESS_MAX = 60;  // a weakness must actually be weak
-  const eligible = (cats) => cats.filter((c) => c.total >= MIN_QUESTIONS);
-  // Disjoint thresholds (>=70 vs <=60) guarantee a category can never appear
-  // in both tables. Tiebreak by total question count so 4/4 outranks 2/2.
-  const topN = (cats) => eligible(cats)
-    .filter((c) => c.percentage >= STRENGTH_MIN)
-    .sort((a, b) => b.percentage - a.percentage || b.total - a.total)
-    .slice(0, TOP);
-  const botN = (cats) => eligible(cats)
-    .filter((c) => c.percentage <= WEAKNESS_MAX)
-    .sort((a, b) => a.percentage - b.percentage || b.total - a.total)
-    .slice(0, TOP);
+  const pick = (cats) => {
+    const el = cats.filter((c) => c.total >= MIN_QUESTIONS);
+    const strengths = el
+      .filter((c) => c.percentage >= STRENGTH_MIN)
+      .sort((a, b) => b.percentage - a.percentage || b.total - a.total)
+      .slice(0, TOP);
+    const used = new Set(strengths.map((c) => c.name));
+    // Weaknesses = the student's lowest categories, even for strong students —
+    // always fill up to TOP rows. Perfect scores and anything already listed
+    // as a strength are excluded, so the two lists can never overlap.
+    const weaknesses = el
+      .filter((c) => c.percentage < 100 && !used.has(c.name))
+      .sort((a, b) => a.percentage - b.percentage || b.total - a.total)
+      .slice(0, TOP);
+    return { strengths, weaknesses };
+  };
+  const en = pick(enCats);
+  const ma = pick(maCats);
 
   return `
     <div style="margin-bottom:10px;">
       <div class="section-title">Weekly Performance</div>
       <div style="display:flex;flex-direction:column;gap:10px;">
-        ${buildSubjectBox('English', '#1a56db', '#eff6ff', topN(enCats), botN(enCats))}
-        ${buildSubjectBox('Math', '#1a56db', '#eff6ff', topN(maCats), botN(maCats))}
+       ${buildSubjectBox('English', '#1a56db', '#eff6ff', en.strengths, en.weaknesses)}
+        ${buildSubjectBox('Math', '#1a56db', '#eff6ff', ma.strengths, ma.weaknesses)}
       </div>
     </div>`;
 }
