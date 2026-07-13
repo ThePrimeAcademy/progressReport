@@ -61,7 +61,6 @@ app.get('/routes', (req, res) => {
 // Routes
 app.use('/api/students', studentRoutes);
 app.use('/api/report', reportRoutes);
-app.use('/api/import', require('./routes/import.routes'));
 app.use('/api/scoring-sheets', scoringSheetsRoutes);
 app.use('/api/exams', examsRoutes);
 app.use('/api/programs', programsRoutes);
