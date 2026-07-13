@@ -207,13 +207,19 @@ function buildWeeklySection(categoryPerfSplit, categoryPerf) {
 
   if (!enCats.length && !maCats.length) return '';
 
-  const TOP = 3;
-  // Tiebreak by total question count (desc) so a 4/4 outranks a 2/2 and a 0/4 outranks a 0/1.
-  const topN = (cats) => [...cats].sort((a, b) => b.percentage - a.percentage || b.total - a.total).slice(0, TOP);
-  // Weaknesses must actually be weaknesses — exclude perfect-score categories
-  // even if that means fewer than 3 entries.
-  const botN = (cats) => [...cats]
-    .filter((c) => c.percentage < 100)
+ const TOP = 3;
+  const MIN_QUESTIONS = 2;  // 1-question categories are noise — skip them
+  const STRENGTH_MIN = 70;  // a strength must actually be strong
+  const WEAKNESS_MAX = 60;  // a weakness must actually be weak
+  const eligible = (cats) => cats.filter((c) => c.total >= MIN_QUESTIONS);
+  // Disjoint thresholds (>=70 vs <=60) guarantee a category can never appear
+  // in both tables. Tiebreak by total question count so 4/4 outranks 2/2.
+  const topN = (cats) => eligible(cats)
+    .filter((c) => c.percentage >= STRENGTH_MIN)
+    .sort((a, b) => b.percentage - a.percentage || b.total - a.total)
+    .slice(0, TOP);
+  const botN = (cats) => eligible(cats)
+    .filter((c) => c.percentage <= WEAKNESS_MAX)
     .sort((a, b) => a.percentage - b.percentage || b.total - a.total)
     .slice(0, TOP);
 
