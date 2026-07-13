@@ -409,22 +409,25 @@ function WeeklyPerformance({ categoryPerf, categoryPerfSplit }) {
   const TOP = 3;
   const MIN_QUESTIONS = 2;  // 1-question categories are noise — skip them
   const STRENGTH_MIN = 70;  // a strength must actually be strong
-  const WEAKNESS_MAX = 60;  // a weakness must actually be weak
-  // Disjoint thresholds (>=70 vs <=60) guarantee a category never shows in
-  // both boxes. Tiebreak by question count so 4/4 outranks 2/2.
-  const strengthsOf = (cats) => cats
-    .filter((c) => c.total >= MIN_QUESTIONS && c.percentage >= STRENGTH_MIN)
-    .sort((a, b) => b.percentage - a.percentage || b.total - a.total)
-    .slice(0, TOP);
-  const weaknessesOf = (cats) => cats
-    .filter((c) => c.total >= MIN_QUESTIONS && c.percentage <= WEAKNESS_MAX)
-    .sort((a, b) => a.percentage - b.percentage || b.total - a.total)
-    .slice(0, TOP);
-
-  const enStrengths = strengthsOf(enCategories);
-  const enWeaknesses = weaknessesOf(enCategories);
-  const maStrengths = strengthsOf(maCategories);
-  const maWeaknesses = weaknessesOf(maCategories);
+  const pick = (cats) => {
+    const el = cats.filter((c) => c.total >= MIN_QUESTIONS);
+    const strengths = el
+      .filter((c) => c.percentage >= STRENGTH_MIN)
+      .sort((a, b) => b.percentage - a.percentage || b.total - a.total)
+      .slice(0, TOP);
+    const used = new Set(strengths.map((c) => c.name));
+    const weaknesses = el
+      .filter((c) => c.percentage < 100 && !used.has(c.name))
+      .sort((a, b) => a.percentage - b.percentage || b.total - a.total)
+      .slice(0, TOP);
+    return { strengths, weaknesses };
+  };
+  const en = pick(enCategories);
+  const ma = pick(maCategories);
+  const enStrengths = en.strengths;
+  const enWeaknesses = en.weaknesses;
+  const maStrengths = ma.strengths;
+  const maWeaknesses = ma.weaknesses;
   const hasData = enCategories.length > 0 || maCategories.length > 0;
 
   if (!hasData) return (
