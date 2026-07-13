@@ -160,13 +160,13 @@ function buildCatRow(cat, i, forceColor) {
 }
 
 function buildSubjectBox(subject, dotColor, headerBg, strengths, weaknesses) {
-  const tableFor = (cats, forceColor) => cats.length > 0
+const tableFor = (cats, forceColor, emptyText) => cats.length > 0
     ? `<table class="cat-table">
         <thead><tr><th>Problem Category</th><th>Score</th></tr></thead>
         <tbody>${cats.map((c, i) => buildCatRow(c, i, forceColor)).join('')}</tbody>
        </table>`
-    : `<div style="padding:10px 14px;font-size:0.85rem;color:#6b7280;font-style:italic;">No data available.</div>`;
-
+    : `<div style="padding:10px 14px;font-size:0.85rem;color:#6b7280;font-style:italic;">${emptyText}</div>`;
+  
   return `
     <div class="cat-box">
       <div class="cat-box-header" style="background:${headerBg};">
@@ -180,14 +180,14 @@ function buildSubjectBox(subject, dotColor, headerBg, strengths, weaknesses) {
           <div class="subject-strip" style="background:#f0fdf4;color:#15803d;">
             <span>▲ Strengths</span>
           </div>
-          ${tableFor(strengths, '#15803d')}
-        </div>
-        <div>
+          ${tableFor(strengths, '#15803d', 'No standout strengths this week.')}
+          </div>
+          <div>
           <div class="subject-strip" style="background:#fef2f2;color:#b91c1c;">
             <span>▼ Weaknesses</span>
           </div>
-          ${tableFor(weaknesses, '#b91c1c')}
-        </div>
+          ${tableFor(weaknesses, '#b91c1c', 'No notable weaknesses — great work.')}
+          </div>
       </div>
     </div>`;
 }
