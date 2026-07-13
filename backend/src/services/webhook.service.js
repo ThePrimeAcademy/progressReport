@@ -143,7 +143,10 @@ function selectLatestSatExamRecords(records) {
   const newestExam = newest(examCandidates);
   const newestLegacy = newest(legacyCandidates);
 
-  if (newestExam && (!newestLegacy || (newestExam.timeFinished || 0) >= (newestLegacy.timeFinished || 0))) {
+  // Admin-defined exam attempts always take precedence over legacy name-matched
+  // records — a practice quiz in an "SAT" group (e.g. "DSAT EN: ...") must never
+  // hijack the weekly breakdown from a real exam, however recently it was taken.
+  if (newestExam) {
     const latestExamId = examMap.get(recordTestId(newestExam)).examId;
     const latestTs = newestExam.timeFinished || 0;
     // Same exam, within the window — and only the latest attempt per test so
