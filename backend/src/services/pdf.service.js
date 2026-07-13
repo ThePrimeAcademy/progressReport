@@ -208,7 +208,7 @@ function buildWeeklySection(categoryPerfSplit, categoryPerf) {
   if (!enCats.length && !maCats.length) return '';
 
 const TOP = 3;
-  const MIN_QUESTIONS = 2;  // 1-question categories are noise — skip them
+  const MIN_QUESTIONS = 1;  // 1-question categories are noise — skip them
   const STRENGTH_MIN = 70;  // a strength must actually be strong
   const pick = (cats) => {
     const el = cats.filter((c) => c.total >= MIN_QUESTIONS);
