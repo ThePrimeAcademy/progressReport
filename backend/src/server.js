@@ -64,7 +64,52 @@ app.use('/api/report', reportRoutes);
 app.use('/api/scoring-sheets', scoringSheetsRoutes);
 app.use('/api/exams', examsRoutes);
 app.use('/api/programs', programsRoutes);
-
+// TEMPORARY: replay ClassMarker cache into the webhook DB. Remove after use.
+app.post('/api/admin/backfill-from-cache', async (req, res) => {
+  if (!process.env.EXPORT_TOKEN || req.query.token !== process.env.EXPORT_TOKEN) {
+    return res.sendStatus(403);
+  }
+  try {
+    const fs = require('fs');
+    const path = require('path');
+    const db = require('./services/db.service');
+    const { normalizePayload } = require('./services/webhook.service');
+    const cachePath = path.join(process.env.DATA_DIR || 'data', 'classmarker-cache.json');
+    const cache = JSON.parse(fs.readFileSync(cachePath, 'utf-8'));
+    let done = 0, skipped = 0;
+    for (const r of cache.results || []) {
+      if (r.user_id == null || r.test_id == null || r.time_finished == null) { skipped++; continue; }
+      const payload = {
+        payload_type: 'group_user_test_results',
+        payload_status: 'backfilled_from_cache',
+        result: {
+          user_id: r.user_id, first: r.first || '', last: r.last || '', email: r.email || null,
+          percentage: r.percentage ?? null, points_scored: r.points_scored ?? null,
+          points_available: r.points_available ?? null, passed: r.passed ?? null,
+          duration: r.duration || null,
+          time_started: r.time_started ?? r.time_finished,
+          time_finished: r.time_finished,
+        },
+        test: { test_id: r.test_id, test_name: cache.testMap?.[String(r.test_id)] || null },
+        group: { group_id: r.group_id, group_name: cache.groupMap?.[String(r.group_id)] || null },
+        questions: Array.isArray(r.questions) ? r.questions : [],
+        category_results: Array.isArray(r.category_results)
+          ? r.category_results.map((c) => ({
+              category_id: c.category_id ?? null,
+              name: c.category_name || c.name || null,
+              points_scored: c.correct ?? c.points_scored ?? 0,
+              points_available: c.total ?? c.points_available ?? 0,
+            }))
+          : [],
+      };
+      await db.upsertRecord(normalizePayload(payload));
+      done++;
+    }
+    res.json({ ok: true, upserted: done, skipped });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
 // 404 handler
 app.use((req, res) => {
   res.status(404).json({ error: 'Route not found' });
