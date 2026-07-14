@@ -65,6 +65,16 @@ app.use('/api/scoring-sheets', scoringSheetsRoutes);
 app.use('/api/exams', examsRoutes);
 app.use('/api/programs', programsRoutes);
 
+// TEMPORARY: raw DB download for recovery. Remove after use.68-75
+app.get('/api/admin/db-file', (req, res) => {
+  if (!process.env.EXPORT_TOKEN || req.query.token !== process.env.EXPORT_TOKEN) {
+    return res.sendStatus(403);
+  }
+  const p = require('path').join(process.env.DATA_DIR || 'data', 'progressreport.db');
+  res.download(p, 'progressreport.db');
+});
+
+
 // 404 handler
 app.use((req, res) => {
   res.status(404).json({ error: 'Route not found' });
