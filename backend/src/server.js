@@ -73,7 +73,28 @@ app.get('/api/admin/db-file', (req, res) => {
   const p = require('path').join(process.env.DATA_DIR || 'data', 'progressreport.db');
   res.download(p, 'progressreport.db');
 });
-
+// TEMPORARY: add next to your other routes in the main server file.
+// Lets us upload the recovered DB onto the Railway volume. REMOVE AFTER USE
+// (along with the /api/admin/db-file download route).
+app.post(
+  '/api/admin/restore-db',
+  require('express').raw({ type: 'application/octet-stream', limit: '300mb' }),
+  (req, res) => {
+    if (!process.env.EXPORT_TOKEN || req.query.token !== process.env.EXPORT_TOKEN) {
+      return res.sendStatus(403);
+    }
+    const fs = require('fs');
+    const path = require('path');
+    const p = path.join(process.env.DATA_DIR || 'data', 'progressreport.db');
+    fs.writeFileSync(p + '.tmp', req.body);
+    fs.renameSync(p + '.tmp', p);
+    res.json({ ok: true, bytes: req.body.length });
+    // Hard-kill so the app restarts and loads the restored file.
+    // SIGKILL skips the exit handler, which would otherwise overwrite the
+    // restored file with the corrupt in-memory copy.
+    setTimeout(() => process.kill(process.pid, 'SIGKILL'), 500);
+  }
+);
 
 // 404 handler
 app.use((req, res) => {
