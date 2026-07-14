@@ -17,11 +17,20 @@ const initSqlJs = require('sql.js');
 let _db = null;
 let _dirty = false;
 
+// Atomic write: write to a temp file, then rename. rename() is atomic on the
+// same filesystem, so a process kill mid-write can never leave a truncated
+// half-written DB (the cause of "database disk image is malformed").
+function writeDbFileSync() {
+    const tmp = DB_PATH + '.tmp';
+    fs.writeFileSync(tmp, Buffer.from(_db.export()));
+    fs.renameSync(tmp, DB_PATH);
+}
+
 // Flush to disk every 5 seconds if dirty
 setInterval(() => {
     if (_dirty && _db) {
         try {
-            fs.writeFileSync(DB_PATH, Buffer.from(_db.export()));
+            writeDbFileSync();
             _dirty = false;
         } catch (e) {
             console.error('[db] Failed to flush:', e.message);
@@ -32,7 +41,7 @@ setInterval(() => {
 // Also flush on exit
 process.on('exit', () => {
     if (_dirty && _db) {
-        try { fs.writeFileSync(DB_PATH, Buffer.from(_db.export())); } catch (_) { }
+        try { writeDbFileSync(); } catch (_) { }
     }
 });
 
@@ -193,7 +202,7 @@ function flush() {
 function flushNow() {
     if (!_db) return;
     try {
-        fs.writeFileSync(DB_PATH, Buffer.from(_db.export()));
+        writeDbFileSync();
         _dirty = false;
     } catch (e) {
         console.error('[db] flushNow failed:', e.message);
