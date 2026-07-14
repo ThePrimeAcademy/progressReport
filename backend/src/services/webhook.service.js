@@ -363,4 +363,5 @@ module.exports = {
   getWebhookStoreSummary,
   upsertWebhookPayload,
   verifySignature,
+  normalizePayload,
 };
