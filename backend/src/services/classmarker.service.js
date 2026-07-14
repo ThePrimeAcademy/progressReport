@@ -608,7 +608,45 @@ async function getActiveStudentIds(startDate, endDate, dayOfWeek) {
   }
   return Array.from(active);
 }
-
+// One-off gap repair: fetch results from `fromTs` forward and merge into the
+// cache without dropping anything already there. Single disk save at the end.
+async function backfillFromApi(fromTs, maxPages = 25) {
+  const byKey = new Map();
+  const groupMap = { ...(memCache?.groupMap || {}) };
+  const testMap = { ...(memCache?.testMap || {}) };
+  for (const r of (memCache?.results || [])) byKey.set(resultKey(r), r);
+  const before = byKey.size;
+  let currentTimestamp = fromTs;
+  let page = 0;
+  let moreRemaining = false;
+  while (true) {
+    page++;
+    const data = await fetchResultsPage(currentTimestamp);
+    if (data.status === 'no_results' || !data.results) break;
+    for (const g of (data.groups || [])) {
+      const grp = g.group || g;
+      if (grp.group_id) groupMap[String(grp.group_id)] = grp.group_name;
+    }
+    for (const t of (data.tests || [])) {
+      const tst = t.test || t;
+      if (tst.test_id) testMap[String(tst.test_id)] = tst.test_name;
+    }
+    for (const raw of data.results) {
+      const r = raw.result || raw;
+      const k = resultKey(r);
+      if (!byKey.has(k)) byKey.set(k, r);
+    }
+    if (!data.more_results_exist || !data.next_finished_after_timestamp) break;
+    if (page >= maxPages) { moreRemaining = true; break; }
+    currentTimestamp = data.next_finished_after_timestamp;
+  }
+  const windowStart = Math.floor(Date.now() / 1000) - WINDOW_DAYS * 24 * 3600;
+  const results = Array.from(byKey.values()).filter((r) => (r.time_finished || 0) >= windowStart);
+  memCache = { results, groupMap, testMap, cacheTime: memCache?.cacheTime || Date.now() };
+  dataVersion++;
+  saveCache(memCache);
+  return { pagesFetched: page, cachedBefore: before, cachedNow: results.length, moreRemaining, nextTimestamp: currentTimestamp };
+}
 module.exports = {
   getAllStudents,
   getStudentById,
@@ -626,6 +664,7 @@ module.exports = {
   getResultsForTests,
   mergeWebhookResult,
   getDataVersion,
+  backfillFromApi
 };
 
 // Pre-warm cache on startup
