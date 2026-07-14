@@ -110,6 +110,20 @@ app.post('/api/admin/backfill-from-cache', async (req, res) => {
     res.status(500).json({ ok: false, error: e.message });
   }
 });
+// TEMPORARY: repair cache gaps from the ClassMarker API. Remove after use.
+app.post('/api/admin/backfill-from-api', async (req, res) => {
+  if (!process.env.EXPORT_TOKEN || req.query.token !== process.env.EXPORT_TOKEN) {
+    return res.sendStatus(403);
+  }
+  try {
+    const { backfillFromApi } = require('./services/classmarker.service');
+    const from = Number(req.query.from) || Math.floor(new Date('2026-06-25T00:00:00Z').getTime() / 1000);
+    const maxPages = Number(req.query.pages) || 25;
+    res.json({ ok: true, ...(await backfillFromApi(from, maxPages)) });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
 // 404 handler
 app.use((req, res) => {
   res.status(404).json({ error: 'Route not found' });
