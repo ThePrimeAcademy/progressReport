@@ -64,7 +64,36 @@ app.use('/api/report', reportRoutes);
 app.use('/api/scoring-sheets', scoringSheetsRoutes);
 app.use('/api/exams', examsRoutes);
 app.use('/api/programs', programsRoutes);
-
+// TEMPORARY: import student/parent contacts from JSON. Remove after use.
+app.post('/api/admin/import-contacts', async (req, res) => {
+  if (!process.env.EXPORT_TOKEN || req.query.token !== process.env.EXPORT_TOKEN) {
+    return res.sendStatus(403);
+  }
+  try {
+    const db = require('./services/db.service');
+    const entries = (req.body && req.body.entries) || [];
+    const students = await cm.getAllStudents();
+    const nameKey = (s) => String(s || '').toLowerCase().replace(/\(.*?\)/g, '').replace(/[^a-z0-9]+/g, '');
+    const byName = new Map();
+    const byEmail = new Map();
+    for (const s of students) {
+      if (s.name) byName.set(nameKey(s.name), String(s.id));
+      if (s.email) byEmail.set(String(s.email).toLowerCase(), String(s.id));
+    }
+    let saved = 0;
+    const unmatched = [];
+    for (const e of entries) {
+      const sid = byName.get(nameKey(e.name))
+        || byEmail.get(String(e.studentEmail || '').toLowerCase());
+      if (!sid) { unmatched.push(e.name); continue; }
+      await db.setContacts(sid, { studentEmail: e.studentEmail || '', parentEmail: e.parentEmail || '' });
+      saved++;
+    }
+    res.json({ ok: true, saved, unmatchedCount: unmatched.length, unmatched });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
 // 404 handler
 app.use((req, res) => {
   res.status(404).json({ error: 'Route not found' });
