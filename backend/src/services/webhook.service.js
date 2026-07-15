@@ -333,8 +333,8 @@ async function getWebhookCategoryPerformanceSplitPerExam(student) {
   const isHiddenFromExam = (r) =>
     examMap.get(recordTestId(r))?.hidden?.has(String(r.student?.userId ?? r.user_id ?? ''));
 
-  const examCandidates = allRecords.filter((r) => examMap.has(recordTestId(r)) && !isHiddenFromExam(r));
-  const legacyCandidates = allRecords.filter((r) => {
+  let examCandidates = allRecords.filter((r) => examMap.has(recordTestId(r)) && !isHiddenFromExam(r));
+  let legacyCandidates = allRecords.filter((r) => {
     if (examMap.has(recordTestId(r))) return false;
     const gn = r.group?.groupName ?? r.group_name ?? null;
     const tn = r.test?.testName ?? r.test_name ?? '';
@@ -342,6 +342,25 @@ async function getWebhookCategoryPerformanceSplitPerExam(student) {
     // detection counts, so standalone quizzes can't masquerade as exams.
     return isSatGroupName(gn) && deriveTestSection(tn, gn, []) !== null;
   });
+
+  // Program students (e.g. GA/VA Summer SAT 2026): the breakdown must ONLY
+  // cover their program's weekly exams — no other exams, quizzes, or legacy
+  // name-matched tests. Required lazily to avoid a module-load cycle.
+  try {
+    const { getProgramForStudent } = require('./program.service');
+    const { getExam } = require('./exam.service');
+    const program = getProgramForStudent(String(student?.id ?? ''));
+    if (program) {
+      examCandidates = examCandidates.filter((r) => {
+        const mapped = examMap.get(recordTestId(r));
+        return mapped && getExam(mapped.examId)?.programId === program.programId;
+      });
+      legacyCandidates = [];
+    }
+  } catch (_) {
+    // Program lookup unavailable — fall through with the unfiltered lists.
+  }
+
   if (examCandidates.length === 0 && legacyCandidates.length === 0) return [];
 
   const sittings = []; // { examId, examName, records }
