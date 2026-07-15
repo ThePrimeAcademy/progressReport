@@ -154,22 +154,28 @@ app.post('/api/admin/import-questions', async (req, res) => {
   try {
     const db = require('./services/db.service');
     const { computeLatestQuestionCategories } = require('./services/webhook.service');
+    const cm = require('./services/classmarker.service');
     const entries = (req.body && req.body.entries) || [];
     const records = await db.getAllRecords();
     const latestCats = computeLatestQuestionCategories(records);
+    const students = await cm.getAllStudents();
     const norm = (s) => String(s || '').toLowerCase().replace(/&amp;/g, '&').replace(/\s+/g, ' ').trim();
     const nameKey = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
-    let updated = 0, skippedHasDetail = 0, noMatch = 0;
+    const byName = new Map();
+    const byEmail = new Map();
+    for (const s of students) {
+      if (s.name) byName.set(nameKey(s.name), String(s.id));
+      if (s.email) byEmail.set(String(s.email).toLowerCase(), String(s.id));
+    }
+    let updated = 0, skippedHasDetail = 0, noMatch = 0, noStudent = 0;
     for (const e of entries) {
+      const sid = byEmail.get(String(e.email || '').toLowerCase())
+        || byName.get(nameKey(`${e.first} ${e.last}`));
+      if (!sid) { noStudent++; continue; }
       const eTest = norm(e.testName);
-      const eEmail = String(e.email || '').toLowerCase();
-      const eName = nameKey(`${e.first} ${e.last}`);
       const candidates = records.filter((r) => {
-        const rTest = norm(r.test?.testName ?? r.test_name);
-        if (rTest !== eTest) return false;
-        const rEmail = String(r.student?.normalizedEmail ?? r.normalized_email ?? '').toLowerCase();
-        const rName = String(r.student?.normalizedName ?? r.normalized_name ?? '');
-        return (eEmail && rEmail === eEmail) || (eName && rName === eName);
+        if (String(r.student?.userId ?? r.user_id ?? '') !== sid) return false;
+        return norm(r.test?.testName ?? r.test_name) === eTest;
       });
       if (!candidates.length) { noMatch++; continue; }
       const rec = candidates.reduce((a, b) => ((b.timeFinished || 0) > (a.timeFinished || 0) ? b : a));
@@ -193,7 +199,7 @@ app.post('/api/admin/import-questions', async (req, res) => {
       await db.updateQuestions(rec.id, questions);
       updated++;
     }
-    res.json({ ok: true, updated, skippedHasDetail, noMatch, entries: entries.length });
+    res.json({ ok: true, updated, skippedHasDetail, noMatch, noStudent, entries: entries.length });
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message });
   }
