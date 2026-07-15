@@ -218,35 +218,7 @@ function pickStrengthsWeaknesses(cats) {
   return { strengths, weaknesses };
 }
 
-function buildWeeklySection(categoryPerfSplit, categoryPerf, categoryPerfPerExam) {
-  // Per-exam breakdown: one English/Math strengths-weaknesses pair for EVERY
-  // SAT exam the student took, newest first — not just the latest exam.
-  if (Array.isArray(categoryPerfPerExam) && categoryPerfPerExam.length > 0) {
-    const blocks = categoryPerfPerExam.map((exam) => {
-      const en = pickStrengthsWeaknesses(exam.english || []);
-      const ma = pickStrengthsWeaknesses(exam.math || []);
-      const meta = exam.date ? ` &nbsp;·&nbsp; ${exam.date}` : '';
-      return `
-        <div style="margin-bottom:14px;">
-          <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
-            <span style="font-weight:700;font-size:0.9rem;color:#111827;">${escapeHtml(exam.examName)}</span>
-            <span style="font-size:0.75rem;color:#6b7280;">${meta}</span>
-          </div>
-          <div style="display:flex;flex-direction:column;gap:10px;">
-            ${buildSubjectBox('English', '#1a56db', '#eff6ff', en.strengths, en.weaknesses)}
-            ${buildSubjectBox('Math', '#1a56db', '#eff6ff', ma.strengths, ma.weaknesses)}
-          </div>
-        </div>`;
-    }).join('');
-
-    return `
-      <div style="margin-bottom:10px;">
-        <div class="section-title">Performance by Test</div>
-        ${blocks}
-      </div>`;
-  }
-
-  // Fallback: single aggregate box (assignments in range / legacy data).
+function buildWeeklySection(categoryPerfSplit, categoryPerf) {
   let enCats = [];
   let maCats = [];
 
@@ -359,7 +331,7 @@ function buildTestRows(groups) {
 }
 
 // ── Main export ───────────────────────────────────────────────
-async function generateReportPDF(student, groups, stats, satScores, startDate, endDate, latestTest, categoryPerf, categoryPerfSplit, homework, categoryPerfPerExam) {
+async function generateReportPDF(student, groups, stats, satScores, startDate, endDate, latestTest, categoryPerf, categoryPerfSplit, homework) {
   const now = new Date();
   const grade = letterGrade(stats.averageScore);
   const reportId = `PR-${Date.now().toString(36).toUpperCase()}`;
@@ -386,7 +358,7 @@ async function generateReportPDF(student, groups, stats, satScores, startDate, e
     homeworkSection: buildHomeworkSection(homework),
     // latestTestSection: buildLatestTestSection(latestTest), // hidden from PDF — restore this line (and delete the '' line below) to bring back "Latest Test Performance"
     latestTestSection: '',
-    weeklySection: buildWeeklySection(categoryPerfSplit, categoryPerf, categoryPerfPerExam),
+    weeklySection: buildWeeklySection(categoryPerfSplit, categoryPerf),
   };
 
   const html = renderTemplate(replacements);

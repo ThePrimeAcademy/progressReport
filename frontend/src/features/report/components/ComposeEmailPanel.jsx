@@ -4,8 +4,8 @@
 // progress report: the PDF only rides along when "Attach progress report"
 // is explicitly checked. Exists so the bulk email pipeline can be exercised
 // without mailing out reports.
-import React, { useState, useMemo } from 'react';
-import { sendCustomEmail, fetchCustomEmailJobStatus } from '../api/reportApi.js';
+import React, { useState, useEffect, useMemo } from 'react';
+import { sendCustomEmail, fetchCustomEmailJobStatus, fetchStudentGroups, fetchPrograms } from '../api/reportApi.js';
 
 const s = {
   card: { background: 'var(--bg)', borderRadius: 16, boxShadow: 'var(--shadow-lg)', border: '1.5px solid var(--border)', overflow: 'hidden' },
@@ -42,6 +42,11 @@ export default function ComposeEmailPanel({
 }) {
   const [selected, setSelected] = useState(() => new Set());
   const [search, setSearch] = useState('');
+  // Group/program filter — '' shows everyone, 'g:<id>' a ClassMarker group,
+  // 'p:<id>' a program. Mirrors the Students tab's single dropdown.
+  const [filterId, setFilterId] = useState('');
+  const [groups, setGroups] = useState([]);
+  const [programs, setPrograms] = useState([]);
   const [subject, setSubject] = useState('');
   const [message, setMessage] = useState('');
   const [includeReport, setIncludeReport] = useState(false);
@@ -49,15 +54,42 @@ export default function ComposeEmailPanel({
   const [error, setError] = useState(null);
   const [results, setResults] = useState(null); // [{studentId, status, to, error}]
 
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([
+      fetchStudentGroups().catch(() => []),
+      fetchPrograms().catch(() => []),
+    ]).then(([g, p]) => {
+      if (cancelled) return;
+      setGroups(g);
+      setPrograms(p);
+    });
+    return () => { cancelled = true; };
+  }, []);
+
   const contactsFor = (id) => allContacts?.[id] || {};
   const hasRecipient = (st) => {
     const c = contactsFor(st.id);
     return Boolean(c.studentEmail || c.parentEmail || st.email);
   };
 
+  // Ids allowed by the group/program filter — null means no filter.
+  const filterIds = useMemo(() => {
+    if (!filterId) return null;
+    if (filterId.startsWith('g:')) {
+      const g = groups.find((x) => `g:${x.groupId}` === filterId);
+      return g ? new Set(g.students.map((st) => String(st.id))) : new Set();
+    }
+    const p = programs.find((x) => `p:${x.programId}` === filterId);
+    return p ? new Set((p.studentIds || []).map(String)) : new Set();
+  }, [filterId, groups, programs]);
+
   const filtered = useMemo(
-    () => (students || []).filter((st) => !search || st.name.toLowerCase().includes(search.toLowerCase())),
-    [students, search]
+    () => (students || []).filter((st) =>
+      (!filterIds || filterIds.has(String(st.id))) &&
+      (!search || st.name.toLowerCase().includes(search.toLowerCase()))
+    ),
+    [students, search, filterIds]
   );
 
   const byId = useMemo(() => new Map((students || []).map((st) => [String(st.id), st])), [students]);
@@ -72,9 +104,15 @@ export default function ComposeEmailPanel({
     });
   };
 
+  // Respects the group/program filter, so "select all" never grabs students
+  // outside the chosen group.
   const selectAllWithContacts = () => {
     setResults(null);
-    setSelected(new Set((students || []).filter(hasRecipient).map((st) => st.id)));
+    setSelected(new Set(
+      (students || [])
+        .filter((st) => (!filterIds || filterIds.has(String(st.id))) && hasRecipient(st))
+        .map((st) => st.id)
+    ));
   };
 
   const datesOk = !includeReport || (startDate && endDate && new Date(startDate) <= new Date(endDate));
@@ -149,6 +187,27 @@ export default function ComposeEmailPanel({
               <button type="button" style={s.btnGhost} onClick={() => { setSelected(new Set()); setResults(null); }}>Clear</button>
             </div>
           </div>
+          <select
+            style={{ ...s.input, marginBottom: 8 }}
+            value={filterId}
+            onChange={(e) => { setFilterId(e.target.value); setResults(null); }}
+          >
+            <option value="">All students</option>
+            {groups.length > 0 && (
+              <optgroup label="Groups">
+                {groups.map((g) => (
+                  <option key={g.groupId} value={`g:${g.groupId}`}>{g.groupName} ({g.students.length})</option>
+                ))}
+              </optgroup>
+            )}
+            {programs.length > 0 && (
+              <optgroup label="Programs">
+                {programs.map((p) => (
+                  <option key={p.programId} value={`p:${p.programId}`}>{p.name} ({(p.studentIds || []).length})</option>
+                ))}
+              </optgroup>
+            )}
+          </select>
           <input
             style={s.search}
             value={search}
@@ -163,15 +222,29 @@ export default function ComposeEmailPanel({
               const c = contactsFor(st.id);
               const saved = Boolean(c.studentEmail || c.parentEmail);
               const fallback = !saved && Boolean(st.email);
+              // Show exactly which addresses the send will go to.
+              const emailBits = saved
+                ? [
+                    c.studentEmail ? `Student: ${c.studentEmail}` : null,
+                    c.parentEmail ? `Parent: ${c.parentEmail}` : null,
+                  ].filter(Boolean)
+                : (fallback ? [`Student: ${st.email}`] : []);
               return (
                 <label key={st.id} style={{ ...s.pickRow, ...(i === 0 ? { borderTop: 'none' } : {}) }}>
                   <input
                     type="checkbox"
                     checked={selected.has(st.id)}
                     onChange={() => toggle(st.id)}
+                    style={{ flexShrink: 0 }}
                   />
-                  <span>{st.name}</span>
-                  <span style={{ ...s.pill, ...(saved ? s.pillOk : (fallback ? s.pillWarn : s.pillWarn)) }}>
+                  <span style={{ minWidth: 0 }}>
+                    <span style={{ fontWeight: 600 }}>{st.name}</span>
+                    <br />
+                    <span style={{ fontSize: '0.72rem', color: 'var(--muted)' }}>
+                      {emailBits.length ? emailBits.join(' · ') : 'No email on file'}
+                    </span>
+                  </span>
+                  <span style={{ ...s.pill, ...(saved ? s.pillOk : s.pillWarn) }}>
                     {saved ? 'Contacts saved' : fallback ? 'ClassMarker email only' : 'No email on file'}
                   </span>
                 </label>

@@ -151,7 +151,6 @@ export default function StudentDirectory({
   dayOfWeek,
   onViewReport,
 }) {
-  const [source, setSource] = useState('groups'); // 'groups' | 'programs'
   const [groups, setGroups] = useState([]);
   const [programs, setPrograms] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -173,7 +172,7 @@ export default function StudentDirectory({
         setPrograms(p);
         // Preselect the first group so the main page shows students right away.
         if (g.length > 0) setSelectedId(`g:${g[0].groupId}`);
-        else if (p.length > 0) { setSource('programs'); setSelectedId(`p:${p[0].programId}`); }
+        else if (p.length > 0) setSelectedId(`p:${p[0].programId}`);
       })
       .catch((e) => { if (!cancelled) setError(e.message || 'Failed to load groups'); })
       .finally(() => { if (!cancelled) setLoading(false); });
@@ -182,9 +181,9 @@ export default function StudentDirectory({
 
   const byId = useMemo(() => new Map((students || []).map((st) => [String(st.id), st])), [students]);
 
-  const options = source === 'groups'
-    ? groups.map((g) => ({ value: `g:${g.groupId}`, label: `${g.groupName} (${g.students.length})` }))
-    : programs.map((p) => ({ value: `p:${p.programId}`, label: `${p.name} (${(p.studentIds || []).length})` }));
+  // Groups and programs live in ONE dropdown — programs listed under groups.
+  const groupOptions = groups.map((g) => ({ value: `g:${g.groupId}`, label: `${g.groupName} (${g.students.length})` }));
+  const programOptions = programs.map((p) => ({ value: `p:${p.programId}`, label: `${p.name} (${(p.studentIds || []).length})` }));
 
   const roster = useMemo(() => {
     if (!selectedId) return [];
@@ -203,46 +202,39 @@ export default function StudentDirectory({
     (st) => !search || st.name.toLowerCase().includes(search.toLowerCase())
   );
 
-  function switchSource(next) {
-    setSource(next);
-    setExpandedId(null);
-    setSearch('');
-    const first = next === 'groups' ? groups[0] : programs[0];
-    setSelectedId(first ? (next === 'groups' ? `g:${first.groupId}` : `p:${first.programId}`) : '');
-  }
-
   return (
     <div style={s.card}>
       <div style={s.cardHead}>
         <div style={s.cardDot} />
         <span style={s.cardTitle}>Students</span>
-        <div role="tablist" aria-label="Roster source" style={s.sourceGroup}>
-          <button type="button" role="tab" aria-selected={source === 'groups'}
-            onClick={() => switchSource('groups')}
-            style={{ ...s.sourcePill, ...(source === 'groups' ? s.sourcePillActive : {}) }}>
-            Groups
-          </button>
-          <button type="button" role="tab" aria-selected={source === 'programs'}
-            onClick={() => switchSource('programs')}
-            style={{ ...s.sourcePill, ...(source === 'programs' ? s.sourcePillActive : {}) }}>
-            Programs
-          </button>
-        </div>
       </div>
 
       <div style={s.cardBody}>
         <div>
-          <label style={s.label}>{source === 'groups' ? 'ClassMarker Group' : 'Program'}</label>
+          <label style={s.label}>Group</label>
           <select
             style={s.select}
             value={selectedId}
             onChange={(e) => { setSelectedId(e.target.value); setExpandedId(null); }}
             disabled={loading}
           >
-            {options.length === 0 && <option value="">{loading ? 'Loading…' : 'None found'}</option>}
-            {options.map((o) => (
-              <option key={o.value} value={o.value}>{o.label}</option>
-            ))}
+            {groupOptions.length === 0 && programOptions.length === 0 && (
+              <option value="">{loading ? 'Loading…' : 'None found'}</option>
+            )}
+            {groupOptions.length > 0 && (
+              <optgroup label="Groups">
+                {groupOptions.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </optgroup>
+            )}
+            {programOptions.length > 0 && (
+              <optgroup label="Programs">
+                {programOptions.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </optgroup>
+            )}
           </select>
         </div>
 

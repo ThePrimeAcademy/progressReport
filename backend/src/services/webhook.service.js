@@ -317,118 +317,6 @@ async function getWebhookCategoryPerformanceSplit(student, startDate, endDate, d
   return computeSplitFromRecords(records, latestCats);
 }
 
-// Per-exam English/Math category split — one entry for EVERY SAT exam the
-// student has taken (newest first), not just the latest. Powers the
-// per-test Strengths/Weaknesses breakdown in the report. Returns
-//   [{ examId, examName, date, timeFinished, english, math, hasSectionData }]
-// Admin-defined exams group by examId (latest attempt per test, so retakes
-// don't double count). Legacy name-matched SAT records group into sittings
-// by ClassMarker group within a 24h window, mirroring
-// selectLatestSatExamRecords. Returns [] when the student has no SAT exams —
-// callers then fall back to the single aggregate split.
-async function getWebhookCategoryPerformanceSplitPerExam(student) {
-  const allRecords = await findMatchingRecords(student, '1970-01-01', '2999-12-31', null);
-  const examMap = getTestSectionMap();
-  const recordTestId = (r) => String(r.test?.testId ?? r.test_id ?? '');
-  const isHiddenFromExam = (r) =>
-    examMap.get(recordTestId(r))?.hidden?.has(String(r.student?.userId ?? r.user_id ?? ''));
-
-  let examCandidates = allRecords.filter((r) => examMap.has(recordTestId(r)) && !isHiddenFromExam(r));
-  let legacyCandidates = allRecords.filter((r) => {
-    if (examMap.has(recordTestId(r))) return false;
-    const gn = r.group?.groupName ?? r.group_name ?? null;
-    const tn = r.test?.testName ?? r.test_name ?? '';
-    // Same rule as selectLatestSatExamRecords: only name-based section
-    // detection counts, so standalone quizzes can't masquerade as exams.
-    return isSatGroupName(gn) && deriveTestSection(tn, gn, []) !== null;
-  });
-
-  // Program students (e.g. GA/VA Summer SAT 2026): the breakdown must ONLY
-  // cover their program's weekly exams — no other exams, quizzes, or legacy
-  // name-matched tests. Required lazily to avoid a module-load cycle.
-  try {
-    const { getProgramForStudent } = require('./program.service');
-    const { getExam } = require('./exam.service');
-    const program = getProgramForStudent(String(student?.id ?? ''));
-    if (program) {
-      examCandidates = examCandidates.filter((r) => {
-        const mapped = examMap.get(recordTestId(r));
-        return mapped && getExam(mapped.examId)?.programId === program.programId;
-      });
-      legacyCandidates = [];
-    }
-  } catch (_) {
-    // Program lookup unavailable — fall through with the unfiltered lists.
-  }
-
-  if (examCandidates.length === 0 && legacyCandidates.length === 0) return [];
-
-  const sittings = []; // { examId, examName, records }
-
-  // Admin-defined exams: one sitting per examId, latest attempt per test.
-  const byExam = new Map();
-  for (const r of examCandidates) {
-    const mapped = examMap.get(recordTestId(r));
-    let sitting = byExam.get(mapped.examId);
-    if (!sitting) {
-      sitting = { examId: mapped.examId, examName: mapped.examName, perTest: new Map() };
-      byExam.set(mapped.examId, sitting);
-    }
-    const prev = sitting.perTest.get(recordTestId(r));
-    if (!prev || (r.timeFinished || 0) > (prev.timeFinished || 0)) {
-      sitting.perTest.set(recordTestId(r), r);
-    }
-  }
-  for (const s of byExam.values()) {
-    sittings.push({ examId: s.examId, examName: s.examName, records: Array.from(s.perTest.values()) });
-  }
-
-  // Legacy records: cluster per ClassMarker group into 24h sittings.
-  const byGroup = new Map();
-  for (const r of legacyCandidates) {
-    const gid = String(r.group?.groupId ?? r.group_id ?? '');
-    if (!byGroup.has(gid)) byGroup.set(gid, []);
-    byGroup.get(gid).push(r);
-  }
-  for (const [gid, recs] of byGroup.entries()) {
-    recs.sort((a, b) => (b.timeFinished || 0) - (a.timeFinished || 0));
-    let cluster = null;
-    for (const r of recs) {
-      const ts = r.timeFinished || 0;
-      if (!cluster || (cluster.newestTs - ts) > SAT_EXAM_WINDOW_SECONDS) {
-        cluster = {
-          examId: null,
-          examName: r.group?.groupName ?? r.group_name ?? `Group #${gid}`,
-          newestTs: ts,
-          records: [],
-        };
-        sittings.push(cluster);
-      }
-      cluster.records.push(r);
-    }
-  }
-
-  await fetchCategoryMap();
-  const latestCats = await getLatestQuestionCategories();
-
-  const out = [];
-  for (const s of sittings) {
-    const split = computeSplitFromRecords(s.records, latestCats);
-    if (!split.english.length && !split.math.length) continue;
-    const timeFinished = s.records.reduce((m, r) => Math.max(m, r.timeFinished || 0), 0);
-    out.push({
-      examId: s.examId,
-      examName: s.examName,
-      date: timeFinished ? new Date(timeFinished * 1000).toISOString().split('T')[0] : null,
-      timeFinished,
-      english: split.english,
-      math: split.math,
-      hasSectionData: split.hasSectionData,
-    });
-  }
-  return out.sort((a, b) => b.timeFinished - a.timeFinished);
-}
-
 async function getLatestWebhookTestResult(student, startDate, endDate, dayOfWeek) {
   const records = (await findMatchingRecords(student, startDate, endDate, dayOfWeek))
     .filter((r) => (r.questions || []).length > 0 || (r.categoryResults || []).length > 0)
@@ -480,7 +368,6 @@ module.exports = {
   getLatestWebhookTestResult,
   getWebhookCategoryPerformance,
   getWebhookCategoryPerformanceSplit,
-  getWebhookCategoryPerformanceSplitPerExam,
   getWebhookStoreSummary,
   upsertWebhookPayload,
   verifySignature,

@@ -17,7 +17,6 @@ const {
   getLatestWebhookTestResult,
   getWebhookCategoryPerformance,
   getWebhookCategoryPerformanceSplit,
-  getWebhookCategoryPerformanceSplitPerExam,
 } = require('./webhook.service');
 const { computeStats } = require('./stats.service');
 const { generateReportPDF, generateProgramSummaryPDF } = require('./pdf.service');
@@ -59,14 +58,13 @@ async function gatherReportData({ studentId, startDate, endDate, dayOfWeek }) {
   const student = await resolveStudent(studentId);
   const isSheets = studentId.startsWith('sheets:');
 
-  const [groups, apiLatestTest, satScores, webhookLatestTest, webhookCategoryPerf, webhookCategorySplit, webhookCategoryPerExam] = await Promise.all([
+  const [groups, apiLatestTest, satScores, webhookLatestTest, webhookCategoryPerf, webhookCategorySplit] = await Promise.all([
     isSheets ? Promise.resolve([]) : getStudentResultsGrouped(studentId, startDate, endDate, dayOfWeek),
     isSheets ? Promise.resolve(null) : getLatestTestResult(studentId, startDate, endDate, dayOfWeek),
     getSatScoresForStudent(student),
     getLatestWebhookTestResult(student, startDate, endDate, dayOfWeek),
     getWebhookCategoryPerformance(student, startDate, endDate, dayOfWeek),
     getWebhookCategoryPerformanceSplit(student, startDate, endDate, dayOfWeek),
-    getWebhookCategoryPerformanceSplitPerExam(student),
   ]);
 
   const allResults = groups.flatMap((g) => g.results);
@@ -79,7 +77,6 @@ async function gatherReportData({ studentId, startDate, endDate, dayOfWeek }) {
   return {
     student, groups, stats, satScores, startDate, endDate,
     latestTest, categoryPerf, categoryPerfSplit: webhookCategorySplit,
-    categoryPerfPerExam: webhookCategoryPerExam,
   };
 }
 
@@ -102,8 +99,7 @@ async function buildAndSendReport({
   console.log(`${tag} render PDF…`);
   const pdfBuffer = await generateReportPDF(
     data.student, data.groups, data.stats, data.satScores,
-    startDate, endDate, data.latestTest, data.categoryPerf, data.categoryPerfSplit, homework,
-    data.categoryPerfPerExam
+    startDate, endDate, data.latestTest, data.categoryPerf, data.categoryPerfSplit, homework
   );
   const filename = `${buildReportFilename(data.student.name)}.pdf`;
   console.log(`${tag} PDF ready in ${Date.now() - tPdf}ms (${Math.round((pdfBuffer?.length || 0) / 1024)}KB)`);

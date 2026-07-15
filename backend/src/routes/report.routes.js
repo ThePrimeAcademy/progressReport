@@ -188,8 +188,7 @@ router.post('/preview', validate, async (req, res, next) => {
       startOrReusePdf(`pdf-${key}`, async () => {
         const pdfBuffer = await generateReportPDF(
           data.student, data.groups, data.stats, data.satScores,
-          startDate, endDate, data.latestTest, data.categoryPerf, data.categoryPerfSplit,
-          undefined, data.categoryPerfPerExam
+          startDate, endDate, data.latestTest, data.categoryPerf, data.categoryPerfSplit
         );
         return { buffer: pdfBuffer, filename: `${buildReportFilename(data.student.name)}.pdf` };
       });
@@ -283,8 +282,7 @@ router.post('/', validate, (req, res, next) => {
       const data = await gatherReportData({ studentId, startDate, endDate, dayOfWeek });
       const pdfBuffer = await generateReportPDF(
         data.student, data.groups, data.stats, data.satScores,
-        startDate, endDate, data.latestTest, data.categoryPerf, data.categoryPerfSplit, homework,
-        data.categoryPerfPerExam
+        startDate, endDate, data.latestTest, data.categoryPerf, data.categoryPerfSplit, homework
       );
       return { buffer: pdfBuffer, filename: `${buildReportFilename(data.student.name)}.pdf` };
     });
@@ -489,8 +487,7 @@ router.post('/email/custom', async (req, res) => {
             });
             const pdfBuffer = await generateReportPDF(
               data.student, data.groups, data.stats, data.satScores,
-              startDate, endDate, data.latestTest, data.categoryPerf, data.categoryPerfSplit,
-              undefined, data.categoryPerfPerExam
+              startDate, endDate, data.latestTest, data.categoryPerf, data.categoryPerfSplit
             );
             attachments.push({
               filename: `${buildReportFilename(data.student.name)}.pdf`,
