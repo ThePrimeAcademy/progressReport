@@ -146,6 +146,58 @@ app.get('/api/admin/missing-detail', async (req, res) => {
     .sort((a, b) => b.withoutDetail - a.withoutDetail);
   res.json({ affectedCount: affected.length, students: affected });
 });
+// TEMPORARY: import Week 3 question detail from CSV-derived JSON. Remove after use.
+app.post('/api/admin/import-questions', async (req, res) => {
+  if (!process.env.EXPORT_TOKEN || req.query.token !== process.env.EXPORT_TOKEN) {
+    return res.sendStatus(403);
+  }
+  try {
+    const db = require('./services/db.service');
+    const { computeLatestQuestionCategories } = require('./services/webhook.service');
+    const entries = (req.body && req.body.entries) || [];
+    const records = await db.getAllRecords();
+    const latestCats = computeLatestQuestionCategories(records);
+    const norm = (s) => String(s || '').toLowerCase().replace(/&amp;/g, '&').replace(/\s+/g, ' ').trim();
+    const nameKey = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+    let updated = 0, skippedHasDetail = 0, noMatch = 0;
+    for (const e of entries) {
+      const eTest = norm(e.testName);
+      const eEmail = String(e.email || '').toLowerCase();
+      const eName = nameKey(`${e.first} ${e.last}`);
+      const candidates = records.filter((r) => {
+        const rTest = norm(r.test?.testName ?? r.test_name);
+        if (rTest !== eTest) return false;
+        const rEmail = String(r.student?.normalizedEmail ?? r.normalized_email ?? '').toLowerCase();
+        const rName = String(r.student?.normalizedName ?? r.normalized_name ?? '');
+        return (eEmail && rEmail === eEmail) || (eName && rName === eName);
+      });
+      if (!candidates.length) { noMatch++; continue; }
+      const rec = candidates.reduce((a, b) => ((b.timeFinished || 0) > (a.timeFinished || 0) ? b : a));
+      if ((rec.questions || []).length > 0) { skippedHasDetail++; continue; }
+      const testId = String(rec.test?.testId ?? rec.test_id ?? '');
+      const questions = e.questions.map((q, i) => {
+        const cat = latestCats.get(`${testId}:${q.qid}`) || {};
+        return {
+          questionId: String(q.qid),
+          questionType: null,
+          categoryId: cat.categoryId ?? null,
+          categoryName: cat.categoryName ?? null,
+          sectionNumber: null,
+          questionNumber: i + 1,
+          correct: q.points > 0,
+          result: q.points > 0 ? 'correct' : 'incorrect',
+          pointsScored: q.points,
+          pointsAvailable: 1,
+        };
+      });
+      await db.updateQuestions(rec.id, questions);
+      updated++;
+    }
+    res.json({ ok: true, updated, skippedHasDetail, noMatch, entries: entries.length });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
 // 404 handler
 app.use((req, res) => {
   res.status(404).json({ error: 'Route not found' });
