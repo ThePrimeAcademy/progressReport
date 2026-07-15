@@ -1,5 +1,5 @@
 // pages/ReportPage.jsx
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useGenerateReport } from '../features/report/hooks/useGenerateReport.js';
 import StudentSelector from '../features/report/components/StudentSelector.jsx';
 import DateRangePicker from '../features/report/components/DateRangePicker.jsx';
@@ -8,6 +8,8 @@ import ReportViewer from '../features/report/components/ReportViewer.jsx';
 import BulkSendPanel from '../features/report/components/BulkSendPanel.jsx';
 import ScheduledQueuePanel from '../features/report/components/ScheduledQueuePanel.jsx';
 import ExamManager from '../features/report/components/ExamManager.jsx';
+import StudentDirectory from '../features/report/components/StudentDirectory.jsx';
+import ComposeEmailPanel from '../features/report/components/ComposeEmailPanel.jsx';
 import Button from '../components/ui/Button.jsx';
 
 const s = {
@@ -78,9 +80,34 @@ export default function ReportPage() {
     isValid,
   } = useGenerateReport();
 
-  const [bulkMode, setBulkMode] = useState(false);
+  // 'directory' (main page student list) | 'single' | 'bulk'
+  const [mode, setMode] = useState('directory');
   // Bumped after a successful schedule so the queue panel refetches immediately.
   const [queueRefresh, setQueueRefresh] = useState(0);
+  // Set when the directory's "View Report" is clicked — triggers an automatic
+  // preview once the selected student/date state has propagated.
+  const [autoPreview, setAutoPreview] = useState(false);
+
+  // Default the date range to the last 7 days so the main page's View
+  // Report / Email actions work without any setup.
+  useEffect(() => {
+    if (!startDate && !endDate) {
+      const today = new Date();
+      const weekAgo = new Date(Date.now() - 7 * 86400000);
+      setEndDate(today.toISOString().slice(0, 10));
+      setStartDate(weekAgo.toISOString().slice(0, 10));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (autoPreview && isValid) {
+      setAutoPreview(false);
+      handlePreview();
+    }
+  }, [autoPreview, isValid, handlePreview]);
+
+  const bulkMode = mode === 'bulk';
 
   return (
     <div style={s.page}>
@@ -92,9 +119,18 @@ export default function ReportPage() {
             <button
               type="button"
               role="tab"
-              aria-selected={!bulkMode}
-              onClick={() => setBulkMode(false)}
-              style={{ ...s.modePill, ...(!bulkMode ? s.modePillActive : {}) }}
+              aria-selected={mode === 'directory'}
+              onClick={() => setMode('directory')}
+              style={{ ...s.modePill, ...(mode === 'directory' ? s.modePillActive : {}) }}
+            >
+              Students
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={mode === 'single'}
+              onClick={() => setMode('single')}
+              style={{ ...s.modePill, ...(mode === 'single' ? s.modePillActive : {}) }}
             >
               Single Student
             </button>
@@ -102,10 +138,19 @@ export default function ReportPage() {
               type="button"
               role="tab"
               aria-selected={bulkMode}
-              onClick={() => setBulkMode(true)}
+              onClick={() => setMode('bulk')}
               style={{ ...s.modePill, ...(bulkMode ? s.modePillActive : {}) }}
             >
               Bulk Send
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={mode === 'email'}
+              onClick={() => setMode('email')}
+              style={{ ...s.modePill, ...(mode === 'email' ? s.modePillActive : {}) }}
+            >
+              Email
             </button>
           </div>
         </nav>
@@ -113,10 +158,33 @@ export default function ReportPage() {
         <header style={s.hero}>
           <span style={s.eyebrow}>Student Report Generator</span>
           <h1 style={s.title}>Student Performance</h1>
-          <p style={s.sub}>Select a student, date range, and optionally filter by day to generate a detailed report.</p>
+          <p style={s.sub}>
+            {mode === 'directory'
+              ? 'Pick a group to list its students, then view or email any student’s report.'
+              : 'Select a student, date range, and optionally filter by day to generate a detailed report.'}
+          </p>
         </header>
 
-        {bulkMode ? (
+        {mode === 'directory' && (
+          <StudentDirectory
+            students={students}
+            allContacts={allContacts}
+            onContactsPersisted={noteContactsSaved}
+            emailConfigured={emailConfigured}
+            startDate={startDate}
+            endDate={endDate}
+            onStartDate={setStartDate}
+            onEndDate={setEndDate}
+            dayOfWeek={dayOfWeek}
+            onViewReport={(studentId) => {
+              setSelectedStudentId(studentId);
+              setMode('single');
+              setAutoPreview(true);
+            }}
+          />
+        )}
+
+        {bulkMode && (
           <>
             <BulkSendPanel
               students={filteredStudents}
@@ -133,7 +201,21 @@ export default function ReportPage() {
             />
             <ScheduledQueuePanel refreshSignal={queueRefresh} />
           </>
-        ) : (<>
+        )}
+
+        {mode === 'email' && (
+          <ComposeEmailPanel
+            students={students}
+            allContacts={allContacts}
+            emailConfigured={emailConfigured}
+            startDate={startDate}
+            endDate={endDate}
+            dayOfWeek={dayOfWeek}
+            onContactsPersisted={noteContactsSaved}
+          />
+        )}
+
+        {mode === 'single' && (<>
         <div style={s.card}>
           <div style={s.cardHead}>
             <div style={s.cardDot} />

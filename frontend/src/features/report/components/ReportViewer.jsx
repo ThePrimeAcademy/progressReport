@@ -385,7 +385,63 @@ function CategoryBox({ title, categories, accent, bg }) {
   );
 }
 
-function WeeklyPerformance({ categoryPerf, categoryPerfSplit }) {
+// Shared strengths/weaknesses picker (mirrors the PDF's pick logic).
+const pickStrengthsWeaknesses = (cats) => {
+  const TOP = 3;
+  const MIN_QUESTIONS = 1;  // 1-question categories are noise — skip them
+  const STRENGTH_MIN = 70;  // a strength must actually be strong
+  const el = cats.filter((c) => c.total >= MIN_QUESTIONS);
+  const strengths = el
+    .filter((c) => c.percentage >= STRENGTH_MIN)
+    .sort((a, b) => b.percentage - a.percentage || b.total - a.total)
+    .slice(0, TOP);
+  const used = new Set(strengths.map((c) => c.name));
+  // Weaknesses ranked by missed-question count (total − correct), not raw
+  // percentage — so 2/9 (7 missed) outranks 0/1 (1 missed, 100% wrong).
+  const missed = (c) => c.total - c.correct;
+  const weaknesses = el
+    .filter((c) => c.percentage < 100 && !used.has(c.name))
+    .sort((a, b) => missed(b) - missed(a) || a.percentage - b.percentage)
+    .slice(0, TOP);
+  return { strengths, weaknesses };
+};
+
+// One strengths/weaknesses block per SAT exam the student took (newest
+// first) — replaces the latest-exam-only view whenever per-exam data exists.
+function PerformanceByTest({ perExam }) {
+  return (
+    <Card style={{ marginBottom: 24 }}>
+      <SectionTitle>Performance by Test</SectionTitle>
+      {perExam.map((exam, idx) => {
+        const en = pickStrengthsWeaknesses(exam.english || []);
+        const ma = pickStrengthsWeaknesses(exam.math || []);
+        return (
+          <div key={exam.examId || `${exam.examName}-${exam.timeFinished}`} style={{ marginBottom: idx === perExam.length - 1 ? 0 : 26 }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 10, flexWrap: 'wrap' }}>
+              <span style={{ fontWeight: 700, fontSize: '0.95rem' }}>{exam.examName}</span>
+              {exam.date && <span style={{ fontSize: '0.76rem', color: 'var(--muted)' }}>{exam.date}</span>}
+            </div>
+            <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', marginBottom: 14 }}>
+              <CategoryBox title="English — Strengths" categories={en.strengths} accent="#15803d" bg="#f0fdf4" />
+              <CategoryBox title="Math — Strengths" categories={ma.strengths} accent="#1a56db" bg="#eff6ff" />
+            </div>
+            <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
+              <CategoryBox title="English — Weaknesses" categories={en.weaknesses} accent="#b91c1c" bg="#fff1f2" />
+              <CategoryBox title="Math — Weaknesses" categories={ma.weaknesses} accent="#b45309" bg="#fffbeb" />
+            </div>
+          </div>
+        );
+      })}
+    </Card>
+  );
+}
+
+function WeeklyPerformance({ categoryPerf, categoryPerfSplit, categoryPerfPerExam }) {
+  // Per-exam data available → show every test's breakdown instead of just
+  // the most recent exam's categorization.
+  if (Array.isArray(categoryPerfPerExam) && categoryPerfPerExam.length > 0) {
+    return <PerformanceByTest perExam={categoryPerfPerExam} />;
+  }
   // Prefer subject-split data (from webhook questions); fall back to flat list with keyword heuristic
   const hasSplit = categoryPerfSplit && (
     (categoryPerfSplit.english && categoryPerfSplit.english.length > 0) ||
@@ -406,24 +462,8 @@ function WeeklyPerformance({ categoryPerf, categoryPerfSplit }) {
     maCategories = categoryPerf.filter((c) => !isEnglish(c.name));
   }
 
-  const TOP = 3;
-  const MIN_QUESTIONS = 1;  // 1-question categories are noise — skip them
-  const STRENGTH_MIN = 70;  // a strength must actually be strong
-  const pick = (cats) => {
-    const el = cats.filter((c) => c.total >= MIN_QUESTIONS);
-    const strengths = el
-      .filter((c) => c.percentage >= STRENGTH_MIN)
-      .sort((a, b) => b.percentage - a.percentage || b.total - a.total)
-      .slice(0, TOP);
-    const used = new Set(strengths.map((c) => c.name));
-    const weaknesses = el
-      .filter((c) => c.percentage < 100 && !used.has(c.name))
-      .sort((a, b) => a.percentage - b.percentage || b.total - a.total)
-      .slice(0, TOP);
-    return { strengths, weaknesses };
-  };
-  const en = pick(enCategories);
-  const ma = pick(maCategories);
+  const en = pickStrengthsWeaknesses(enCategories);
+  const ma = pickStrengthsWeaknesses(maCategories);
   const enStrengths = en.strengths;
   const enWeaknesses = en.weaknesses;
   const maStrengths = ma.strengths;
@@ -540,7 +580,7 @@ export default function ReportViewer({
   emailConfigured, emailLoading, emailError, emailSuccess,
   emailSubject, onEmailSubjectChange,
 }) {
-  const { student, groups, stats, satScores, startDate, endDate, latestTest, categoryPerf, categoryPerfSplit } = data;
+  const { student, groups, stats, satScores, startDate, endDate, latestTest, categoryPerf, categoryPerfSplit, categoryPerfPerExam } = data;
   const totalTests = groups.reduce((s, g) => s + g.results.length, 0);
   const totalGroups = groups.length;
 
@@ -616,7 +656,7 @@ export default function ReportViewer({
       <LatestTestSection latestTest={latestTest} />
 
       {/* Weekly performance — categories */}
-      <WeeklyPerformance categoryPerf={categoryPerf} categoryPerfSplit={categoryPerfSplit} />
+      <WeeklyPerformance categoryPerf={categoryPerf} categoryPerfSplit={categoryPerfSplit} categoryPerfPerExam={categoryPerfPerExam} />
 
       {/* All tests grouped by class */}
       <div style={{ background: 'var(--bg)', border: '1.5px solid var(--border)', borderRadius: 14, padding: '20px 24px', boxShadow: 'var(--shadow)' }}>

@@ -6,6 +6,13 @@ export async function fetchStudents() {
   return response.data.data;
 }
 
+// ClassMarker groups with their distinct students — powers the main-page
+// student directory. Returns [{ groupId, groupName, students: [{id,name,email}] }].
+export async function fetchStudentGroups() {
+  const response = await apiClient.get('/students/groups');
+  return response.data.data || [];
+}
+
 // previewReport now returns { jobId, status } immediately. Caller is expected
 // to poll fetchPreviewJobStatus(jobId) until status === 'ready' or 'failed'.
 export async function previewReport(payload) {
@@ -227,6 +234,21 @@ export async function emailReport(payload) {
 
 export async function fetchEmailJobStatus(jobId) {
   const response = await apiClient.get(`/report/email/job/${encodeURIComponent(jobId)}`);
+  return response.data.data;
+}
+
+// ── Custom (non-report) email ──────────────────────────────────────────────
+// Admin-written message to selected students/parents. The progress report is
+// only attached when includeReport is true.
+// payload: { items: [{studentId, studentEmail?, parentEmail?}], subject?,
+//            message, includeReport?, startDate?, endDate?, dayOfWeek? }
+export async function sendCustomEmail(payload) {
+  const response = await apiClient.post('/report/email/custom', payload, { timeout: 30000 });
+  return response.data.data;
+}
+
+export async function fetchCustomEmailJobStatus(jobId) {
+  const response = await apiClient.get(`/report/email/custom/job/${encodeURIComponent(jobId)}`);
   return response.data.data;
 }
 

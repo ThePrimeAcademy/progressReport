@@ -243,21 +243,11 @@ async function getWebhookCategoryPerformance(student, startDate, endDate, dayOfW
     .sort((a, b) => b.percentage - a.percentage);
 }
 
-async function getWebhookCategoryPerformanceSplit(student, startDate, endDate, dayOfWeek) {
-  // Wide window for the same reason as getWebhookCategoryPerformance: the
-  // weekly report should always show the latest SAT exam's breakdown. With
-  // no SAT exam on file, fall back to the report window's assignments.
-  const allRecords = await findMatchingRecords(student, '1970-01-01', '2999-12-31', null);
-  let records = selectLatestSatExamRecords(allRecords);
-  if (records.length === 0) {
-    records = await assignmentFallbackRecords(student, startDate, endDate, dayOfWeek);
-  }
-  // Resolve names from the live ClassMarker category map so renames are
-  // reflected without requiring students to retake tests.
-  await fetchCategoryMap();
-  // Re-categorizations: prefer the category from the latest attempt of each
-  // question (any student) over this student's possibly-stale snapshot.
-  const latestCats = await getLatestQuestionCategories();
+// Shared per-question English/Math aggregation used by both the single
+// (latest-exam) split and the per-exam split. `latestCats` comes from
+// getLatestQuestionCategories() so re-categorized questions display their
+// current category, not the snapshot stored on the attempt.
+function computeSplitFromRecords(records, latestCats) {
   const resolveName = (id, stored) => {
     const current = id ? getCategoryName(id) : null;
     return (current || stored || '').trim();
@@ -307,6 +297,117 @@ async function getWebhookCategoryPerformanceSplit(student, startDate, endDate, d
       .sort((a, b) => b.percentage - a.percentage);
 
   return { english: toArray(enMap), math: toArray(maMap), hasSectionData };
+}
+
+async function getWebhookCategoryPerformanceSplit(student, startDate, endDate, dayOfWeek) {
+  // Wide window for the same reason as getWebhookCategoryPerformance: the
+  // weekly report should always show the latest SAT exam's breakdown. With
+  // no SAT exam on file, fall back to the report window's assignments.
+  const allRecords = await findMatchingRecords(student, '1970-01-01', '2999-12-31', null);
+  let records = selectLatestSatExamRecords(allRecords);
+  if (records.length === 0) {
+    records = await assignmentFallbackRecords(student, startDate, endDate, dayOfWeek);
+  }
+  // Resolve names from the live ClassMarker category map so renames are
+  // reflected without requiring students to retake tests.
+  await fetchCategoryMap();
+  // Re-categorizations: prefer the category from the latest attempt of each
+  // question (any student) over this student's possibly-stale snapshot.
+  const latestCats = await getLatestQuestionCategories();
+  return computeSplitFromRecords(records, latestCats);
+}
+
+// Per-exam English/Math category split — one entry for EVERY SAT exam the
+// student has taken (newest first), not just the latest. Powers the
+// per-test Strengths/Weaknesses breakdown in the report. Returns
+//   [{ examId, examName, date, timeFinished, english, math, hasSectionData }]
+// Admin-defined exams group by examId (latest attempt per test, so retakes
+// don't double count). Legacy name-matched SAT records group into sittings
+// by ClassMarker group within a 24h window, mirroring
+// selectLatestSatExamRecords. Returns [] when the student has no SAT exams —
+// callers then fall back to the single aggregate split.
+async function getWebhookCategoryPerformanceSplitPerExam(student) {
+  const allRecords = await findMatchingRecords(student, '1970-01-01', '2999-12-31', null);
+  const examMap = getTestSectionMap();
+  const recordTestId = (r) => String(r.test?.testId ?? r.test_id ?? '');
+  const isHiddenFromExam = (r) =>
+    examMap.get(recordTestId(r))?.hidden?.has(String(r.student?.userId ?? r.user_id ?? ''));
+
+  const examCandidates = allRecords.filter((r) => examMap.has(recordTestId(r)) && !isHiddenFromExam(r));
+  const legacyCandidates = allRecords.filter((r) => {
+    if (examMap.has(recordTestId(r))) return false;
+    const gn = r.group?.groupName ?? r.group_name ?? null;
+    const tn = r.test?.testName ?? r.test_name ?? '';
+    // Same rule as selectLatestSatExamRecords: only name-based section
+    // detection counts, so standalone quizzes can't masquerade as exams.
+    return isSatGroupName(gn) && deriveTestSection(tn, gn, []) !== null;
+  });
+  if (examCandidates.length === 0 && legacyCandidates.length === 0) return [];
+
+  const sittings = []; // { examId, examName, records }
+
+  // Admin-defined exams: one sitting per examId, latest attempt per test.
+  const byExam = new Map();
+  for (const r of examCandidates) {
+    const mapped = examMap.get(recordTestId(r));
+    let sitting = byExam.get(mapped.examId);
+    if (!sitting) {
+      sitting = { examId: mapped.examId, examName: mapped.examName, perTest: new Map() };
+      byExam.set(mapped.examId, sitting);
+    }
+    const prev = sitting.perTest.get(recordTestId(r));
+    if (!prev || (r.timeFinished || 0) > (prev.timeFinished || 0)) {
+      sitting.perTest.set(recordTestId(r), r);
+    }
+  }
+  for (const s of byExam.values()) {
+    sittings.push({ examId: s.examId, examName: s.examName, records: Array.from(s.perTest.values()) });
+  }
+
+  // Legacy records: cluster per ClassMarker group into 24h sittings.
+  const byGroup = new Map();
+  for (const r of legacyCandidates) {
+    const gid = String(r.group?.groupId ?? r.group_id ?? '');
+    if (!byGroup.has(gid)) byGroup.set(gid, []);
+    byGroup.get(gid).push(r);
+  }
+  for (const [gid, recs] of byGroup.entries()) {
+    recs.sort((a, b) => (b.timeFinished || 0) - (a.timeFinished || 0));
+    let cluster = null;
+    for (const r of recs) {
+      const ts = r.timeFinished || 0;
+      if (!cluster || (cluster.newestTs - ts) > SAT_EXAM_WINDOW_SECONDS) {
+        cluster = {
+          examId: null,
+          examName: r.group?.groupName ?? r.group_name ?? `Group #${gid}`,
+          newestTs: ts,
+          records: [],
+        };
+        sittings.push(cluster);
+      }
+      cluster.records.push(r);
+    }
+  }
+
+  await fetchCategoryMap();
+  const latestCats = await getLatestQuestionCategories();
+
+  const out = [];
+  for (const s of sittings) {
+    const split = computeSplitFromRecords(s.records, latestCats);
+    if (!split.english.length && !split.math.length) continue;
+    const timeFinished = s.records.reduce((m, r) => Math.max(m, r.timeFinished || 0), 0);
+    out.push({
+      examId: s.examId,
+      examName: s.examName,
+      date: timeFinished ? new Date(timeFinished * 1000).toISOString().split('T')[0] : null,
+      timeFinished,
+      english: split.english,
+      math: split.math,
+      hasSectionData: split.hasSectionData,
+    });
+  }
+  return out.sort((a, b) => b.timeFinished - a.timeFinished);
 }
 
 async function getLatestWebhookTestResult(student, startDate, endDate, dayOfWeek) {
@@ -360,6 +461,7 @@ module.exports = {
   getLatestWebhookTestResult,
   getWebhookCategoryPerformance,
   getWebhookCategoryPerformanceSplit,
+  getWebhookCategoryPerformanceSplitPerExam,
   getWebhookStoreSummary,
   upsertWebhookPayload,
   verifySignature,

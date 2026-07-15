@@ -3,6 +3,7 @@ const express = require('express');
 const {
   getAllStudents,
   getStudentById,
+  getGroupsWithStudents,
   clearCache,
   invalidateCache,
   fetchCategoryMap,
@@ -122,6 +123,21 @@ router.get('/debug/categories', async (req, res) => {
     });
   } catch (e) {
     res.status(500).json({ error: e.message });
+  }
+});
+
+/**
+ * GET /api/students/groups
+ * ClassMarker groups with their distinct students — powers the main-page
+ * student directory. Note: this MUST be declared before /:id/contacts so it
+ * isn't matched as a student id called "groups".
+ */
+router.get('/groups', async (req, res, next) => {
+  try {
+    const groups = await getGroupsWithStudents();
+    res.json({ success: true, data: groups });
+  } catch (err) {
+    next(err);
   }
 });
 

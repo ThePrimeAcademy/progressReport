@@ -111,18 +111,21 @@ function bufferToBase64(buf) {
   return Buffer.from(buf).toString('base64');
 }
 
-async function sendViaZeptoMail({ studentName, recipients, pdfBuffer, filename, subject, attachments = [] }) {
+async function sendViaZeptoMail({ studentName, recipients, pdfBuffer, filename, subject, attachments = [], htmlBody }) {
   const token = getZeptoToken();
   const from = parseFrom(process.env.EMAIL_FROM || process.env.ZOHO_USER);
   const finalSubject = (subject && String(subject).trim()) || buildDefaultSubject(studentName);
-  const html = buildHtmlBody(studentName);
+  const html = htmlBody || buildHtmlBody(studentName);
 
+  // pdfBuffer is optional — custom emails may carry no report attachment.
   const zeptoAttachments = [
-    {
-      name: filename || 'progress-report.pdf',
-      mime_type: 'application/pdf',
-      content: bufferToBase64(pdfBuffer),
-    },
+    ...(pdfBuffer
+      ? [{
+          name: filename || 'progress-report.pdf',
+          mime_type: 'application/pdf',
+          content: bufferToBase64(pdfBuffer),
+        }]
+      : []),
     ...(attachments || []).map((a) => ({
       name: a.filename || 'attachment.pdf',
       mime_type: a.contentType || 'application/pdf',
@@ -141,7 +144,7 @@ async function sendViaZeptoMail({ studentName, recipients, pdfBuffer, filename, 
         to: [{ email_address: { address: recipient } }],
         subject: finalSubject,
         htmlbody: html,
-        attachments: zeptoAttachments,
+        ...(zeptoAttachments.length ? { attachments: zeptoAttachments } : {}),
       };
       const res = await fetch('https://api.zeptomail.com/v1.1/email', {
         method: 'POST',
@@ -303,13 +306,16 @@ function withTimeout(promise, ms, label) {
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
-async function sendViaSmtp({ studentName, recipients, pdfBuffer, filename, subject, attachments = [] }) {
+async function sendViaSmtp({ studentName, recipients, pdfBuffer, filename, subject, attachments = [], htmlBody }) {
   const finalSubject = (subject && String(subject).trim()) || buildDefaultSubject(studentName);
-  const html = buildHtmlBody(studentName);
+  const html = htmlBody || buildHtmlBody(studentName);
   const from = process.env.EMAIL_FROM || process.env.ZOHO_USER;
 
+  // pdfBuffer is optional — custom emails may carry no report attachment.
   const mailAttachments = [
-    { filename: filename || 'progress-report.pdf', content: pdfBuffer, contentType: 'application/pdf' },
+    ...(pdfBuffer
+      ? [{ filename: filename || 'progress-report.pdf', content: pdfBuffer, contentType: 'application/pdf' }]
+      : []),
     ...(attachments || []).map((a) => ({
       filename: a.filename,
       content: a.content,
@@ -408,6 +414,60 @@ async function sendReportEmail({ studentName, recipients, pdfBuffer, filename, s
   }
 }
 
+// Custom (non-report) email — plain admin-written message, optionally with
+// attachments (e.g. the progress report PDF when the sender opts in).
+// `message` is plain text; it gets escaped and converted to simple HTML.
+async function sendCustomEmail({ recipients, subject, message, attachments = [] }) {
+  if (!isConfigured()) {
+    const err = new Error(
+      'Email not configured. On Railway Hobby set ZEPTOMAIL_TOKEN (ZeptoMail HTTPS). ' +
+      'SMTP (ZOHO_USER/ZOHO_APP_PASSWORD) only works on Railway Pro+.'
+    );
+    err.status = 503;
+    throw err;
+  }
+
+  const to = (recipients || [])
+    .map((e) => String(e || '').trim())
+    .filter((e) => e && e.includes('@') && !e.includes('example.com'));
+  if (to.length === 0) {
+    const err = new Error('At least one recipient email is required.');
+    err.status = 400;
+    throw err;
+  }
+
+  const text = String(message || '').trim();
+  if (!text) {
+    const err = new Error('A message body is required.');
+    err.status = 400;
+    throw err;
+  }
+
+  const escaped = text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+  const htmlBody = `<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.6;color:#1f2937;">${escaped.replace(/\n/g, '<br />')}</div>`;
+  const finalSubject = (subject && String(subject).trim()) || 'Prime Academy';
+
+  try {
+    if (hasZeptoMail()) {
+      console.log('[email/custom] transport=zeptomail-api (HTTPS)');
+      return await sendViaZeptoMail({
+        recipients: to, pdfBuffer: null, subject: finalSubject, attachments, htmlBody,
+      });
+    }
+    console.log('[email/custom] transport=smtp');
+    return await sendViaSmtp({
+      recipients: to, pdfBuffer: null, subject: finalSubject, attachments, htmlBody,
+    });
+  } catch (e) {
+    const err = new Error(`Email send failed: ${e.message}`);
+    err.status = e.status || 502;
+    throw err;
+  }
+}
+
 async function verifyConnection() {
   if (!isConfigured()) {
     const err = new Error(
@@ -432,4 +492,4 @@ async function verifyConnection() {
   }
 }
 
-module.exports = { isConfigured, sendReportEmail, buildDefaultSubject, verifyConnection };
+module.exports = { isConfigured, sendReportEmail, sendCustomEmail, buildDefaultSubject, verifyConnection };

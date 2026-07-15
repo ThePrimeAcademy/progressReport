@@ -192,7 +192,61 @@ const tableFor = (cats, forceColor, emptyText) => cats.length > 0
     </div>`;
 }
 
-function buildWeeklySection(categoryPerfSplit, categoryPerf) {
+// Shared strengths/weaknesses picker used by the single (latest-exam) view
+// and the per-exam view.
+function pickStrengthsWeaknesses(cats) {
+  const TOP = 3;
+  const MIN_QUESTIONS = 1;  // 1-question categories are noise — skip them
+  const STRENGTH_MIN = 70;  // a strength must actually be strong
+  const el = cats.filter((c) => c.total >= MIN_QUESTIONS);
+  const strengths = el
+    .filter((c) => c.percentage >= STRENGTH_MIN)
+    .sort((a, b) => b.percentage - a.percentage || b.total - a.total)
+    .slice(0, TOP);
+  const used = new Set(strengths.map((c) => c.name));
+  // Weaknesses = the categories with the MOST missed questions, not the worst
+  // percentage. Percentage alone always surfaces 0/1 categories (100% wrong on
+  // a single question) ahead of e.g. 2/9 (7 questions missed), which is far
+  // more meaningful. Missed count first, lower percentage breaks ties. Perfect
+  // scores and anything already listed as a strength are excluded, so the two
+  // lists can never overlap.
+  const missed = (c) => c.total - c.correct;
+  const weaknesses = el
+    .filter((c) => c.percentage < 100 && !used.has(c.name))
+    .sort((a, b) => missed(b) - missed(a) || a.percentage - b.percentage)
+    .slice(0, TOP);
+  return { strengths, weaknesses };
+}
+
+function buildWeeklySection(categoryPerfSplit, categoryPerf, categoryPerfPerExam) {
+  // Per-exam breakdown: one English/Math strengths-weaknesses pair for EVERY
+  // SAT exam the student took, newest first — not just the latest exam.
+  if (Array.isArray(categoryPerfPerExam) && categoryPerfPerExam.length > 0) {
+    const blocks = categoryPerfPerExam.map((exam) => {
+      const en = pickStrengthsWeaknesses(exam.english || []);
+      const ma = pickStrengthsWeaknesses(exam.math || []);
+      const meta = exam.date ? ` &nbsp;·&nbsp; ${exam.date}` : '';
+      return `
+        <div style="margin-bottom:14px;">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+            <span style="font-weight:700;font-size:0.9rem;color:#111827;">${escapeHtml(exam.examName)}</span>
+            <span style="font-size:0.75rem;color:#6b7280;">${meta}</span>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:10px;">
+            ${buildSubjectBox('English', '#1a56db', '#eff6ff', en.strengths, en.weaknesses)}
+            ${buildSubjectBox('Math', '#1a56db', '#eff6ff', ma.strengths, ma.weaknesses)}
+          </div>
+        </div>`;
+    }).join('');
+
+    return `
+      <div style="margin-bottom:10px;">
+        <div class="section-title">Performance by Test</div>
+        ${blocks}
+      </div>`;
+  }
+
+  // Fallback: single aggregate box (assignments in range / legacy data).
   let enCats = [];
   let maCats = [];
 
@@ -207,27 +261,8 @@ function buildWeeklySection(categoryPerfSplit, categoryPerf) {
 
   if (!enCats.length && !maCats.length) return '';
 
-const TOP = 3;
-  const MIN_QUESTIONS = 1;  // 1-question categories are noise — skip them
-  const STRENGTH_MIN = 70;  // a strength must actually be strong
-  const pick = (cats) => {
-    const el = cats.filter((c) => c.total >= MIN_QUESTIONS);
-    const strengths = el
-      .filter((c) => c.percentage >= STRENGTH_MIN)
-      .sort((a, b) => b.percentage - a.percentage || b.total - a.total)
-      .slice(0, TOP);
-    const used = new Set(strengths.map((c) => c.name));
-    // Weaknesses = the student's lowest categories, even for strong students —
-    // always fill up to TOP rows. Perfect scores and anything already listed
-    // as a strength are excluded, so the two lists can never overlap.
-    const weaknesses = el
-      .filter((c) => c.percentage < 100 && !used.has(c.name))
-      .sort((a, b) => a.percentage - b.percentage || b.total - a.total)
-      .slice(0, TOP);
-    return { strengths, weaknesses };
-  };
-  const en = pick(enCats);
-  const ma = pick(maCats);
+  const en = pickStrengthsWeaknesses(enCats);
+  const ma = pickStrengthsWeaknesses(maCats);
 
   return `
     <div style="margin-bottom:10px;">
@@ -324,7 +359,7 @@ function buildTestRows(groups) {
 }
 
 // ── Main export ───────────────────────────────────────────────
-async function generateReportPDF(student, groups, stats, satScores, startDate, endDate, latestTest, categoryPerf, categoryPerfSplit, homework) {
+async function generateReportPDF(student, groups, stats, satScores, startDate, endDate, latestTest, categoryPerf, categoryPerfSplit, homework, categoryPerfPerExam) {
   const now = new Date();
   const grade = letterGrade(stats.averageScore);
   const reportId = `PR-${Date.now().toString(36).toUpperCase()}`;
@@ -351,7 +386,7 @@ async function generateReportPDF(student, groups, stats, satScores, startDate, e
     homeworkSection: buildHomeworkSection(homework),
     // latestTestSection: buildLatestTestSection(latestTest), // hidden from PDF — restore this line (and delete the '' line below) to bring back "Latest Test Performance"
     latestTestSection: '',
-    weeklySection: buildWeeklySection(categoryPerfSplit, categoryPerf),
+    weeklySection: buildWeeklySection(categoryPerfSplit, categoryPerf, categoryPerfPerExam),
   };
 
   const html = renderTemplate(replacements);

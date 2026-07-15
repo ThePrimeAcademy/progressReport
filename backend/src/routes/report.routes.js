@@ -5,7 +5,7 @@ const { getCurvesVersion } = require('../services/scoring-sheet.service');
 const { getExamsVersion } = require('../services/exam.service');
 const { getProgramsVersion } = require('../services/program.service');
 const { generateReportPDF } = require('../services/pdf.service');
-const { isConfigured: isEmailConfigured, verifyConnection: verifyEmailConnection } = require('../services/email.service');
+const { isConfigured: isEmailConfigured, verifyConnection: verifyEmailConnection, sendCustomEmail } = require('../services/email.service');
 const {
   buildReportFilename,
   gatherReportData,
@@ -188,7 +188,8 @@ router.post('/preview', validate, async (req, res, next) => {
       startOrReusePdf(`pdf-${key}`, async () => {
         const pdfBuffer = await generateReportPDF(
           data.student, data.groups, data.stats, data.satScores,
-          startDate, endDate, data.latestTest, data.categoryPerf, data.categoryPerfSplit
+          startDate, endDate, data.latestTest, data.categoryPerf, data.categoryPerfSplit,
+          undefined, data.categoryPerfPerExam
         );
         return { buffer: pdfBuffer, filename: `${buildReportFilename(data.student.name)}.pdf` };
       });
@@ -282,7 +283,8 @@ router.post('/', validate, (req, res, next) => {
       const data = await gatherReportData({ studentId, startDate, endDate, dayOfWeek });
       const pdfBuffer = await generateReportPDF(
         data.student, data.groups, data.stats, data.satScores,
-        startDate, endDate, data.latestTest, data.categoryPerf, data.categoryPerfSplit, homework
+        startDate, endDate, data.latestTest, data.categoryPerf, data.categoryPerfSplit, homework,
+        data.categoryPerfPerExam
       );
       return { buffer: pdfBuffer, filename: `${buildReportFilename(data.student.name)}.pdf` };
     });
@@ -407,6 +409,129 @@ router.get('/email/job/:jobId', async (req, res) => {
     console.error('[email job status]', err.message);
     res.status(500).json({ success: false, error: err.message });
   }
+});
+
+// ── Custom (non-report) email ───────────────────────────────────────────────
+// Admin-written message to selected students/parents. The progress report is
+// NOT attached unless includeReport is explicitly true — this exists so bulk
+// sending can be exercised without mailing out reports.
+//
+// POST /api/report/email/custom
+//   body: { items: [{ studentId, studentEmail?, parentEmail? }],
+//           subject?, message, includeReport?, startDate?, endDate?, dayOfWeek? }
+// Returns { jobId } immediately; work runs in the background (same edge-
+// timeout reasoning as /email). Poll GET /email/custom/job/:jobId.
+const customJobs = new Map();
+const CUSTOM_JOB_TTL_MS = 10 * 60 * 1000;
+
+router.post('/email/custom', async (req, res) => {
+  try {
+    const { subject, message, includeReport, startDate, endDate, dayOfWeek } = req.body || {};
+    const items = Array.isArray(req.body?.items) ? req.body.items : [];
+
+    if (!String(message || '').trim()) {
+      return res.status(400).json({ error: 'A message body is required.' });
+    }
+    if (items.length === 0) {
+      return res.status(400).json({ error: 'Select at least one student.' });
+    }
+    if (includeReport) {
+      if (!startDate || !endDate) {
+        return res.status(400).json({ error: 'startDate and endDate are required when attaching the report.' });
+      }
+      if (new Date(startDate) > new Date(endDate)) {
+        return res.status(400).json({ error: 'startDate must be before endDate.' });
+      }
+    }
+
+    const jobId = crypto.randomUUID();
+    const job = {
+      status: 'pending',
+      startedAt: Date.now(),
+      finishedAt: null,
+      items: items.map((it) => ({
+        studentId: String(it.studentId || ''),
+        status: 'pending',
+        to: [],
+        error: null,
+      })),
+    };
+    customJobs.set(jobId, job);
+
+    // Evict stale jobs so the map can't grow unbounded.
+    for (const [k, v] of customJobs.entries()) {
+      if (v.finishedAt && Date.now() - v.finishedAt > CUSTOM_JOB_TTL_MS) customJobs.delete(k);
+    }
+
+    (async () => {
+      for (let i = 0; i < items.length; i++) {
+        const it = items[i];
+        const jobItem = job.items[i];
+        jobItem.status = 'sending';
+        try {
+          let { studentEmail, parentEmail } = it;
+          if (studentEmail === undefined && parentEmail === undefined) {
+            const saved = await db.getContacts(String(it.studentId));
+            studentEmail = saved?.studentEmail || '';
+            parentEmail = saved?.parentEmail || '';
+          }
+          const recipients = [studentEmail, parentEmail]
+            .map((e) => String(e || '').trim())
+            .filter(Boolean);
+          if (recipients.length === 0) {
+            throw new Error('No recipient email on file (student or parent).');
+          }
+
+          const attachments = [];
+          if (includeReport) {
+            const data = await gatherReportData({
+              studentId: String(it.studentId), startDate, endDate, dayOfWeek,
+            });
+            const pdfBuffer = await generateReportPDF(
+              data.student, data.groups, data.stats, data.satScores,
+              startDate, endDate, data.latestTest, data.categoryPerf, data.categoryPerfSplit,
+              undefined, data.categoryPerfPerExam
+            );
+            attachments.push({
+              filename: `${buildReportFilename(data.student.name)}.pdf`,
+              content: pdfBuffer,
+            });
+          }
+
+          const result = await sendCustomEmail({ recipients, subject, message, attachments });
+          jobItem.status = 'sent';
+          jobItem.to = result.to || recipients;
+        } catch (err) {
+          console.error(`[email/custom ${jobId}] item ${it.studentId} FAILED:`, err.message);
+          jobItem.status = 'failed';
+          jobItem.error = err.message;
+        }
+      }
+      job.status = job.items.every((x) => x.status === 'failed') ? 'failed' : 'done';
+      job.finishedAt = Date.now();
+    })();
+
+    res.json({ success: true, data: { jobId, status: 'pending' } });
+  } catch (err) {
+    console.error('[email/custom] queue FAILED:', err.message);
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
+// GET /api/report/email/custom/job/:jobId — poll target for custom sends.
+router.get('/email/custom/job/:jobId', (req, res) => {
+  const job = customJobs.get(req.params.jobId);
+  if (!job) {
+    return res.status(404).json({ success: false, error: 'Job not found (it may have expired or the server restarted).' });
+  }
+  res.json({
+    success: true,
+    data: {
+      status: job.status,
+      items: job.items,
+      durationMs: (job.finishedAt || Date.now()) - job.startedAt,
+    },
+  });
 });
 
 // ── Scheduled bulk send ─────────────────────────────────────────────────────

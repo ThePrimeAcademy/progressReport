@@ -334,6 +334,56 @@ async function getAllStudents() {
   return Array.from(seen.values()).sort((a, b) => a.name.localeCompare(b.name));
 }
 
+// ClassMarker groups with their distinct students, for the main-page student
+// directory. Membership is derived from test attempts (a student "belongs" to
+// a group if they have at least one result under it) across BOTH the API
+// results cache and the webhook store, so students whose only activity
+// predates the API window still show up.
+async function getGroupsWithStudents() {
+  const [{ results, groupMap }, students] = await Promise.all([
+    fetchAllResults(),
+    getAllStudents(),
+  ]);
+  const byId = new Map(students.map((s) => [String(s.id), s]));
+
+  const groups = new Map(); // gid → { groupId, groupName, studentIds:Set }
+  const add = (gid, gname, sid) => {
+    if (!gid || !sid) return;
+    let g = groups.get(gid);
+    if (!g) {
+      g = { groupId: gid, groupName: gname || `Group #${gid}`, studentIds: new Set() };
+      groups.set(gid, g);
+    }
+    if (gname && g.groupName.startsWith('Group #')) g.groupName = gname;
+    g.studentIds.add(sid);
+  };
+
+  for (const r of results) {
+    add(String(r.group_id ?? ''), groupMap[String(r.group_id)] || null, String(r.user_id ?? ''));
+  }
+  try {
+    const db = require('./db.service');
+    for (const r of await db.getAllRecords()) {
+      const gid = String(r.group?.groupId ?? r.group_id ?? '');
+      const gname = r.group?.groupName ?? r.group_name ?? null;
+      const sid = String(r.student?.userId ?? r.user_id ?? '');
+      add(gid, gname, sid);
+    }
+  } catch (e) {
+    // Webhook store unavailable — API-cache membership is still usable.
+  }
+
+  return Array.from(groups.values())
+    .map((g) => ({
+      groupId: g.groupId,
+      groupName: g.groupName,
+      students: Array.from(g.studentIds)
+        .map((id) => byId.get(id) || { id, name: `User ${id}`, email: null })
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    }))
+    .sort((a, b) => a.groupName.localeCompare(b.groupName));
+}
+
 async function getStudentById(studentId) {
   const students = await getAllStudents();
   const student = students.find((s) => s.id === studentId);
@@ -650,6 +700,7 @@ async function backfillFromApi(fromTs, maxPages = 25) {
 module.exports = {
   getAllStudents,
   getStudentById,
+  getGroupsWithStudents,
   getStudentResults,
   getStudentResultsGrouped,
   getLatestTestResult,
