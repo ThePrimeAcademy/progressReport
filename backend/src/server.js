@@ -154,7 +154,6 @@ app.post('/api/admin/import-questions', async (req, res) => {
   try {
     const db = require('./services/db.service');
     const { computeLatestQuestionCategories } = require('./services/webhook.service');
-    const cm = require('./services/classmarker.service');
     const entries = (req.body && req.body.entries) || [];
     const records = await db.getAllRecords();
     const latestCats = computeLatestQuestionCategories(records);
