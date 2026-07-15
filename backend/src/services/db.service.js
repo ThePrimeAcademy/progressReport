@@ -17,13 +17,21 @@ const initSqlJs = require('sql.js');
 let _db = null;
 let _dirty = false;
 
-// Atomic write: write to a temp file, then rename. rename() is atomic on the
-// same filesystem, so a process kill mid-write can never leave a truncated
-// half-written DB (the cause of "database disk image is malformed").
+// Atomic write + rolling daily backup.
+let _lastBackup = 0;
 function writeDbFileSync() {
     const tmp = DB_PATH + '.tmp';
     fs.writeFileSync(tmp, Buffer.from(_db.export()));
     fs.renameSync(tmp, DB_PATH);
+    // Once a day, keep a copy so corruption/mistakes are a 5-minute restore.
+    if (Date.now() - _lastBackup > 24 * 60 * 60 * 1000) {
+        try {
+            fs.copyFileSync(DB_PATH, DB_PATH + '.bak');
+            _lastBackup = Date.now();
+        } catch (e) {
+            console.error('[db] backup failed:', e.message);
+        }
+    }
 }
 
 // Flush to disk every 5 seconds if dirty
