@@ -124,6 +124,28 @@ app.post('/api/admin/backfill-from-api', async (req, res) => {
     res.status(500).json({ ok: false, error: e.message });
   }
 });
+// TEMPORARY: list students whose recent records lack question detail.
+app.get('/api/admin/missing-detail', async (req, res) => {
+  if (!process.env.EXPORT_TOKEN || req.query.token !== process.env.EXPORT_TOKEN) {
+    return res.sendStatus(403);
+  }
+  const db = require('./services/db.service');
+  const records = await db.getAllRecords();
+  const since = Math.floor(new Date('2026-06-25').getTime() / 1000);
+  const byStudent = {};
+  for (const r of records) {
+    if ((r.timeFinished || 0) < since) continue;
+    const name = r.student?.name || 'Unknown';
+    const s = byStudent[name] || (byStudent[name] = { withDetail: 0, withoutDetail: 0 });
+    if ((r.questions || []).length > 0) s.withDetail++;
+    else s.withoutDetail++;
+  }
+  const affected = Object.entries(byStudent)
+    .filter(([, s]) => s.withoutDetail > 0)
+    .map(([name, s]) => ({ name, ...s }))
+    .sort((a, b) => b.withoutDetail - a.withoutDetail);
+  res.json({ affectedCount: affected.length, students: affected });
+});
 // 404 handler
 app.use((req, res) => {
   res.status(404).json({ error: 'Route not found' });
