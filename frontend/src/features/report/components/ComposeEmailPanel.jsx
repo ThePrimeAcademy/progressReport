@@ -193,9 +193,9 @@ export default function ComposeEmailPanel({
         // Fall back to the ClassMarker email when no contacts are saved, so a
         // test send still has somewhere to go.
         if (!c.studentEmail && !c.parentEmail && st?.email) {
-          return { studentId: id, studentEmail: st.email, parentEmail: '' };
+          return { studentId: id, studentName: st?.name || '', studentEmail: st.email, parentEmail: '' };
         }
-        return { studentId: id };
+        return { studentId: id, studentName: st?.name || '' };
       });
 
       const start = await sendCustomEmail({

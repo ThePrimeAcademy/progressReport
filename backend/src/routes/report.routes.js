@@ -489,9 +489,24 @@ router.post('/email/custom', async (req, res) => {
               })
             : [];
 
-          const result = await sendCustomEmail({ recipients, subject, message, attachments });
-          jobItem.status = 'sent';
-          jobItem.to = result.to || recipients;
+          const logBase = {
+            studentId: it.studentId,
+            studentName: it.studentName || '',
+            recipients,
+            subject: subject || '',
+            kind: 'custom',
+            source: 'immediate',
+            attachments: attachments.map((a) => a.filename),
+          };
+          try {
+            const result = await sendCustomEmail({ recipients, subject, message, attachments });
+            jobItem.status = 'sent';
+            jobItem.to = result.to || recipients;
+            await db.logSentEmail({ ...logBase, status: 'sent' });
+          } catch (err) {
+            await db.logSentEmail({ ...logBase, status: 'failed', error: err.message });
+            throw err;
+          }
         } catch (err) {
           console.error(`[email/custom ${jobId}] item ${it.studentId} FAILED:`, err.message);
           jobItem.status = 'failed';
@@ -582,6 +597,21 @@ router.post('/email/schedule', validateSchedule, async (req, res, next) => {
     const id = await db.createScheduledBatch({ label, subject, startDate, endDate, dayOfWeek, sendAt, items, kind, message, includeReport, summaryProgramId });
     console.log(`[schedule] batch ${id} — ${items.length} recipient(s) for ${sendAt}`);
     res.json({ success: true, data: { id, scheduledCount: items.length, sendAt } });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/report/email/log?limit=&offset=&search= — permanent sent-email
+// history (immediate + scheduled, report + custom), newest first.
+router.get('/email/log', async (req, res, next) => {
+  try {
+    const entries = await db.listSentEmails({
+      limit: req.query.limit,
+      offset: req.query.offset,
+      search: req.query.search || '',
+    });
+    res.json({ success: true, data: entries });
   } catch (err) {
     next(err);
   }

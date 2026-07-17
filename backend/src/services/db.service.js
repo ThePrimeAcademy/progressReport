@@ -153,6 +153,26 @@ async function getDb() {
 
     _db.run('CREATE INDEX IF NOT EXISTS idx_batch_items_batch ON scheduled_batch_items (batch_id)');
 
+    // Permanent log of every email the server sent (or failed to send) —
+    // report emails and Email-tab custom messages, immediate and scheduled.
+    // recipients / attachments are comma-joined display strings.
+    _db.run(`
+    CREATE TABLE IF NOT EXISTS sent_emails (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      student_id   TEXT,
+      student_name TEXT,
+      recipients   TEXT,
+      subject      TEXT,
+      kind         TEXT,
+      source       TEXT,
+      attachments  TEXT,
+      status       TEXT NOT NULL,
+      error        TEXT,
+      sent_at      TEXT NOT NULL
+    )
+  `);
+    _db.run('CREATE INDEX IF NOT EXISTS idx_sent_emails_at ON sent_emails (sent_at)');
+
     // On-demand email send jobs (POST /api/report/email). Stored on disk so a
     // Railway restart / second replica can't make the browser's job poll 404
     // with "Job not found" while the send is still in flight (or just finished).
@@ -618,6 +638,55 @@ async function pruneEmailJobs() {
     flush();
 }
 
+// ── Sent-email log ──────────────────────────────────────────────────────────
+
+// Append one row to the permanent sent log. Never throws — a logging failure
+// must not break the send itself.
+async function logSentEmail({ studentId, studentName, recipients, subject, kind, source, attachments, status, error }) {
+    try {
+        const db = await getDb();
+        db.run(
+            `INSERT INTO sent_emails
+               (student_id, student_name, recipients, subject, kind, source, attachments, status, error, sent_at)
+             VALUES (?,?,?,?,?,?,?,?,?,?)`,
+            [
+                String(studentId || ''),
+                studentName || '',
+                Array.isArray(recipients) ? recipients.join(', ') : String(recipients || ''),
+                subject || '',
+                kind || 'report',
+                source || 'immediate',
+                Array.isArray(attachments) ? attachments.join(', ') : String(attachments || ''),
+                status || 'sent',
+                error || '',
+                new Date().toISOString(),
+            ]
+        );
+        flush();
+    } catch (e) {
+        console.warn('[db] sent-log write failed:', e.message);
+    }
+}
+
+// Newest first. search matches student name, recipients, or subject.
+async function listSentEmails({ limit = 200, offset = 0, search = '' } = {}) {
+    const db = await getDb();
+    const cap = Math.min(Math.max(Number(limit) || 200, 1), 1000);
+    const skip = Math.max(Number(offset) || 0, 0);
+    if (search) {
+        const like = `%${String(search).replace(/[%_]/g, '')}%`;
+        return rowsToObjects(db.exec(
+            `SELECT * FROM sent_emails
+             WHERE student_name LIKE ? OR recipients LIKE ? OR subject LIKE ?
+             ORDER BY id DESC LIMIT ? OFFSET ?`,
+            [like, like, like, cap, skip]
+        ));
+    }
+    return rowsToObjects(db.exec(
+        'SELECT * FROM sent_emails ORDER BY id DESC LIMIT ? OFFSET ?', [cap, skip]
+    ));
+}
+
 module.exports = {
     upsertRecord,
     findMatchingRecords,
@@ -640,4 +709,6 @@ module.exports = {
     upsertEmailJob,
     getEmailJob,
     pruneEmailJobs,
+    logSentEmail,
+    listSentEmails,
 };

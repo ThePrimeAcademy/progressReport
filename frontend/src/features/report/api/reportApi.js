@@ -282,6 +282,13 @@ export async function fetchEmailBatch(id) {
   return response.data.data;
 }
 
+// Permanent sent-email history, newest first. Optional search matches
+// student name, recipients, or subject.
+export async function fetchSentLog({ limit = 200, offset = 0, search = '' } = {}) {
+  const response = await apiClient.get('/report/email/log', { params: { limit, offset, search } });
+  return response.data.data || [];
+}
+
 // Cancel a not-yet-started batch.
 export async function cancelScheduledBatch(id) {
   const response = await apiClient.delete(`/report/email/queue/${encodeURIComponent(id)}`);

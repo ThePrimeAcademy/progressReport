@@ -10,6 +10,7 @@ import ScheduledQueuePanel from '../features/report/components/ScheduledQueuePan
 import ExamManager from '../features/report/components/ExamManager.jsx';
 import StudentDirectory from '../features/report/components/StudentDirectory.jsx';
 import ComposeEmailPanel from '../features/report/components/ComposeEmailPanel.jsx';
+import SentLogPanel from '../features/report/components/SentLogPanel.jsx';
 import Button from '../components/ui/Button.jsx';
 
 const s = {
@@ -152,6 +153,15 @@ export default function ReportPage() {
             >
               Email
             </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={mode === 'log'}
+              onClick={() => setMode('log')}
+              style={{ ...s.modePill, ...(mode === 'log' ? s.modePillActive : {}) }}
+            >
+              Sent Log
+            </button>
           </div>
         </nav>
 
@@ -202,6 +212,8 @@ export default function ReportPage() {
             <ScheduledQueuePanel refreshSignal={queueRefresh} />
           </>
         )}
+
+        {mode === 'log' && <SentLogPanel />}
 
         {mode === 'email' && (
           <ComposeEmailPanel

@@ -127,6 +127,7 @@ async function buildReportAttachments({ studentId, startDate, endDate, dayOfWeek
 async function buildAndSendReport({
   studentId, startDate, endDate, dayOfWeek,
   recipients, studentEmail, parentEmail, subject, homework, summaryProgramId,
+  source = 'immediate',
 }) {
   const t0 = Date.now();
   const tag = `[report-delivery ${studentId}]`;
@@ -150,16 +151,32 @@ async function buildAndSendReport({
 
   const tSmtp = Date.now();
   console.log(`${tag} SMTP send → ${(recipients || []).join(', ')}`);
-  const sendResult = await sendReportEmail({
+  const logBase = {
+    studentId,
     studentName: data.student.name,
     recipients,
-    pdfBuffer,
-    filename,
-    startDate,
-    endDate,
-    subject,
-    attachments,
-  });
+    subject: subject || '',
+    kind: 'report',
+    source,
+    attachments: [filename, ...attachments.map((a) => a.filename)],
+  };
+  let sendResult;
+  try {
+    sendResult = await sendReportEmail({
+      studentName: data.student.name,
+      recipients,
+      pdfBuffer,
+      filename,
+      startDate,
+      endDate,
+      subject,
+      attachments,
+    });
+  } catch (err) {
+    await db.logSentEmail({ ...logBase, status: 'failed', error: err.message });
+    throw err;
+  }
+  await db.logSentEmail({ ...logBase, status: 'sent' });
   console.log(`${tag} SMTP done in ${Date.now() - tSmtp}ms (total ${Date.now() - t0}ms)`);
 
   // Persist whichever of student/parent emails were supplied so the contact

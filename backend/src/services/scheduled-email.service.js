@@ -87,12 +87,27 @@ async function processBatch(batch) {
                 summaryProgramId: batch.summary_program_id,
               })
             : [];
-          await sendCustomEmail({
+          const logBase = {
+            studentId: item.student_id,
+            studentName: item.student_name || '',
             recipients,
-            subject: batch.subject || undefined,
-            message: batch.message,
-            attachments,
-          });
+            subject: batch.subject || '',
+            kind: 'custom',
+            source: 'scheduled',
+            attachments: attachments.map((a) => a.filename),
+          };
+          try {
+            await sendCustomEmail({
+              recipients,
+              subject: batch.subject || undefined,
+              message: batch.message,
+              attachments,
+            });
+            await db.logSentEmail({ ...logBase, status: 'sent' });
+          } catch (err) {
+            await db.logSentEmail({ ...logBase, status: 'failed', error: err.message });
+            throw err;
+          }
         } else {
           await buildAndSendReport({
             studentId: item.student_id,
@@ -104,6 +119,7 @@ async function processBatch(batch) {
             parentEmail: item.parent_email,
             subject: batch.subject || undefined,
             summaryProgramId: batch.summary_program_id,
+            source: 'scheduled',
           });
         }
         await db.markItemStatus(item.id, 'sent', { sentAt: new Date().toISOString() });
