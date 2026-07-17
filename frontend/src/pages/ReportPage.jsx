@@ -88,14 +88,14 @@ export default function ReportPage() {
   // preview once the selected student/date state has propagated.
   const [autoPreview, setAutoPreview] = useState(false);
 
-  // Default the date range to the last 7 days so the main page's View
-  // Report / Email actions work without any setup.
+  // Default the date range to the program start → today so the main page's
+  // View Report / Email actions work without any setup.
+  const DEFAULT_START_DATE = '2026-06-22';
   useEffect(() => {
     if (!startDate && !endDate) {
       const today = new Date();
-      const weekAgo = new Date(Date.now() - 7 * 86400000);
       setEndDate(today.toISOString().slice(0, 10));
-      setStartDate(weekAgo.toISOString().slice(0, 10));
+      setStartDate(DEFAULT_START_DATE);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
