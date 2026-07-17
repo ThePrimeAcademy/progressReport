@@ -5,7 +5,7 @@
 // is explicitly checked. Exists so the bulk email pipeline can be exercised
 // without mailing out reports.
 import React, { useState, useEffect, useMemo } from 'react';
-import { sendCustomEmail, fetchCustomEmailJobStatus, fetchStudentGroups, fetchPrograms } from '../api/reportApi.js';
+import { sendCustomEmail, fetchCustomEmailJobStatus, fetchStudentGroups, fetchPrograms, scheduleCustomEmail } from '../api/reportApi.js';
 
 const s = {
   card: { background: 'var(--bg)', borderRadius: 16, boxShadow: 'var(--shadow-lg)', border: '1.5px solid var(--border)', overflow: 'hidden' },
@@ -29,7 +29,15 @@ const s = {
   ok: { padding: '10px 14px', background: '#f0fdf4', border: '1.5px solid #86efac', borderRadius: 8, color: '#15803d', fontSize: '0.85rem', fontWeight: 500 },
   err: { padding: '10px 14px', background: '#fff1f2', border: '1.5px solid #fca5a5', borderRadius: 8, color: '#b91c1c', fontSize: '0.85rem' },
   resultRow: { display: 'flex', justifyContent: 'space-between', gap: 10, padding: '7px 12px', fontSize: '0.8rem', borderTop: '1px solid var(--border)' },
+  btnSecondary: { fontSize: '0.9rem', fontWeight: 600, padding: '12px 22px', borderRadius: 10, border: '1.5px solid var(--accent)', background: '#fff', color: 'var(--accent)', cursor: 'pointer', fontFamily: 'var(--font-sans)' },
+  scheduleInput: { padding: '10px 14px', border: '1.5px solid var(--border)', borderRadius: 10, background: 'var(--bg)', color: 'var(--ink)', fontFamily: 'var(--font-sans)', fontSize: '0.9rem', outline: 'none', colorScheme: 'light' },
 };
+
+// datetime-local wants "YYYY-MM-DDTHH:mm" in LOCAL time (no timezone suffix).
+function toDatetimeLocalValue(date) {
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
 
 export default function ComposeEmailPanel({
   students,
@@ -53,6 +61,12 @@ export default function ComposeEmailPanel({
   const [sending, setSending] = useState(false);
   const [error, setError] = useState(null);
   const [results, setResults] = useState(null); // [{studentId, status, to, error}]
+  // Schedule-for-later: picker hidden until "Schedule" is clicked. sendAt is a
+  // datetime-local string; the batch fires server-side so the page can close.
+  const [showSchedule, setShowSchedule] = useState(false);
+  const [sendAt, setSendAt] = useState('');
+  const [scheduling, setScheduling] = useState(false);
+  const [scheduleMsg, setScheduleMsg] = useState(null); // { type: 'success'|'error', text }
 
   useEffect(() => {
     let cancelled = false;
@@ -160,6 +174,68 @@ export default function ComposeEmailPanel({
       setError(e.response?.data?.error || e.message || 'Send failed.');
     } finally {
       setSending(false);
+    }
+  }
+
+  // Persist a server-side batch that fires at `sendAt`. Recipients (and the
+  // report date range, when attaching) are frozen now, so the browser need
+  // not stay open. Delivery is tracked in the Bulk Send tab's queue.
+  async function handleSchedule() {
+    setError(null);
+    setScheduleMsg(null);
+    if (!sendAt) {
+      setScheduleMsg({ type: 'error', text: 'Pick a date and time to schedule.' });
+      return;
+    }
+    const when = new Date(sendAt);
+    if (Number.isNaN(when.getTime()) || when.getTime() < Date.now()) {
+      setScheduleMsg({ type: 'error', text: 'Schedule time must be in the future.' });
+      return;
+    }
+
+    // Unlike the immediate send (where the server can look contacts up at
+    // send time), a scheduled batch freezes its recipients — so resolve the
+    // saved contacts / ClassMarker fallback here.
+    const items = Array.from(selected)
+      .map((id) => {
+        const st = byId.get(String(id));
+        const c = contactsFor(id);
+        const studentEmail = c.studentEmail || (!c.parentEmail && st?.email) || '';
+        return {
+          studentId: id,
+          studentName: st?.name || '',
+          studentEmail,
+          parentEmail: c.parentEmail || '',
+        };
+      })
+      .filter((it) => it.studentEmail || it.parentEmail);
+
+    if (items.length === 0) {
+      setScheduleMsg({ type: 'error', text: 'No selected students have a recipient email.' });
+      return;
+    }
+
+    setScheduling(true);
+    try {
+      const res = await scheduleCustomEmail({
+        label: `Email — ${subject || 'Prime Academy'}`,
+        subject: subject || undefined,
+        message,
+        includeReport,
+        ...(includeReport ? { startDate, endDate, dayOfWeek: dayOfWeek && dayOfWeek.length ? dayOfWeek : undefined } : {}),
+        sendAt: when.toISOString(),
+        items,
+      });
+      setScheduleMsg({
+        type: 'success',
+        text: `Scheduled for ${when.toLocaleString()} — ${res.scheduledCount} student${res.scheduledCount === 1 ? '' : 's'}. Track or cancel it in the Bulk Send tab's queue.`,
+      });
+      setSendAt('');
+      setShowSchedule(false);
+    } catch (e) {
+      setScheduleMsg({ type: 'error', text: e.response?.data?.error || e.message || 'Failed to schedule.' });
+    } finally {
+      setScheduling(false);
     }
   }
 
@@ -305,10 +381,53 @@ export default function ComposeEmailPanel({
               ? 'Sending…'
               : `✉ Send${includeReport ? ' with report' : ' (no report)'} to ${selected.size} student${selected.size === 1 ? '' : 's'}`}
           </button>
+          {!showSchedule && (
+            <button
+              type="button"
+              style={{ ...s.btnSecondary, opacity: canSend ? 1 : 0.55 }}
+              disabled={!canSend}
+              onClick={() => { setShowSchedule(true); setScheduleMsg(null); }}
+            >
+              🕑 Schedule
+            </button>
+          )}
+          {showSchedule && (
+            <>
+              <input
+                type="datetime-local"
+                value={sendAt}
+                min={toDatetimeLocalValue(new Date())}
+                onChange={(e) => { setSendAt(e.target.value); setScheduleMsg(null); }}
+                style={s.scheduleInput}
+                aria-label="Schedule send date and time"
+              />
+              <button
+                type="button"
+                style={{ ...s.btnSecondary, opacity: canSend && sendAt ? 1 : 0.55 }}
+                disabled={!canSend || !sendAt || scheduling}
+                onClick={handleSchedule}
+              >
+                {scheduling ? 'Scheduling…' : '🕑 Schedule send'}
+              </button>
+              <button
+                type="button"
+                style={s.btnGhost}
+                onClick={() => { setShowSchedule(false); setSendAt(''); setScheduleMsg(null); }}
+              >
+                Cancel
+              </button>
+            </>
+          )}
           {!emailConfigured && <span style={s.hint}>Email isn't configured on the server.</span>}
           {emailConfigured && selected.size === 0 && <span style={s.hint}>Select at least one student.</span>}
           {emailConfigured && selected.size > 0 && !message.trim() && <span style={s.hint}>Write a message first.</span>}
         </div>
+
+        {scheduleMsg && (
+          <div style={scheduleMsg.type === 'error' ? s.err : s.ok}>
+            {scheduleMsg.type === 'error' ? '⚠ ' : '✓ '}{scheduleMsg.text}
+          </div>
+        )}
 
         {error && <div style={s.err}>⚠ {error}</div>}
 

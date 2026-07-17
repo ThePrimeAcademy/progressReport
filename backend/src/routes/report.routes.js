@@ -537,10 +537,16 @@ router.get('/email/custom/job/:jobId', (req, res) => {
 // report date range is frozen at schedule time, matching the bulk panel.
 
 function validateSchedule(req, res, next) {
-  const { startDate, endDate, sendAt, items } = req.body;
-  if (!startDate || !endDate)
+  const { startDate, endDate, sendAt, items, kind, message, includeReport } = req.body;
+  const isCustom = kind === 'custom';
+  // Custom batches carry their own message; the date range only matters when
+  // a report is attached. Report batches always need the range.
+  if (isCustom && !String(message || '').trim())
+    return res.status(400).json({ error: 'A message body is required.' });
+  const needsDates = !isCustom || Boolean(includeReport);
+  if (needsDates && (!startDate || !endDate))
     return res.status(400).json({ error: 'startDate and endDate are required' });
-  if (new Date(startDate) > new Date(endDate))
+  if (needsDates && new Date(startDate) > new Date(endDate))
     return res.status(400).json({ error: 'startDate must be before endDate' });
   const when = new Date(sendAt);
   if (!sendAt || Number.isNaN(when.getTime()))
@@ -554,10 +560,15 @@ function validateSchedule(req, res, next) {
 }
 
 // POST /api/report/email/schedule
-// body: { label?, subject?, startDate, endDate, dayOfWeek?, sendAt, items: [{ studentId, studentName?, studentEmail?, parentEmail? }] }
+// body: { label?, subject?, startDate?, endDate?, dayOfWeek?, sendAt,
+//         kind?: 'report'|'custom', message?, includeReport?,
+//         items: [{ studentId, studentName?, studentEmail?, parentEmail? }] }
+// kind 'custom' schedules an admin-written message (Email tab); the report is
+// only attached when includeReport is true. Default kind 'report' preserves
+// the original bulk-panel behaviour.
 router.post('/email/schedule', validateSchedule, async (req, res, next) => {
   try {
-    const { label, subject, startDate, endDate, dayOfWeek, sendAt } = req.body;
+    const { label, subject, startDate, endDate, dayOfWeek, sendAt, kind, message, includeReport } = req.body;
     // Keep only rows that actually have a recipient — a scheduled send with no
     // address would just become a 'skipped' item, so drop it up front.
     const items = req.body.items
@@ -574,7 +585,7 @@ router.post('/email/schedule', validateSchedule, async (req, res, next) => {
       return res.status(400).json({ error: 'No selected students have a recipient email.' });
     }
 
-    const id = await db.createScheduledBatch({ label, subject, startDate, endDate, dayOfWeek, sendAt, items });
+    const id = await db.createScheduledBatch({ label, subject, startDate, endDate, dayOfWeek, sendAt, items, kind, message, includeReport });
     console.log(`[schedule] batch ${id} — ${items.length} recipient(s) for ${sendAt}`);
     res.json({ success: true, data: { id, scheduledCount: items.length, sendAt } });
   } catch (err) {

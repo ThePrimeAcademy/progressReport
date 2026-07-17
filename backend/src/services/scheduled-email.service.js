@@ -7,7 +7,9 @@
 // Started once from server.js via startScheduler().
 
 const db = require('./db.service');
-const { buildAndSendReport } = require('./report-delivery.service');
+const { buildAndSendReport, gatherReportData, buildReportFilename } = require('./report-delivery.service');
+const { sendCustomEmail } = require('./email.service');
+const { generateReportPDF } = require('./pdf.service');
 
 const SCHEDULER_INTERVAL_MS = 30 * 1000;
 const ITEM_CONCURRENCY = 3;
@@ -73,16 +75,44 @@ async function processBatch(batch) {
 
       await db.markItemStatus(item.id, 'sending', {});
       try {
-        await buildAndSendReport({
-          studentId: item.student_id,
-          startDate: batch.start_date,
-          endDate: batch.end_date,
-          dayOfWeek,
-          recipients,
-          studentEmail: item.student_email,
-          parentEmail: item.parent_email,
-          subject: batch.subject || undefined,
-        });
+        if (batch.kind === 'custom') {
+          // Email-tab schedule: send the admin-written message; the report
+          // PDF only rides along when the batch was created with it checked.
+          const attachments = [];
+          if (Number(batch.include_report)) {
+            const data = await gatherReportData({
+              studentId: item.student_id,
+              startDate: batch.start_date,
+              endDate: batch.end_date,
+              dayOfWeek,
+            });
+            const pdfBuffer = await generateReportPDF(
+              data.student, data.groups, data.stats, data.satScores,
+              batch.start_date, batch.end_date, data.latestTest, data.categoryPerf, data.categoryPerfSplit
+            );
+            attachments.push({
+              filename: `${buildReportFilename(data.student.name)}.pdf`,
+              content: pdfBuffer,
+            });
+          }
+          await sendCustomEmail({
+            recipients,
+            subject: batch.subject || undefined,
+            message: batch.message,
+            attachments,
+          });
+        } else {
+          await buildAndSendReport({
+            studentId: item.student_id,
+            startDate: batch.start_date,
+            endDate: batch.end_date,
+            dayOfWeek,
+            recipients,
+            studentEmail: item.student_email,
+            parentEmail: item.parent_email,
+            subject: batch.subject || undefined,
+          });
+        }
         await db.markItemStatus(item.id, 'sent', { sentAt: new Date().toISOString() });
       } catch (err) {
         console.error(`[scheduler] batch ${batch.id} item ${item.id} (${item.student_name}) failed:`, err.message);

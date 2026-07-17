@@ -117,9 +117,23 @@ async function getDb() {
       status       TEXT NOT NULL,
       created_at   TEXT NOT NULL,
       started_at   TEXT,
-      finished_at  TEXT
+      finished_at  TEXT,
+      kind           TEXT DEFAULT 'report',
+      message        TEXT DEFAULT '',
+      include_report INTEGER DEFAULT 1
     )
   `);
+
+    // Migrate pre-existing databases created before the Email-page schedule
+    // feature: add the custom-email columns if they're missing. ALTER TABLE
+    // fails harmlessly when the column already exists.
+    for (const stmt of [
+        "ALTER TABLE scheduled_batches ADD COLUMN kind TEXT DEFAULT 'report'",
+        "ALTER TABLE scheduled_batches ADD COLUMN message TEXT DEFAULT ''",
+        'ALTER TABLE scheduled_batches ADD COLUMN include_report INTEGER DEFAULT 1',
+    ]) {
+        try { _db.run(stmt); } catch (_) { /* column already exists */ }
+    }
 
     _db.run(`
     CREATE TABLE IF NOT EXISTS scheduled_batch_items (
@@ -387,19 +401,25 @@ const EMPTY_COUNTS = { total: 0, pending: 0, sending: 0, sent: 0, failed: 0, ski
 
 // items: [{ studentId, studentName, studentEmail, parentEmail }]. Returns the
 // generated batch id. dayOfWeek may be an array, a scalar, or empty.
-async function createScheduledBatch({ label, subject, startDate, endDate, dayOfWeek, sendAt, items }) {
+// kind: 'report' (default — send each student's progress report) or 'custom'
+// (send an admin-written message; the report only rides along when
+// includeReport is true).
+async function createScheduledBatch({ label, subject, startDate, endDate, dayOfWeek, sendAt, items, kind, message, includeReport }) {
     const db = await getDb();
     const id = crypto.randomBytes(9).toString('hex');
     const now = new Date().toISOString();
     const dow = Array.isArray(dayOfWeek)
         ? dayOfWeek.map(String).join(',')
         : (dayOfWeek != null && dayOfWeek !== '' ? String(dayOfWeek) : '');
+    const batchKind = kind === 'custom' ? 'custom' : 'report';
+    // Report batches always attach the report; custom batches only on request.
+    const attach = batchKind === 'report' ? 1 : (includeReport ? 1 : 0);
 
     db.run(
         `INSERT INTO scheduled_batches
-           (id, label, subject, start_date, end_date, day_of_week, send_at, status, created_at)
-         VALUES (?,?,?,?,?,?,?,?,?)`,
-        [id, label || '', subject || '', startDate, endDate, dow, sendAt, 'scheduled', now]
+           (id, label, subject, start_date, end_date, day_of_week, send_at, status, created_at, kind, message, include_report)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+        [id, label || '', subject || '', startDate || '', endDate || '', dow, sendAt, 'scheduled', now, batchKind, message || '', attach]
     );
 
     for (const it of items) {

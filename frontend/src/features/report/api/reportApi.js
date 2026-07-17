@@ -261,6 +261,15 @@ export async function scheduleBulkEmail(payload) {
   return response.data.data;
 }
 
+// Schedule an Email-tab custom message (kind 'custom'). The report PDF is
+// only attached when includeReport is true, in which case the date range is
+// frozen at schedule time like the bulk panel.
+// payload: { label?, subject?, message, includeReport?, startDate?, endDate?, dayOfWeek?, sendAt, items }
+export async function scheduleCustomEmail(payload) {
+  const response = await apiClient.post('/report/email/schedule', { ...payload, kind: 'custom' });
+  return response.data.data;
+}
+
 // All scheduled/in-flight/completed batches, newest first, with status counts.
 export async function fetchEmailQueue() {
   const response = await apiClient.get('/report/email/queue');
