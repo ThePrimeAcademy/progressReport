@@ -7,9 +7,8 @@
 // Started once from server.js via startScheduler().
 
 const db = require('./db.service');
-const { buildAndSendReport, gatherReportData, buildReportFilename } = require('./report-delivery.service');
+const { buildAndSendReport, buildReportAttachments } = require('./report-delivery.service');
 const { sendCustomEmail } = require('./email.service');
-const { generateReportPDF } = require('./pdf.service');
 
 const SCHEDULER_INTERVAL_MS = 30 * 1000;
 const ITEM_CONCURRENCY = 3;
@@ -77,24 +76,16 @@ async function processBatch(batch) {
       try {
         if (batch.kind === 'custom') {
           // Email-tab schedule: send the admin-written message; the report
-          // PDF only rides along when the batch was created with it checked.
-          const attachments = [];
-          if (Number(batch.include_report)) {
-            const data = await gatherReportData({
-              studentId: item.student_id,
-              startDate: batch.start_date,
-              endDate: batch.end_date,
-              dayOfWeek,
-            });
-            const pdfBuffer = await generateReportPDF(
-              data.student, data.groups, data.stats, data.satScores,
-              batch.start_date, batch.end_date, data.latestTest, data.categoryPerf, data.categoryPerfSplit
-            );
-            attachments.push({
-              filename: `${buildReportFilename(data.student.name)}.pdf`,
-              content: pdfBuffer,
-            });
-          }
+          // PDF (+ program summary) only rides along when the batch was
+          // created with "Attach progress report" checked.
+          const attachments = Number(batch.include_report)
+            ? await buildReportAttachments({
+                studentId: item.student_id,
+                startDate: batch.start_date,
+                endDate: batch.end_date,
+                dayOfWeek,
+              })
+            : [];
           await sendCustomEmail({
             recipients,
             subject: batch.subject || undefined,

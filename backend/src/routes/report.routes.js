@@ -9,6 +9,7 @@ const { isConfigured: isEmailConfigured, verifyConnection: verifyEmailConnection
 const {
   buildReportFilename,
   gatherReportData,
+  buildReportAttachments,
   buildAndSendReport,
 } = require('../services/report-delivery.service');
 const db = require('../services/db.service');
@@ -480,20 +481,12 @@ router.post('/email/custom', async (req, res) => {
             throw new Error('No recipient email on file (student or parent).');
           }
 
-          const attachments = [];
-          if (includeReport) {
-            const data = await gatherReportData({
-              studentId: String(it.studentId), startDate, endDate, dayOfWeek,
-            });
-            const pdfBuffer = await generateReportPDF(
-              data.student, data.groups, data.stats, data.satScores,
-              startDate, endDate, data.latestTest, data.categoryPerf, data.categoryPerfSplit
-            );
-            attachments.push({
-              filename: `${buildReportFilename(data.student.name)}.pdf`,
-              content: pdfBuffer,
-            });
-          }
+          // Report PDF + program summary, matching the report pipeline.
+          const attachments = includeReport
+            ? await buildReportAttachments({
+                studentId: String(it.studentId), startDate, endDate, dayOfWeek,
+              })
+            : [];
 
           const result = await sendCustomEmail({ recipients, subject, message, attachments });
           jobItem.status = 'sent';

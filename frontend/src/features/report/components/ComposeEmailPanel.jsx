@@ -361,7 +361,8 @@ export default function ComposeEmailPanel({
             <br />
             <span style={s.hint}>
               Off by default — your message sends alone. When checked, each student's report
-              for {startDate || '…'} → {endDate || '…'} is generated and attached.
+              for {startDate || '…'} → {endDate || '…'} is generated and attached, along with
+              their program summary.
             </span>
           </span>
         </label>

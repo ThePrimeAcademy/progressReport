@@ -83,6 +83,41 @@ async function gatherReportData({ studentId, startDate, endDate, dayOfWeek }) {
 // Build the PDF for one student and email it to the given recipients, then
 // persist the recipients as that student's saved contacts (mirrors the prior
 // inline behaviour of POST /api/report/email). Throws on any failure so the
+// Best-effort program summary PDF for a student — the group-level "how we're
+// doing" context that rides along with the report card. Returns an attachment
+// object or null; a summary failure never blocks the report itself.
+async function buildProgramSummaryAttachment(studentId, tag = `[report-delivery ${studentId}]`) {
+  const program = getProgramForStudent(studentId);
+  if (!program) return null;
+  try {
+    const tSum = Date.now();
+    const summary = await getProgramSummary(program.programId);
+    if (!summary) return null;
+    const summaryPdf = await generateProgramSummaryPDF(summary);
+    console.log(`${tag} program summary attached in ${Date.now() - tSum}ms`);
+    return { filename: `${program.name} Summary.pdf`, content: summaryPdf };
+  } catch (err) {
+    console.warn(`${tag} program summary attach failed:`, err.message);
+    return null;
+  }
+}
+
+// Report PDF + best-effort program summary as a ready-to-send attachments
+// array. Shared by the custom-email send (Email tab) and its scheduled
+// counterpart, so "Attach progress report" always matches what the report
+// pipeline itself would send.
+async function buildReportAttachments({ studentId, startDate, endDate, dayOfWeek }) {
+  const data = await gatherReportData({ studentId, startDate, endDate, dayOfWeek });
+  const pdfBuffer = await generateReportPDF(
+    data.student, data.groups, data.stats, data.satScores,
+    startDate, endDate, data.latestTest, data.categoryPerf, data.categoryPerfSplit
+  );
+  const attachments = [{ filename: `${buildReportFilename(data.student.name)}.pdf`, content: pdfBuffer }];
+  const summary = await buildProgramSummaryAttachment(data.student.id);
+  if (summary) attachments.push(summary);
+  return attachments;
+}
+
 // caller can mark the job/item failed.
 async function buildAndSendReport({
   studentId, startDate, endDate, dayOfWeek,
@@ -104,24 +139,9 @@ async function buildAndSendReport({
   const filename = `${buildReportFilename(data.student.name)}.pdf`;
   console.log(`${tag} PDF ready in ${Date.now() - tPdf}ms (${Math.round((pdfBuffer?.length || 0) / 1024)}KB)`);
 
-  // Ride the student's program summary along with the report card so families
-  // get the group-level "how we're doing" context. Best-effort: a summary
-  // failure never blocks the report card itself.
   const attachments = [];
-  const program = getProgramForStudent(data.student.id);
-  if (program) {
-    try {
-      const tSum = Date.now();
-      const summary = await getProgramSummary(program.programId);
-      if (summary) {
-        const summaryPdf = await generateProgramSummaryPDF(summary);
-        attachments.push({ filename: `${program.name} Summary.pdf`, content: summaryPdf });
-        console.log(`${tag} program summary attached in ${Date.now() - tSum}ms`);
-      }
-    } catch (err) {
-      console.warn(`${tag} program summary attach failed:`, err.message);
-    }
-  }
+  const summaryAttachment = await buildProgramSummaryAttachment(data.student.id, tag);
+  if (summaryAttachment) attachments.push(summaryAttachment);
 
   const tSmtp = Date.now();
   console.log(`${tag} SMTP send → ${(recipients || []).join(', ')}`);
@@ -153,5 +173,6 @@ module.exports = {
   buildReportFilename,
   resolveStudent,
   gatherReportData,
+  buildReportAttachments,
   buildAndSendReport,
 };
