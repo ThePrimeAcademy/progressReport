@@ -84,6 +84,7 @@ async function processBatch(batch) {
                 startDate: batch.start_date,
                 endDate: batch.end_date,
                 dayOfWeek,
+                summaryProgramId: batch.summary_program_id,
               })
             : [];
           await sendCustomEmail({
@@ -102,6 +103,7 @@ async function processBatch(batch) {
             studentEmail: item.student_email,
             parentEmail: item.parent_email,
             subject: batch.subject || undefined,
+            summaryProgramId: batch.summary_program_id,
           });
         }
         await db.markItemStatus(item.id, 'sent', { sentAt: new Date().toISOString() });

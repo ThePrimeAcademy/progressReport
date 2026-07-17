@@ -11,7 +11,7 @@ const {
   computeCategoryPerformance,
 } = require('./classmarker.service');
 const { getSatScoresForStudent } = require('./sat.service');
-const { getProgramForStudent } = require('./program.service');
+const { getProgramForStudent, getProgram } = require('./program.service');
 const { getProgramSummary } = require('./program-summary.service');
 const {
   getLatestWebhookTestResult,
@@ -86,8 +86,13 @@ async function gatherReportData({ studentId, startDate, endDate, dayOfWeek }) {
 // Best-effort program summary PDF for a student — the group-level "how we're
 // doing" context that rides along with the report card. Returns an attachment
 // object or null; a summary failure never blocks the report itself.
-async function buildProgramSummaryAttachment(studentId, tag = `[report-delivery ${studentId}]`) {
-  const program = getProgramForStudent(studentId);
+// summaryProgramId: 'auto' (default — the student's own program), 'none'
+// (skip the summary), or a specific programId (that program for everyone).
+async function buildProgramSummaryAttachment(studentId, tag = `[report-delivery ${studentId}]`, summaryProgramId = 'auto') {
+  if (summaryProgramId === 'none') return null;
+  const program = summaryProgramId && summaryProgramId !== 'auto'
+    ? getProgram(summaryProgramId)
+    : getProgramForStudent(studentId);
   if (!program) return null;
   try {
     const tSum = Date.now();
@@ -106,14 +111,14 @@ async function buildProgramSummaryAttachment(studentId, tag = `[report-delivery 
 // array. Shared by the custom-email send (Email tab) and its scheduled
 // counterpart, so "Attach progress report" always matches what the report
 // pipeline itself would send.
-async function buildReportAttachments({ studentId, startDate, endDate, dayOfWeek }) {
+async function buildReportAttachments({ studentId, startDate, endDate, dayOfWeek, summaryProgramId }) {
   const data = await gatherReportData({ studentId, startDate, endDate, dayOfWeek });
   const pdfBuffer = await generateReportPDF(
     data.student, data.groups, data.stats, data.satScores,
     startDate, endDate, data.latestTest, data.categoryPerf, data.categoryPerfSplit
   );
   const attachments = [{ filename: `${buildReportFilename(data.student.name)}.pdf`, content: pdfBuffer }];
-  const summary = await buildProgramSummaryAttachment(data.student.id);
+  const summary = await buildProgramSummaryAttachment(data.student.id, undefined, summaryProgramId);
   if (summary) attachments.push(summary);
   return attachments;
 }
@@ -121,7 +126,7 @@ async function buildReportAttachments({ studentId, startDate, endDate, dayOfWeek
 // caller can mark the job/item failed.
 async function buildAndSendReport({
   studentId, startDate, endDate, dayOfWeek,
-  recipients, studentEmail, parentEmail, subject, homework,
+  recipients, studentEmail, parentEmail, subject, homework, summaryProgramId,
 }) {
   const t0 = Date.now();
   const tag = `[report-delivery ${studentId}]`;
@@ -140,7 +145,7 @@ async function buildAndSendReport({
   console.log(`${tag} PDF ready in ${Date.now() - tPdf}ms (${Math.round((pdfBuffer?.length || 0) / 1024)}KB)`);
 
   const attachments = [];
-  const summaryAttachment = await buildProgramSummaryAttachment(data.student.id, tag);
+  const summaryAttachment = await buildProgramSummaryAttachment(data.student.id, tag, summaryProgramId);
   if (summaryAttachment) attachments.push(summaryAttachment);
 
   const tSmtp = Date.now();

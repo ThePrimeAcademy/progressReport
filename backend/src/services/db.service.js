@@ -120,7 +120,8 @@ async function getDb() {
       finished_at  TEXT,
       kind           TEXT DEFAULT 'report',
       message        TEXT DEFAULT '',
-      include_report INTEGER DEFAULT 1
+      include_report INTEGER DEFAULT 1,
+      summary_program_id TEXT DEFAULT 'auto'
     )
   `);
 
@@ -131,6 +132,7 @@ async function getDb() {
         "ALTER TABLE scheduled_batches ADD COLUMN kind TEXT DEFAULT 'report'",
         "ALTER TABLE scheduled_batches ADD COLUMN message TEXT DEFAULT ''",
         'ALTER TABLE scheduled_batches ADD COLUMN include_report INTEGER DEFAULT 1',
+        "ALTER TABLE scheduled_batches ADD COLUMN summary_program_id TEXT DEFAULT 'auto'",
     ]) {
         try { _db.run(stmt); } catch (_) { /* column already exists */ }
     }
@@ -404,7 +406,7 @@ const EMPTY_COUNTS = { total: 0, pending: 0, sending: 0, sent: 0, failed: 0, ski
 // kind: 'report' (default — send each student's progress report) or 'custom'
 // (send an admin-written message; the report only rides along when
 // includeReport is true).
-async function createScheduledBatch({ label, subject, startDate, endDate, dayOfWeek, sendAt, items, kind, message, includeReport }) {
+async function createScheduledBatch({ label, subject, startDate, endDate, dayOfWeek, sendAt, items, kind, message, includeReport, summaryProgramId }) {
     const db = await getDb();
     const id = crypto.randomBytes(9).toString('hex');
     const now = new Date().toISOString();
@@ -417,9 +419,9 @@ async function createScheduledBatch({ label, subject, startDate, endDate, dayOfW
 
     db.run(
         `INSERT INTO scheduled_batches
-           (id, label, subject, start_date, end_date, day_of_week, send_at, status, created_at, kind, message, include_report)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
-        [id, label || '', subject || '', startDate || '', endDate || '', dow, sendAt, 'scheduled', now, batchKind, message || '', attach]
+           (id, label, subject, start_date, end_date, day_of_week, send_at, status, created_at, kind, message, include_report, summary_program_id)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        [id, label || '', subject || '', startDate || '', endDate || '', dow, sendAt, 'scheduled', now, batchKind, message || '', attach, summaryProgramId || 'auto']
     );
 
     for (const it of items) {

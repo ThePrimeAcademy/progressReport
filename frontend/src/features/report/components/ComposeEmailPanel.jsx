@@ -5,7 +5,9 @@
 // is explicitly checked. Exists so the bulk email pipeline can be exercised
 // without mailing out reports.
 import React, { useState, useEffect, useMemo } from 'react';
-import { sendCustomEmail, fetchCustomEmailJobStatus, fetchStudentGroups, fetchPrograms, scheduleCustomEmail } from '../api/reportApi.js';
+import { sendCustomEmail, fetchCustomEmailJobStatus, fetchStudentGroups, fetchPrograms, scheduleCustomEmail, saveStudentContacts } from '../api/reportApi.js';
+
+const EMAIL_RX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 const s = {
   card: { background: 'var(--bg)', borderRadius: 16, boxShadow: 'var(--shadow-lg)', border: '1.5px solid var(--border)', overflow: 'hidden' },
@@ -30,6 +32,9 @@ const s = {
   err: { padding: '10px 14px', background: '#fff1f2', border: '1.5px solid #fca5a5', borderRadius: 8, color: '#b91c1c', fontSize: '0.85rem' },
   resultRow: { display: 'flex', justifyContent: 'space-between', gap: 10, padding: '7px 12px', fontSize: '0.8rem', borderTop: '1px solid var(--border)' },
   btnSecondary: { fontSize: '0.9rem', fontWeight: 600, padding: '12px 22px', borderRadius: 10, border: '1.5px solid var(--accent)', background: '#fff', color: 'var(--accent)', cursor: 'pointer', fontFamily: 'var(--font-sans)' },
+  btnTiny: { fontSize: '0.7rem', fontWeight: 600, padding: '3px 9px', borderRadius: 7, border: '1.5px solid var(--border)', background: '#fff', color: 'var(--ink)', cursor: 'pointer', fontFamily: 'var(--font-sans)', flexShrink: 0 },
+  editInput: { padding: '6px 10px', fontSize: '0.8rem', border: '1.5px solid var(--border)', borderRadius: 8, fontFamily: 'var(--font-sans)', boxSizing: 'border-box', width: '100%' },
+  editErr: { fontSize: '0.72rem', color: '#b91c1c', fontWeight: 500 },
   scheduleInput: { padding: '10px 14px', border: '1.5px solid var(--border)', borderRadius: 10, background: 'var(--bg)', color: 'var(--ink)', fontFamily: 'var(--font-sans)', fontSize: '0.9rem', outline: 'none', colorScheme: 'light' },
 };
 
@@ -58,6 +63,9 @@ export default function ComposeEmailPanel({
   const [subject, setSubject] = useState('');
   const [message, setMessage] = useState('');
   const [includeReport, setIncludeReport] = useState(false);
+  // Which program's summary rides along with the report: 'auto' = each
+  // student's own program, 'none' = report only, or a specific programId.
+  const [summaryProgramId, setSummaryProgramId] = useState('auto');
   const [sending, setSending] = useState(false);
   const [error, setError] = useState(null);
   const [results, setResults] = useState(null); // [{studentId, status, to, error}]
@@ -67,6 +75,11 @@ export default function ComposeEmailPanel({
   const [sendAt, setSendAt] = useState('');
   const [scheduling, setScheduling] = useState(false);
   const [scheduleMsg, setScheduleMsg] = useState(null); // { type: 'success'|'error', text }
+  // Inline contact editing — one row at a time.
+  const [editingId, setEditingId] = useState(null);
+  const [editVals, setEditVals] = useState({ studentEmail: '', parentEmail: '' });
+  const [editSaving, setEditSaving] = useState(false);
+  const [editErr, setEditErr] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -129,6 +142,43 @@ export default function ComposeEmailPanel({
     ));
   };
 
+  function startEdit(st) {
+    const c = contactsFor(st.id);
+    setEditingId(String(st.id));
+    setEditVals({
+      studentEmail: c.studentEmail || st.email || '',
+      parentEmail: c.parentEmail || '',
+    });
+    setEditErr(null);
+  }
+
+  function cancelEdit() {
+    setEditingId(null);
+    setEditErr(null);
+  }
+
+  // Persist the row's contacts, mirroring the Bulk Send tab: a malformed
+  // email never overwrites a good one.
+  async function saveEdit(id) {
+    const studentEmail = editVals.studentEmail.trim();
+    const parentEmail = editVals.parentEmail.trim();
+    if ((studentEmail && !EMAIL_RX.test(studentEmail)) || (parentEmail && !EMAIL_RX.test(parentEmail))) {
+      setEditErr('Invalid email — not saved.');
+      return;
+    }
+    setEditSaving(true);
+    setEditErr(null);
+    try {
+      await saveStudentContacts(String(id), { studentEmail, parentEmail });
+      onContactsPersisted?.(String(id), { studentEmail, parentEmail });
+      setEditingId(null);
+    } catch (e) {
+      setEditErr(e.response?.data?.error || e.message || 'Save failed.');
+    } finally {
+      setEditSaving(false);
+    }
+  }
+
   const datesOk = !includeReport || (startDate && endDate && new Date(startDate) <= new Date(endDate));
   const canSend = emailConfigured && selected.size > 0 && message.trim() && datesOk && !sending;
 
@@ -153,7 +203,7 @@ export default function ComposeEmailPanel({
         subject: subject || undefined,
         message,
         includeReport,
-        ...(includeReport ? { startDate, endDate, dayOfWeek: dayOfWeek && dayOfWeek.length ? dayOfWeek : undefined } : {}),
+        ...(includeReport ? { startDate, endDate, dayOfWeek: dayOfWeek && dayOfWeek.length ? dayOfWeek : undefined, summaryProgramId } : {}),
       });
       const jobId = start?.jobId;
       if (!jobId) throw new Error('Server did not return a job id.');
@@ -222,7 +272,7 @@ export default function ComposeEmailPanel({
         subject: subject || undefined,
         message,
         includeReport,
-        ...(includeReport ? { startDate, endDate, dayOfWeek: dayOfWeek && dayOfWeek.length ? dayOfWeek : undefined } : {}),
+        ...(includeReport ? { startDate, endDate, dayOfWeek: dayOfWeek && dayOfWeek.length ? dayOfWeek : undefined, summaryProgramId } : {}),
         sendAt: when.toISOString(),
         items,
       });
@@ -305,6 +355,50 @@ export default function ComposeEmailPanel({
                     c.parentEmail ? `Parent: ${c.parentEmail}` : null,
                   ].filter(Boolean)
                 : (fallback ? [`Student: ${st.email}`] : []);
+              const isEditing = editingId === String(st.id);
+              if (isEditing) {
+                return (
+                  <div key={st.id} style={{ ...s.pickRow, ...(i === 0 ? { borderTop: 'none' } : {}), cursor: 'default', alignItems: 'flex-start' }}>
+                    <input
+                      type="checkbox"
+                      checked={selected.has(st.id)}
+                      onChange={() => toggle(st.id)}
+                      style={{ flexShrink: 0, marginTop: 4 }}
+                    />
+                    <span style={{ minWidth: 0, flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      <span style={{ fontWeight: 600 }}>{st.name}</span>
+                      <input
+                        style={s.editInput}
+                        type="email"
+                        value={editVals.studentEmail}
+                        placeholder="Student email"
+                        onChange={(e) => setEditVals((v) => ({ ...v, studentEmail: e.target.value }))}
+                      />
+                      <input
+                        style={s.editInput}
+                        type="email"
+                        value={editVals.parentEmail}
+                        placeholder="Parent email"
+                        onChange={(e) => setEditVals((v) => ({ ...v, parentEmail: e.target.value }))}
+                      />
+                      {editErr && <span style={s.editErr}>⚠ {editErr}</span>}
+                    </span>
+                    <span style={{ display: 'flex', gap: 6, marginLeft: 'auto', flexShrink: 0 }}>
+                      <button
+                        type="button"
+                        style={{ ...s.btnTiny, borderColor: 'var(--accent)', color: 'var(--accent)' }}
+                        disabled={editSaving}
+                        onClick={() => saveEdit(st.id)}
+                      >
+                        {editSaving ? 'Saving…' : 'Save'}
+                      </button>
+                      <button type="button" style={s.btnTiny} disabled={editSaving} onClick={cancelEdit}>
+                        Cancel
+                      </button>
+                    </span>
+                  </div>
+                );
+              }
               return (
                 <label key={st.id} style={{ ...s.pickRow, ...(i === 0 ? { borderTop: 'none' } : {}) }}>
                   <input
@@ -320,8 +414,17 @@ export default function ComposeEmailPanel({
                       {emailBits.length ? emailBits.join(' · ') : 'No email on file'}
                     </span>
                   </span>
-                  <span style={{ ...s.pill, ...(saved ? s.pillOk : s.pillWarn) }}>
-                    {saved ? 'Contacts saved' : fallback ? 'ClassMarker email only' : 'No email on file'}
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 6, marginLeft: 'auto', flexShrink: 0 }}>
+                    <button
+                      type="button"
+                      style={s.btnTiny}
+                      onClick={(e) => { e.preventDefault(); startEdit(st); }}
+                    >
+                      ✎ Edit
+                    </button>
+                    <span style={{ ...s.pill, marginLeft: 0, ...(saved ? s.pillOk : s.pillWarn) }}>
+                      {saved ? 'Contacts saved' : fallback ? 'ClassMarker email only' : 'No email on file'}
+                    </span>
                   </span>
                 </label>
               );
@@ -366,6 +469,27 @@ export default function ComposeEmailPanel({
             </span>
           </span>
         </label>
+
+        {includeReport && (
+          <div>
+            <label style={s.label}>Program summary attachment</label>
+            <select
+              style={s.input}
+              value={summaryProgramId}
+              onChange={(e) => setSummaryProgramId(e.target.value)}
+            >
+              <option value="auto">Each student's own program (default)</option>
+              <option value="none">No summary — report only</option>
+              {programs.map((p) => (
+                <option key={p.programId} value={p.programId}>{p.name}</option>
+              ))}
+            </select>
+            <div style={{ ...s.hint, marginTop: 6 }}>
+              The group summary PDF attached alongside each report. Pick a specific program to send that
+              program's summary to everyone selected.
+            </div>
+          </div>
+        )}
 
         {includeReport && !datesOk && (
           <div style={s.err}>⚠ Set a valid date range (on the Students or Single Student tab) before attaching reports.</div>

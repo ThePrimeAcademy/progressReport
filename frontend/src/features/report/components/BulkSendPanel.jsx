@@ -249,6 +249,9 @@ export default function BulkSendPanel({
 }) {
   const [selectedIds, setSelectedIds] = useState(() => new Set());
   const [subject, setSubject] = useState('Prime Academy Weekly Report');
+  // Which program's summary rides along with each report: 'auto' = each
+  // student's own program, 'none' = report only, or a specific programId.
+  const [summaryProgramId, setSummaryProgramId] = useState('auto');
   const [running, setRunning] = useState(false);
   const [results, setResults] = useState({});
   const [globalError, setGlobalError] = useState(null);
@@ -494,6 +497,7 @@ export default function BulkSendPanel({
             endDate,
             dayOfWeek: dayOfWeek || undefined,
             subject: subject || undefined,
+            summaryProgramId,
             studentEmail: effectiveEmail(stu.id, 'studentEmail'),
             parentEmail: effectiveEmail(stu.id, 'parentEmail'),
           });
@@ -571,6 +575,7 @@ export default function BulkSendPanel({
         startDate,
         endDate,
         dayOfWeek: dayOfWeek || undefined,
+        summaryProgramId,
         sendAt: when.toISOString(),
         items,
       });
@@ -624,6 +629,24 @@ export default function BulkSendPanel({
             style={{ ...s.input, marginTop: 6 }}
             autoComplete="off"
           />
+        </div>
+
+        <div style={s.divider} />
+
+        <div>
+          <label style={s.label} htmlFor="bulk-summary-program">Program summary attachment</label>
+          <select
+            id="bulk-summary-program"
+            value={summaryProgramId}
+            onChange={(e) => setSummaryProgramId(e.target.value)}
+            style={{ ...s.input, marginTop: 6 }}
+          >
+            <option value="auto">Each student's own program (default)</option>
+            <option value="none">No summary — report only</option>
+            {programs.map((p) => (
+              <option key={p.programId} value={p.programId}>{p.name}</option>
+            ))}
+          </select>
         </div>
 
         <div style={s.divider} />

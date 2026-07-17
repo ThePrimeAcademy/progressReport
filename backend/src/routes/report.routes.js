@@ -32,7 +32,7 @@ const router = express.Router();
 // so identical POSTs within 5 min rejoin an in-flight or successful send
 // instead of duplicating work. Failed jobs are retriable immediately.
 
-function dedupeKey({ studentId, startDate, endDate, dayOfWeek, recipients, subject, homework }) {
+function dedupeKey({ studentId, startDate, endDate, dayOfWeek, recipients, subject, homework, summaryProgramId }) {
   const days = Array.isArray(dayOfWeek)
     ? dayOfWeek.map(String).sort().join(',')
     : String(dayOfWeek || '');
@@ -44,6 +44,7 @@ function dedupeKey({ studentId, startDate, endDate, dayOfWeek, recipients, subje
     (recipients || []).map((e) => e.toLowerCase()).sort().join(','),
     String(subject || ''),
     homeworkKey(homework),
+    String(summaryProgramId || 'auto'),
   ].join('|');
   return crypto.createHash('sha256').update(normalized).digest('hex').slice(0, 24);
 }
@@ -348,7 +349,7 @@ router.get('/email/verify', async (req, res) => {
 router.post('/email', validate, async (req, res, next) => {
   const t0 = Date.now();
   try {
-    const { studentId, startDate, endDate, dayOfWeek, subject } = req.body;
+    const { studentId, startDate, endDate, dayOfWeek, subject, summaryProgramId } = req.body;
     const homework = sanitizeHomework(req.body.homework);
     let { studentEmail, parentEmail } = req.body;
 
@@ -366,13 +367,13 @@ router.post('/email', validate, async (req, res, next) => {
       return res.status(400).json({ error: 'Provide at least one recipient (student or parent email).' });
     }
 
-    const key = dedupeKey({ studentId, startDate, endDate, dayOfWeek, recipients, subject, homework });
+    const key = dedupeKey({ studentId, startDate, endDate, dayOfWeek, recipients, subject, homework, summaryProgramId });
     console.log(`[email] queued studentId=${studentId} recipients=${recipients.length} key=${key}`);
 
     const start = await startOrReuseJob(key, async () => {
       const sendResult = await buildAndSendReport({
         studentId, startDate, endDate, dayOfWeek,
-        recipients, studentEmail, parentEmail, subject, homework,
+        recipients, studentEmail, parentEmail, subject, homework, summaryProgramId,
       });
       console.log(`[email job ${key}] sent in total ${Date.now() - t0}ms id=${sendResult.id || '?'}`);
       return sendResult;
@@ -425,7 +426,7 @@ const CUSTOM_JOB_TTL_MS = 10 * 60 * 1000;
 
 router.post('/email/custom', async (req, res) => {
   try {
-    const { subject, message, includeReport, startDate, endDate, dayOfWeek } = req.body || {};
+    const { subject, message, includeReport, startDate, endDate, dayOfWeek, summaryProgramId } = req.body || {};
     const items = Array.isArray(req.body?.items) ? req.body.items : [];
 
     if (!String(message || '').trim()) {
@@ -484,7 +485,7 @@ router.post('/email/custom', async (req, res) => {
           // Report PDF + program summary, matching the report pipeline.
           const attachments = includeReport
             ? await buildReportAttachments({
-                studentId: String(it.studentId), startDate, endDate, dayOfWeek,
+                studentId: String(it.studentId), startDate, endDate, dayOfWeek, summaryProgramId,
               })
             : [];
 
@@ -561,7 +562,7 @@ function validateSchedule(req, res, next) {
 // the original bulk-panel behaviour.
 router.post('/email/schedule', validateSchedule, async (req, res, next) => {
   try {
-    const { label, subject, startDate, endDate, dayOfWeek, sendAt, kind, message, includeReport } = req.body;
+    const { label, subject, startDate, endDate, dayOfWeek, sendAt, kind, message, includeReport, summaryProgramId } = req.body;
     // Keep only rows that actually have a recipient — a scheduled send with no
     // address would just become a 'skipped' item, so drop it up front.
     const items = req.body.items
@@ -578,7 +579,7 @@ router.post('/email/schedule', validateSchedule, async (req, res, next) => {
       return res.status(400).json({ error: 'No selected students have a recipient email.' });
     }
 
-    const id = await db.createScheduledBatch({ label, subject, startDate, endDate, dayOfWeek, sendAt, items, kind, message, includeReport });
+    const id = await db.createScheduledBatch({ label, subject, startDate, endDate, dayOfWeek, sendAt, items, kind, message, includeReport, summaryProgramId });
     console.log(`[schedule] batch ${id} — ${items.length} recipient(s) for ${sendAt}`);
     res.json({ success: true, data: { id, scheduledCount: items.length, sendAt } });
   } catch (err) {
