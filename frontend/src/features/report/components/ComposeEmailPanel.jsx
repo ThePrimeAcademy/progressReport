@@ -8,7 +8,18 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { sendCustomEmail, fetchCustomEmailJobStatus, fetchStudentGroups, fetchPrograms, scheduleCustomEmail, saveStudentContacts } from '../api/reportApi.js';
 
 const EMAIL_RX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
+// A contact field may hold several addresses (e.g. two parents) separated by
+// comma, semicolon, or slash. Validate each piece, not the whole string.
+function splitAddresses(field) {
+  return String(field || '')
+    .split(/[,;/\n]+/)
+    .map((e) => e.trim())
+    .filter(Boolean);
+}
+function isValidContactField(field) {
+  const parts = splitAddresses(field);
+  return parts.length > 0 && parts.every((addr) => EMAIL_RX.test(addr));
+}
 const s = {
   card: { background: 'var(--bg)', borderRadius: 16, boxShadow: 'var(--shadow-lg)', border: '1.5px solid var(--border)', overflow: 'hidden' },
   cardHead: { padding: '18px 24px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 10 },
@@ -162,8 +173,7 @@ export default function ComposeEmailPanel({
   async function saveEdit(id) {
     const studentEmail = editVals.studentEmail.trim();
     const parentEmail = editVals.parentEmail.trim();
-    if ((studentEmail && !EMAIL_RX.test(studentEmail)) || (parentEmail && !EMAIL_RX.test(parentEmail))) {
-      setEditErr('Invalid email — not saved.');
+    if ((studentEmail && !isValidContactField(studentEmail)) || (parentEmail && !isValidContactField(parentEmail))) {      setEditErr('Invalid email — not saved.');
       return;
     }
     setEditSaving(true);
