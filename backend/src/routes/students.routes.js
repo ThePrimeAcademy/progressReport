@@ -217,11 +217,17 @@ router.put('/:id/contacts', express.json(), async (req, res, next) => {
     const studentId = req.params.id;
     const { studentEmail = '', parentEmail = '' } = req.body || {};
 
-    const emailRx = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (studentEmail && !emailRx.test(studentEmail)) {
+   const emailRx = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    // A contact field may hold several addresses (e.g. two parents) separated
+    // by comma, semicolon, or slash. Validate each piece, not the whole string.
+    const isValidContactField = (field) => {
+      const parts = String(field || '').split(/[,;/\n]+/).map((e) => e.trim()).filter(Boolean);
+      return parts.length > 0 && parts.every((addr) => emailRx.test(addr));
+    };
+    if (studentEmail && !isValidContactField(studentEmail)) {
       return res.status(400).json({ error: 'studentEmail is not a valid email address' });
     }
-    if (parentEmail && !emailRx.test(parentEmail)) {
+    if (parentEmail && !isValidContactField(parentEmail)) {
       return res.status(400).json({ error: 'parentEmail is not a valid email address' });
     }
 
