@@ -91,7 +91,28 @@ function isConnectFailure(err) {
     code === 'ESOCKET'
   );
 }
+function splitAddresses(entry) {
+  return String(entry || '')
+    .split(/[,;\n]+/)
+    .map((e) => e.trim())
+    .filter(Boolean);
+}
 
+function normalizeRecipients(recipients) {
+  const seen = new Set();
+  const out = [];
+  for (const entry of recipients || []) {
+    for (const addr of splitAddresses(entry)) {
+      if (!addr.includes('@')) continue;
+      if (addr.includes('example.com')) continue;
+      const key = addr.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(addr);
+    }
+  }
+  return out;
+}
 function buildDefaultSubject(_studentName) {
   return 'Prime Academy Weekly Report';
 }
@@ -387,9 +408,7 @@ async function sendReportEmail({ studentName, recipients, pdfBuffer, filename, s
     throw err;
   }
 
-  const to = (recipients || [])
-    .map((e) => String(e || '').trim())
-    .filter((e) => e && e.includes('@') && !e.includes('example.com'));
+const to = normalizeRecipients(recipients);
   if (to.length === 0) {
     const err = new Error('At least one recipient email is required.');
     err.status = 400;
@@ -427,9 +446,7 @@ async function sendCustomEmail({ recipients, subject, message, attachments = [] 
     throw err;
   }
 
-  const to = (recipients || [])
-    .map((e) => String(e || '').trim())
-    .filter((e) => e && e.includes('@') && !e.includes('example.com'));
+ const to = normalizeRecipients(recipients);
   if (to.length === 0) {
     const err = new Error('At least one recipient email is required.');
     err.status = 400;
