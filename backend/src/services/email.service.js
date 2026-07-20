@@ -93,7 +93,7 @@ function isConnectFailure(err) {
 }
 function splitAddresses(entry) {
   return String(entry || '')
-    .split(/[,;\n]+/)
+    .split(/[,;/\n]+/)
     .map((e) => e.trim())
     .filter(Boolean);
 }
