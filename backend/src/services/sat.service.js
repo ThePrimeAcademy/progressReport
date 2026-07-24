@@ -64,6 +64,12 @@ function deriveTestSection(testName, groupName, questions) {
 // (ClassMarker's points_scored = raw correct for DSAT, where every question
 // is worth 1 point).
 function rawCorrect(record) {
+  // An admin-edited raw score is authoritative — it must win even when
+  // per-question detail exists, otherwise the question count would silently
+  // reinstate the imported score.
+  if (record.manualOverride || record.manual_override === 1) {
+    return Number(record.score) || 0;
+  }
   const questions = record.questions || [];
   return questions.length > 0
     ? questions.filter((q) => q.correct).length
@@ -420,9 +426,13 @@ async function getExamScoreboard(examId) {
   const enrolled = exam.programId ? getProgramRoster(exam.programId) : null;
   const excluded = (uid) => hidden.has(uid) || (enrolled !== null && !enrolled.has(uid));
   const sectionOfTest = new Map(); // testId → 1|2|3|4
+  const nameOfTest = new Map(); // testId → test name (edit-modal labels)
   for (const key of ['1', '2', '3', '4']) {
     const s = exam.sections?.[key];
-    if (s?.testId != null) sectionOfTest.set(String(s.testId), Number(key));
+    if (s?.testId != null) {
+      sectionOfTest.set(String(s.testId), Number(key));
+      if (s.testName) nameOfTest.set(String(s.testId), s.testName);
+    }
   }
 
   const perStudent = new Map();
@@ -440,7 +450,18 @@ async function getExamScoreboard(examId) {
       const entry = entryFor(uid, r.student?.name || r.name || `User ${uid}`);
       const prev = entry.tests.get(tid);
       if (!prev || (r.timeFinished || 0) > prev.timeFinished) {
-        entry.tests.set(tid, { correct: rawCorrect(r), timeFinished: r.timeFinished || 0, webhook: true });
+        entry.tests.set(tid, {
+          correct: rawCorrect(r),
+          timeFinished: r.timeFinished || 0,
+          webhook: true,
+          // Edit-control metadata for the admin UI
+          recordId: r.id,
+          maxScore: r.maxScore ?? ((r.questions || []).length || null),
+          manualOverride: Boolean(r.manualOverride),
+          originalRaw: r.originalRaw ?? null,
+          overrideReason: r.overrideReason ?? null,
+          overrideAt: r.overrideAt ?? null,
+        });
       }
     }
     try {
@@ -450,7 +471,17 @@ async function getExamScoreboard(examId) {
         const prev = entry.tests.get(a.testId);
         if (prev?.webhook) continue;
         if (!prev || a.timeFinished > prev.timeFinished) {
-          entry.tests.set(a.testId, { correct: a.correct, timeFinished: a.timeFinished, webhook: false });
+          entry.tests.set(a.testId, {
+            correct: a.correct,
+            timeFinished: a.timeFinished,
+            webhook: false,
+            recordId: null, // API-cache only — editing materializes an override record
+            maxScore: a.maxScore ?? null,
+            manualOverride: false,
+            originalRaw: null,
+            overrideReason: null,
+            overrideAt: null,
+          });
         }
       }
     } catch (e) {
@@ -480,6 +511,15 @@ const isMath = section > 2;
     const rwScaled = rwRaw != null && rwCurve ? gradeScaled(rwCurve, rwRaw) : null;
     const mathScaled = mathRaw != null && mathCurve ? gradeScaled(mathCurve, mathRaw) : null;
     const total = rwScaled != null && mathScaled != null ? rwScaled + mathScaled : null;
+    // Per-attempt detail feeds the admin edit modal: which record each raw
+    // point came from, whether it's editable in place (webhook-backed) or
+    // needs a materialized override (API-cache only), and any existing edit.
+    const tests = Array.from(entry.tests.entries()).map(([tid, attempt]) => ({
+      testId: tid,
+      testName: nameOfTest.get(tid) || `Test #${tid}`,
+      section: sectionOfTest.get(tid),
+      ...attempt,
+    })).sort((a, b) => (a.section || 0) - (b.section || 0));
     return {
       studentId: uid,
       name: entry.name,
@@ -490,6 +530,8 @@ const isMath = section > 2;
       total,
       testsCompleted: entry.tests.size,
       date: latestFinished ? new Date(latestFinished * 1000).toISOString().split('T')[0] : null,
+      tests,
+      hasOverride: tests.some((t) => t.manualOverride),
     };
   })
     // Allow students to show up on the scoreboard as long as they finished at least 1 test

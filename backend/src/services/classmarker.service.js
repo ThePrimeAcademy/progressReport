@@ -478,6 +478,30 @@ async function getStudentResultsGrouped(studentId, startDate, endDate, dayOfWeek
     g.results.sort((a, b) => new Date(a.date) - new Date(b.date));
   }
 
+  // Overlay admin raw-score overrides. The API is normally the source of
+  // truth for this cache, so an edit stored in the webhook DB would otherwise
+  // be reverted here on every refresh — patch at read time instead, matched
+  // by the attempt's identity (test + finish time).
+  try {
+    const db = require('./db.service');
+    const overrides = await db.getOverridesForUser(String(studentId));
+    if (overrides.length) {
+      const byKey = new Map(overrides.map((o) => [`${o.test_id}:${o.time_finished}`, o]));
+      for (const g of Object.values(grouped)) {
+        for (const r of g.results) {
+          const o = byKey.get(`${r.testId}:${r.timeFinished}`);
+          if (!o) continue;
+          r.score = o.score;
+          r.percentage = r.maxScore > 0 ? Math.round((o.score / r.maxScore) * 1000) / 10 : r.percentage;
+          r.manualOverride = true;
+          r.originalRaw = o.originalRaw;
+        }
+      }
+    }
+  } catch (e) {
+    // Webhook store unavailable — serve cache values unmodified.
+  }
+
   return Object.values(grouped).sort((a, b) => a.groupName.localeCompare(b.groupName));
 }
 
@@ -612,8 +636,27 @@ async function getResultsForTests(testIdSet) {
       name: `${r.first || ''} ${r.last || ''}`.trim() || r.email || `User ${r.user_id}`,
       testId: String(r.test_id),
       correct: Number(r.points_scored) || 0,
+      maxScore: r.points_available != null ? Number(r.points_available) : null,
       timeFinished: r.time_finished || 0,
     }));
+}
+
+// Newest cached API attempt for one (student, test) pair — the raw cache row.
+// Used to materialize a manual raw-score override when the attempt never
+// produced a webhook record.
+async function findCachedAttempt(userId, testId) {
+  const { results, groupMap, testMap } = await fetchAllResults();
+  let latest = null;
+  for (const r of results) {
+    if (String(r.user_id) !== String(userId) || String(r.test_id) !== String(testId)) continue;
+    if (!latest || (r.time_finished || 0) > (latest.time_finished || 0)) latest = r;
+  }
+  if (!latest) return null;
+  return {
+    row: latest,
+    groupName: groupMap[String(latest.group_id)] || null,
+    testName: testMap[String(latest.test_id)] || null,
+  };
 }
 
 // Map of user_id (string) → display name for everyone with at least one
@@ -713,6 +756,7 @@ module.exports = {
   getKnownTests,
   getTakersForTests,
   getResultsForTests,
+  findCachedAttempt,
   mergeWebhookResult,
   getDataVersion,
   backfillFromApi
