@@ -1,0 +1,764 @@
+diff --git a/backend/src/routes/exams.routes.js b/backend/src/routes/exams.routes.js
+index e3fbe43..ce6629e 100644
+--- a/backend/src/routes/exams.routes.js
++++ b/backend/src/routes/exams.routes.js
+@@ -146,6 +146,128 @@ router.get('/available-tests', async (req, res, next) => {
+   }
+ });
+ 
++// ── Manual raw-score overrides ──────────────────────────────────────────────
++// Raw scores only — the scaled 1600 value is never stored and never editable:
++// it regenerates from the curve on every read, so returning the refreshed
++// scoreboard row IS the re-run of the conversion.
++
++const { findCachedAttempt } = require('../services/classmarker.service');
++
++function validateOverrideInput({ score, reason, maxScore }) {
++  const trimmedReason = String(reason ?? '').trim();
++  if (!trimmedReason) return { error: 'A reason is required for every manual score edit.' };
++  const n = Number(score);
++  if (!Number.isInteger(n) || n < 0) {
++    return { error: 'Score must be a non-negative whole number.' };
++  }
++  if (maxScore != null && n > Number(maxScore)) {
++    return { error: `Score must be between 0 and ${maxScore} for this test.` };
++  }
++  if (maxScore == null) {
++    return { error: 'Cannot determine the valid score range for this test (no max score on record).' };
++  }
++  return { score: n, reason: trimmedReason };
++}
++
++// Refreshed scoreboard rows for every exam this test belongs to — the caller
++// gets the regenerated scaled/1600 values without a second round trip.
++async function refreshedScoring(testId, studentId) {
++  const out = [];
++  const infos = exams.getTestExamsMap().get(String(testId)) || [];
++  for (const { examId } of infos) {
++    try {
++      const board = await getExamScoreboard(examId);
++      const row = board?.rows?.find((r) => String(r.studentId) === String(studentId)) || null;
++      out.push({ examId, examName: board?.name || null, row });
++    } catch (e) {
++      console.warn('[exams] Could not refresh scoring for exam', examId, e.message);
++    }
++  }
++  return out;
++}
++
++// PATCH /api/exams/results/:recordId — edit the raw score of a stored record.
++// Body: { score, reason }. The override survives ClassMarker re-imports.
++router.patch('/results/:recordId', async (req, res, next) => {
++  try {
++    const record = await db.getRecordById(req.params.recordId);
++    if (!record) return res.status(404).json({ success: false, error: 'Result record not found' });
++
++    const maxScore = record.maxScore ?? ((record.questions || []).length || null);
++    const v = validateOverrideInput({ ...req.body, maxScore });
++    if (v.error) return res.status(400).json({ success: false, error: v.error });
++
++    const updated = await db.setManualRawScore(record.id, v);
++    const scoring = await refreshedScoring(updated.test_id, updated.user_id);
++    res.json({ success: true, data: { record: updated, scoring } });
++  } catch (err) {
++    next(err);
++  }
++});
++
++// DELETE /api/exams/results/:recordId/override — revert to the imported score.
++router.delete('/results/:recordId/override', async (req, res, next) => {
++  try {
++    const record = await db.getRecordById(req.params.recordId);
++    if (!record) return res.status(404).json({ success: false, error: 'Result record not found' });
++    if (!record.manualOverride) {
++      return res.status(400).json({ success: false, error: 'This record has no manual override to revert.' });
++    }
++    const updated = await db.clearManualOverride(record.id);
++    const scoring = await refreshedScoring(updated.test_id, updated.user_id);
++    res.json({ success: true, data: { record: updated, scoring } });
++  } catch (err) {
++    next(err);
++  }
++});
++
++// POST /api/exams/results/override — edit an attempt that only exists in the
++// ClassMarker API cache (no webhook record). Materializes an override record
++// under the record_key a webhook would use, so a late webhook re-send lands
++// on the same row and the guard protects the edit. Body: { studentId, testId,
++// score, reason }.
++router.post('/results/override', async (req, res, next) => {
++  try {
++    const { studentId, testId } = req.body || {};
++    if (!studentId || !testId) {
++      return res.status(400).json({ success: false, error: 'studentId and testId are required.' });
++    }
++    const cached = await findCachedAttempt(studentId, testId);
++    if (!cached) {
++      return res.status(404).json({ success: false, error: 'No ClassMarker attempt found for that student and test.' });
++    }
++    const { row, groupName, testName } = cached;
++    const maxScore = row.points_available != null ? Number(row.points_available) : null;
++    const v = validateOverrideInput({ ...req.body, maxScore });
++    if (v.error) return res.status(400).json({ success: false, error: v.error });
++
++    const name = `${row.first || ''} ${row.last || ''}`.trim() || row.email || null;
++    const record = {
++      // Same key shape as webhook.service.buildRecordKey (group payloads).
++      key: `group:${row.user_id}:${row.test_id}:${row.group_id}:${row.time_started ?? 'unknown'}`,
++      student: {
++        userId: String(row.user_id),
++        email: row.email || null,
++        name,
++        normalizedName: String(name || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, ''),
++        normalizedEmail: String(row.email || '').trim().toLowerCase(),
++      },
++      test: { testId: String(row.test_id), testName },
++      group: { groupId: String(row.group_id), groupName },
++      duration: row.duration || null,
++      timeStarted: row.time_started ?? null,
++      timeFinished: row.time_finished ?? null,
++      maxScore,
++      importedRaw: row.points_scored != null ? Number(row.points_scored) : null,
++    };
++    const created = await db.createOverrideRecord(record, v);
++    const scoring = await refreshedScoring(created.test_id, created.user_id);
++    res.json({ success: true, data: { record: created, scoring } });
++  } catch (err) {
++    next(err);
++  }
++});
++
+ // GET /api/exams/:examId/takers
+ // Every student with at least one attempt on any of the exam's tests
+ // (webhook store + API cache), as { id, name } pairs. Feeds the per-exam
+diff --git a/backend/src/services/classmarker.service.js b/backend/src/services/classmarker.service.js
+index 4154311..d5bf906 100644
+--- a/backend/src/services/classmarker.service.js
++++ b/backend/src/services/classmarker.service.js
+@@ -478,6 +478,30 @@ async function getStudentResultsGrouped(studentId, startDate, endDate, dayOfWeek
+     g.results.sort((a, b) => new Date(a.date) - new Date(b.date));
+   }
+ 
++  // Overlay admin raw-score overrides. The API is normally the source of
++  // truth for this cache, so an edit stored in the webhook DB would otherwise
++  // be reverted here on every refresh — patch at read time instead, matched
++  // by the attempt's identity (test + finish time).
++  try {
++    const db = require('./db.service');
++    const overrides = await db.getOverridesForUser(String(studentId));
++    if (overrides.length) {
++      const byKey = new Map(overrides.map((o) => [`${o.test_id}:${o.time_finished}`, o]));
++      for (const g of Object.values(grouped)) {
++        for (const r of g.results) {
++          const o = byKey.get(`${r.testId}:${r.timeFinished}`);
++          if (!o) continue;
++          r.score = o.score;
++          r.percentage = r.maxScore > 0 ? Math.round((o.score / r.maxScore) * 1000) / 10 : r.percentage;
++          r.manualOverride = true;
++          r.originalRaw = o.originalRaw;
++        }
++      }
++    }
++  } catch (e) {
++    // Webhook store unavailable — serve cache values unmodified.
++  }
++
+   return Object.values(grouped).sort((a, b) => a.groupName.localeCompare(b.groupName));
+ }
+ 
+@@ -612,10 +636,29 @@ async function getResultsForTests(testIdSet) {
+       name: `${r.first || ''} ${r.last || ''}`.trim() || r.email || `User ${r.user_id}`,
+       testId: String(r.test_id),
+       correct: Number(r.points_scored) || 0,
++      maxScore: r.points_available != null ? Number(r.points_available) : null,
+       timeFinished: r.time_finished || 0,
+     }));
+ }
+ 
++// Newest cached API attempt for one (student, test) pair — the raw cache row.
++// Used to materialize a manual raw-score override when the attempt never
++// produced a webhook record.
++async function findCachedAttempt(userId, testId) {
++  const { results, groupMap, testMap } = await fetchAllResults();
++  let latest = null;
++  for (const r of results) {
++    if (String(r.user_id) !== String(userId) || String(r.test_id) !== String(testId)) continue;
++    if (!latest || (r.time_finished || 0) > (latest.time_finished || 0)) latest = r;
++  }
++  if (!latest) return null;
++  return {
++    row: latest,
++    groupName: groupMap[String(latest.group_id)] || null,
++    testName: testMap[String(latest.test_id)] || null,
++  };
++}
++
+ // Map of user_id (string) → display name for everyone with at least one
+ // cached API result on any of the given testIds. Complements the webhook
+ // store for exam-taker lookups.
+@@ -713,6 +756,7 @@ module.exports = {
+   getKnownTests,
+   getTakersForTests,
+   getResultsForTests,
++  findCachedAttempt,
+   mergeWebhookResult,
+   getDataVersion,
+   backfillFromApi
+diff --git a/backend/src/services/db.service.js b/backend/src/services/db.service.js
+index 500e3fe..cf64ce6 100644
+--- a/backend/src/services/db.service.js
++++ b/backend/src/services/db.service.js
+@@ -89,10 +89,25 @@ async function getDb() {
+       questions        TEXT,
+       category_results TEXT,
+       raw              TEXT,
+-      received_at      TEXT
++      received_at      TEXT,
++      manual_override  INTEGER DEFAULT 0,
++      original_raw     REAL,
++      override_reason  TEXT,
++      override_at      TEXT
+     )
+   `);
+ 
++    // Migrate pre-existing databases created before manual raw-score edits:
++    // same harmless-ALTER pattern as scheduled_batches below.
++    for (const stmt of [
++        'ALTER TABLE webhook_results ADD COLUMN manual_override INTEGER DEFAULT 0',
++        'ALTER TABLE webhook_results ADD COLUMN original_raw REAL',
++        'ALTER TABLE webhook_results ADD COLUMN override_reason TEXT',
++        'ALTER TABLE webhook_results ADD COLUMN override_at TEXT',
++    ]) {
++        try { _db.run(stmt); } catch (_) { /* column already exists */ }
++    }
++
+     _db.run(`
+     CREATE TABLE IF NOT EXISTS student_contacts (
+       student_id     TEXT PRIMARY KEY,
+@@ -268,8 +283,16 @@ async function upsertRecord(record) {
+       questions, category_results, raw, received_at
+     ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+     ON CONFLICT(record_key) DO UPDATE SET
+-      percentage       = excluded.percentage,
+-      score            = excluded.score,
++      percentage       = CASE
++        WHEN webhook_results.manual_override = 1
++        THEN webhook_results.percentage
++        ELSE excluded.percentage
++      END,
++      score            = CASE
++        WHEN webhook_results.manual_override = 1
++        THEN webhook_results.score
++        ELSE excluded.score
++      END,
+       max_score        = excluded.max_score,
+       passed           = excluded.passed,
+       duration         = excluded.duration,
+@@ -357,6 +380,11 @@ function parseRow(row) {
+     return {
+         ...row,
+         passed: row.passed === 1,
++        manualOverride: row.manual_override === 1,
++        originalRaw: row.original_raw ?? null,
++        overrideReason: row.override_reason ?? null,
++        overrideAt: row.override_at ?? null,
++        maxScore: row.max_score ?? null,
+         questions: JSON.parse(row.questions || '[]'),
+         categoryResults: JSON.parse(row.category_results || '[]'),
+         raw: JSON.parse(row.raw || '{}'),
+@@ -386,6 +414,133 @@ async function getAllRecords() {
+     });
+ }
+ 
++// ── Manual raw-score overrides ─────────────────────────────────────────────
++// An admin can correct a raw score after import. The override survives
++// re-imports via the CASE guard in upsertRecord; the original ClassMarker
++// value is preserved in original_raw on the FIRST edit only, so repeated
++// edits never lose the imported value.
++
++async function getRecordById(id) {
++    const db = await getDb();
++    const rows = rowsToObjects(db.exec('SELECT * FROM webhook_results WHERE id = ?', [Number(id)]));
++    return rows.length ? parseRow(rows[0]) : null;
++}
++
++async function setManualRawScore(id, { score, reason }) {
++    const db = await getDb();
++    const existing = await getRecordById(id);
++    if (!existing) return null;
++    // SET expressions see the pre-update row, so COALESCE(original_raw, score)
++    // captures the imported value exactly once. Percentage is a restatement of
++    // score/max_score — recompute it so the row stays internally consistent.
++    db.run(
++        `UPDATE webhook_results SET
++           original_raw    = COALESCE(original_raw, score),
++           score           = ?,
++           percentage      = CASE WHEN max_score > 0 THEN ROUND(? * 100.0 / max_score, 1) ELSE percentage END,
++           manual_override = 1,
++           override_reason = ?,
++           override_at     = ?
++         WHERE id = ?`,
++        [Number(score), Number(score), String(reason || '').trim(), new Date().toISOString(), Number(id)]
++    );
++    flushNow(); // durability: an audit-relevant edit must survive an immediate crash
++    return getRecordById(id);
++}
++
++// Revert to the imported value. original_raw is kept as-is only while an
++// override is active; on revert the row returns to normal import behaviour.
++async function clearManualOverride(id) {
++    const db = await getDb();
++    const existing = await getRecordById(id);
++    if (!existing) return null;
++    db.run(
++        `UPDATE webhook_results SET
++           score           = COALESCE(original_raw, score),
++           percentage      = CASE
++             WHEN max_score > 0 THEN ROUND(COALESCE(original_raw, score) * 100.0 / max_score, 1)
++             ELSE percentage
++           END,
++           manual_override = 0,
++           original_raw    = NULL,
++           override_reason = NULL,
++           override_at     = NULL
++         WHERE id = ?`,
++        [Number(id)]
++    );
++    flushNow();
++    return getRecordById(id);
++}
++
++// Materialize an override for an attempt that exists ONLY in the ClassMarker
++// API cache (no webhook ever fired). Uses the SAME record_key format the
++// webhook would use, so if the webhook is ever re-sent it lands on this row
++// via ON CONFLICT and the override guard protects the edited score.
++async function createOverrideRecord(record, { score, reason }) {
++    const db = await getDb();
++    const existing = rowsToObjects(db.exec(
++        'SELECT id FROM webhook_results WHERE record_key = ?', [record.key]
++    ));
++    if (existing.length) {
++        // A record appeared in the meantime (late webhook) — edit it instead.
++        return setManualRawScore(existing[0].id, { score, reason });
++    }
++    db.run(
++        `INSERT INTO webhook_results (
++           record_key, user_id, email, name, normalized_name, normalized_email,
++           test_id, test_name, group_id, group_name,
++           percentage, score, max_score, passed, duration,
++           time_started, time_finished, date,
++           questions, category_results, raw, received_at,
++           manual_override, original_raw, override_reason, override_at
++         ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,?,?)`,
++        [
++            record.key,
++            record.student?.userId ?? null,
++            record.student?.email ?? null,
++            record.student?.name ?? null,
++            record.student?.normalizedName ?? null,
++            record.student?.normalizedEmail ?? null,
++            record.test?.testId ?? null,
++            record.test?.testName ?? null,
++            record.group?.groupId ?? null,
++            record.group?.groupName ?? null,
++            record.maxScore > 0 ? Math.round((Number(score) / record.maxScore) * 1000) / 10 : null,
++            Number(score),
++            record.maxScore ?? null,
++            null,
++            record.duration ?? null,
++            record.timeStarted ?? null,
++            record.timeFinished ?? null,
++            record.timeFinished ? new Date(record.timeFinished * 1000).toISOString().split('T')[0] : null,
++            JSON.stringify([]),
++            JSON.stringify([]),
++            JSON.stringify({ source: 'manual-override', importedRaw: record.importedRaw ?? null }),
++            new Date().toISOString(),
++            record.importedRaw ?? null, // original_raw = what ClassMarker's API reported
++            String(reason || '').trim(),
++            new Date().toISOString(),
++        ]
++    );
++    flushNow();
++    const rows = rowsToObjects(db.exec(
++        'SELECT * FROM webhook_results WHERE record_key = ?', [record.key]
++    ));
++    return rows.length ? parseRow(rows[0]) : null;
++}
++
++// Overridden attempts for one student, for overlaying display paths that read
++// the ClassMarker API cache (weekly results table). Keyed by test + finish
++// time — the same identity the cache rows carry.
++async function getOverridesForUser(userId) {
++    const db = await getDb();
++    const rows = rowsToObjects(db.exec(
++        'SELECT * FROM webhook_results WHERE manual_override = 1 AND user_id = ?',
++        [String(userId)]
++    ));
++    return rows.map(parseRow);
++}
++
+ async function updateQuestions(id, questions) {
+     const db = await getDb();
+     db.run('UPDATE webhook_results SET questions = ? WHERE id = ?', [
+@@ -691,6 +846,11 @@ module.exports = {
+     upsertRecord,
+     findMatchingRecords,
+     getAllRecords,
++    getRecordById,
++    setManualRawScore,
++    clearManualOverride,
++    createOverrideRecord,
++    getOverridesForUser,
+     updateQuestions,
+     getTotalResults,
+     getLatestUpdatedAt,
+diff --git a/backend/src/services/sat.service.js b/backend/src/services/sat.service.js
+index 36dd896..2c75f29 100644
+--- a/backend/src/services/sat.service.js
++++ b/backend/src/services/sat.service.js
+@@ -64,6 +64,12 @@ function deriveTestSection(testName, groupName, questions) {
+ // (ClassMarker's points_scored = raw correct for DSAT, where every question
+ // is worth 1 point).
+ function rawCorrect(record) {
++  // An admin-edited raw score is authoritative — it must win even when
++  // per-question detail exists, otherwise the question count would silently
++  // reinstate the imported score.
++  if (record.manualOverride || record.manual_override === 1) {
++    return Number(record.score) || 0;
++  }
+   const questions = record.questions || [];
+   return questions.length > 0
+     ? questions.filter((q) => q.correct).length
+@@ -420,9 +426,13 @@ async function getExamScoreboard(examId) {
+   const enrolled = exam.programId ? getProgramRoster(exam.programId) : null;
+   const excluded = (uid) => hidden.has(uid) || (enrolled !== null && !enrolled.has(uid));
+   const sectionOfTest = new Map(); // testId → 1|2|3|4
++  const nameOfTest = new Map(); // testId → test name (edit-modal labels)
+   for (const key of ['1', '2', '3', '4']) {
+     const s = exam.sections?.[key];
+-    if (s?.testId != null) sectionOfTest.set(String(s.testId), Number(key));
++    if (s?.testId != null) {
++      sectionOfTest.set(String(s.testId), Number(key));
++      if (s.testName) nameOfTest.set(String(s.testId), s.testName);
++    }
+   }
+ 
+   const perStudent = new Map();
+@@ -440,7 +450,18 @@ async function getExamScoreboard(examId) {
+       const entry = entryFor(uid, r.student?.name || r.name || `User ${uid}`);
+       const prev = entry.tests.get(tid);
+       if (!prev || (r.timeFinished || 0) > prev.timeFinished) {
+-        entry.tests.set(tid, { correct: rawCorrect(r), timeFinished: r.timeFinished || 0, webhook: true });
++        entry.tests.set(tid, {
++          correct: rawCorrect(r),
++          timeFinished: r.timeFinished || 0,
++          webhook: true,
++          // Edit-control metadata for the admin UI
++          recordId: r.id,
++          maxScore: r.maxScore ?? ((r.questions || []).length || null),
++          manualOverride: Boolean(r.manualOverride),
++          originalRaw: r.originalRaw ?? null,
++          overrideReason: r.overrideReason ?? null,
++          overrideAt: r.overrideAt ?? null,
++        });
+       }
+     }
+     try {
+@@ -450,7 +471,17 @@ async function getExamScoreboard(examId) {
+         const prev = entry.tests.get(a.testId);
+         if (prev?.webhook) continue;
+         if (!prev || a.timeFinished > prev.timeFinished) {
+-          entry.tests.set(a.testId, { correct: a.correct, timeFinished: a.timeFinished, webhook: false });
++          entry.tests.set(a.testId, {
++            correct: a.correct,
++            timeFinished: a.timeFinished,
++            webhook: false,
++            recordId: null, // API-cache only — editing materializes an override record
++            maxScore: a.maxScore ?? null,
++            manualOverride: false,
++            originalRaw: null,
++            overrideReason: null,
++            overrideAt: null,
++          });
+         }
+       }
+     } catch (e) {
+@@ -480,6 +511,15 @@ const isMath = section > 2;
+     const rwScaled = rwRaw != null && rwCurve ? gradeScaled(rwCurve, rwRaw) : null;
+     const mathScaled = mathRaw != null && mathCurve ? gradeScaled(mathCurve, mathRaw) : null;
+     const total = rwScaled != null && mathScaled != null ? rwScaled + mathScaled : null;
++    // Per-attempt detail feeds the admin edit modal: which record each raw
++    // point came from, whether it's editable in place (webhook-backed) or
++    // needs a materialized override (API-cache only), and any existing edit.
++    const tests = Array.from(entry.tests.entries()).map(([tid, attempt]) => ({
++      testId: tid,
++      testName: nameOfTest.get(tid) || `Test #${tid}`,
++      section: sectionOfTest.get(tid),
++      ...attempt,
++    })).sort((a, b) => (a.section || 0) - (b.section || 0));
+     return {
+       studentId: uid,
+       name: entry.name,
+@@ -490,6 +530,8 @@ const isMath = section > 2;
+       total,
+       testsCompleted: entry.tests.size,
+       date: latestFinished ? new Date(latestFinished * 1000).toISOString().split('T')[0] : null,
++      tests,
++      hasOverride: tests.some((t) => t.manualOverride),
+     };
+   })
+     // Allow students to show up on the scoreboard as long as they finished at least 1 test
+diff --git a/frontend/src/features/report/api/reportApi.js b/frontend/src/features/report/api/reportApi.js
+index 70506f4..573450d 100644
+--- a/frontend/src/features/report/api/reportApi.js
++++ b/frontend/src/features/report/api/reportApi.js
+@@ -155,6 +155,25 @@ export async function fetchExamScoreboard(examId) {
+   return response.data.data;
+ }
+ 
++// ── Manual raw-score edits ─────────────────────────────────────
++// Raw scores only — scaled 1600 values always regenerate from the curve.
++
++export async function updateRawScore(recordId, { score, reason }) {
++  const response = await apiClient.patch(`/exams/results/${encodeURIComponent(recordId)}`, { score, reason });
++  return response.data.data;
++}
++
++export async function revertRawScore(recordId) {
++  const response = await apiClient.delete(`/exams/results/${encodeURIComponent(recordId)}/override`);
++  return response.data.data;
++}
++
++// For attempts that only exist in the ClassMarker API cache (no webhook record).
++export async function createRawScoreOverride({ studentId, testId, score, reason }) {
++  const response = await apiClient.post('/exams/results/override', { studentId, testId, score, reason });
++  return response.data.data;
++}
++
+ // ── SAT programs ───────────────────────────────────────────────
+ // A program groups exams into a cohort and owns the student roster for every
+ // exam inside it. Enrolling a student makes all the program's exams appear in
+diff --git a/frontend/src/features/report/components/ScoreboardPanel.jsx b/frontend/src/features/report/components/ScoreboardPanel.jsx
+index 999990a..ef20e71 100644
+--- a/frontend/src/features/report/components/ScoreboardPanel.jsx
++++ b/frontend/src/features/report/components/ScoreboardPanel.jsx
+@@ -1,12 +1,151 @@
+ // features/report/components/ScoreboardPanel.jsx
+-// Ranked results for one exam — name, RW, Math, Total, newest attempt date.
+-// Extracted from ExamManager so the per-exam row can stay small.
++// Ranked results for one exam — name, RW, Math, Total, newest attempt date —
++// plus admin editing of RAW scores. Scaled scores are never edited directly:
++// they regenerate from the curve after every raw edit. Overridden scores show
++// a ✎ badge; hover reveals the imported original and the edit reason.
+ import React, { useEffect, useState } from 'react';
+-import { fetchExamScoreboard } from '../api/reportApi.js';
++import {
++  fetchExamScoreboard,
++  updateRawScore,
++  revertRawScore,
++  createRawScoreOverride,
++} from '../api/reportApi.js';
+ import s from './examManagerStyles.js';
+ 
++const SECTION_LABEL = { 1: 'RW', 2: 'RW (2)', 3: 'Math', 4: 'Math (2)' };
++
++function overrideTitle(tests, isMath) {
++  const edited = (tests || []).filter(
++    (t) => t.manualOverride && (isMath ? t.section > 2 : t.section <= 2)
++  );
++  if (!edited.length) return null;
++  return edited
++    .map((t) => `Manually edited — original: ${t.originalRaw ?? '—'}${t.overrideReason ? ` (${t.overrideReason})` : ''}`)
++    .join('\n');
++}
++
++function EditModal({ row, onClose, onSaved, onError }) {
++  const [drafts, setDrafts] = useState(() =>
++    Object.fromEntries((row.tests || []).map((t) => [t.testId, String(t.correct ?? '')]))
++  );
++  const [reason, setReason] = useState('');
++  const [busy, setBusy] = useState(false);
++
++  const changed = (row.tests || []).filter(
++    (t) => drafts[t.testId] !== '' && Number(drafts[t.testId]) !== Number(t.correct)
++  );
++
++  const save = async () => {
++    if (!changed.length) return onClose();
++    if (!reason.trim()) return onError?.('A reason is required for every manual score edit.');
++    for (const t of changed) {
++      const n = Number(drafts[t.testId]);
++      if (!Number.isInteger(n) || n < 0 || (t.maxScore != null && n > t.maxScore)) {
++        return onError?.(`${t.testName}: score must be a whole number between 0 and ${t.maxScore ?? '?'}.`);
++      }
++    }
++    setBusy(true);
++    try {
++      for (const t of changed) {
++        const payload = { score: Number(drafts[t.testId]), reason: reason.trim() };
++        if (t.recordId != null) await updateRawScore(t.recordId, payload);
++        else await createRawScoreOverride({ studentId: row.studentId, testId: t.testId, ...payload });
++      }
++      await onSaved();
++    } catch (err) {
++      onError?.(err.message || 'Failed to save score edit');
++    } finally {
++      setBusy(false);
++    }
++  };
++
++  const revert = async (t) => {
++    if (t.recordId == null) return;
++    setBusy(true);
++    try {
++      await revertRawScore(t.recordId);
++      await onSaved();
++    } catch (err) {
++      onError?.(err.message || 'Failed to revert score');
++    } finally {
++      setBusy(false);
++    }
++  };
++
++  const overlay = {
++    position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', zIndex: 60,
++    display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16,
++  };
++  const card = {
++    background: '#fff', borderRadius: 12, padding: '18px 20px', width: 'min(440px, 100%)',
++    boxShadow: '0 12px 40px rgba(15,23,42,0.25)',
++  };
++  const label = { fontSize: '0.66rem', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--muted)' };
++  const input = { width: 72, padding: '6px 8px', border: '1px solid var(--border)', borderRadius: 6, fontSize: '0.85rem', textAlign: 'right' };
++
++  return (
++    <div style={overlay} onClick={onClose}>
++      <div style={card} onClick={(e) => e.stopPropagation()}>
++        <div style={{ fontWeight: 700, fontSize: '0.95rem', marginBottom: 2 }}>Edit raw scores</div>
++        <div style={{ fontSize: '0.78rem', color: 'var(--muted)', marginBottom: 12 }}>
++          {row.name} — scaled scores recalculate from the curve automatically.
++        </div>
++
++        {(row.tests || []).map((t) => (
++          <div key={t.testId} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '7px 0', borderTop: '1px solid var(--border)' }}>
++            <div style={{ flex: 1, minWidth: 0 }}>
++              <div style={{ fontSize: '0.8rem', fontWeight: 600 }}>
++                {SECTION_LABEL[t.section] || `Section ${t.section}`}
++                <span style={{ fontWeight: 400, color: 'var(--muted)' }}> · {t.testName}</span>
++              </div>
++              <div style={{ fontSize: '0.7rem', color: 'var(--muted)' }}>
++                {t.manualOverride
++                  ? <>edited — imported value: {t.originalRaw ?? '—'}{' '}
++                      <button type="button" disabled={busy} onClick={() => revert(t)}
++                        style={{ border: 'none', background: 'none', color: 'var(--accent)', cursor: 'pointer', fontSize: '0.7rem', padding: 0, textDecoration: 'underline' }}>
++                        revert
++                      </button>
++                    </>
++                  : `imported${t.recordId == null ? ' (API only)' : ''}`}
++                {t.maxScore != null ? ` · max ${t.maxScore}` : ''}
++              </div>
++            </div>
++            <input
++              type="number" min={0} max={t.maxScore ?? undefined} style={input} disabled={busy}
++              value={drafts[t.testId]}
++              onChange={(e) => setDrafts((d) => ({ ...d, [t.testId]: e.target.value }))}
++            />
++          </div>
++        ))}
++
++        <div style={{ marginTop: 12 }}>
++          <div style={label}>Reason (required)</div>
++          <textarea
++            rows={2} disabled={busy} value={reason}
++            onChange={(e) => setReason(e.target.value)}
++            placeholder="e.g. Question 12 mis-keyed on ClassMarker; regraded by hand"
++            style={{ width: '100%', marginTop: 4, padding: '7px 9px', border: '1px solid var(--border)', borderRadius: 6, fontSize: '0.8rem', resize: 'vertical', boxSizing: 'border-box' }}
++          />
++        </div>
++
++        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 14 }}>
++          <button type="button" style={s.btnGhost} disabled={busy} onClick={onClose}>Cancel</button>
++          <button type="button" style={{ ...s.btn, opacity: busy || !changed.length ? 0.6 : 1 }} disabled={busy || !changed.length} onClick={save}>
++            {busy ? 'Saving…' : 'Save edits'}
++          </button>
++        </div>
++      </div>
++    </div>
++  );
++}
++
+ export default function ScoreboardPanel({ exam, onError }) {
+   const [board, setBoard] = useState(null); // null = loading
++  const [editing, setEditing] = useState(null); // scoreboard row being edited
++
++  const load = React.useCallback(() => fetchExamScoreboard(exam.examId)
++    .then(setBoard)
++    .catch((err) => { setBoard({ rows: [] }); onError?.(err.message || 'Failed to load scoreboard'); }), [exam.examId, onError]);
+ 
+   useEffect(() => {
+     let cancelled = false;
+@@ -21,6 +160,17 @@ export default function ScoreboardPanel({ exam, onError }) {
+   const header = { ...cell, fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--muted)', textAlign: 'left', background: '#f1f5ff' };
+   const medal = (rank) => (rank === 1 ? '🥇' : rank === 2 ? '🥈' : rank === 3 ? '🥉' : `${rank}`);
+   const fmt = (scaled, raw) => (scaled != null ? scaled : raw != null ? `${raw} raw` : '—');
++  const badge = { color: 'var(--accent)', fontSize: '0.7rem', marginLeft: 3, cursor: 'help' };
++
++  const scoreCell = (row, isMath) => {
++    const title = overrideTitle(row.tests, isMath);
++    return (
++      <span title={title || undefined}>
++        {fmt(isMath ? row.mathScaled : row.rwScaled, isMath ? row.mathRaw : row.rwRaw)}
++        {title && <span style={badge}>✎</span>}
++      </span>
++    );
++  };
+ 
+   return (
+     <div style={s.hiddenPanel}>
+@@ -47,6 +197,7 @@ export default function ScoreboardPanel({ exam, onError }) {
+                 <th style={{ ...header, textAlign: 'right' }}>Math</th>
+                 <th style={{ ...header, textAlign: 'right' }}>Total</th>
+                 <th style={{ ...header, textAlign: 'right' }}>Date</th>
++                <th style={{ ...header, width: 36 }} aria-label="Edit" />
+               </tr>
+             </thead>
+             <tbody>
+@@ -54,18 +205,36 @@ export default function ScoreboardPanel({ exam, onError }) {
+                 <tr key={row.studentId} style={{ borderTop: '1px solid var(--border)', background: i % 2 ? '#fafbff' : '#fff' }}>
+                   <td style={{ ...cell, color: 'var(--muted)' }}>{medal(i + 1)}</td>
+                   <td style={{ ...cell, fontWeight: 500 }}>{row.name}</td>
+-                  <td style={num}>{fmt(row.rwScaled, row.rwRaw)}</td>
+-                  <td style={num}>{fmt(row.mathScaled, row.mathRaw)}</td>
++                  <td style={num}>{scoreCell(row, false)}</td>
++                  <td style={num}>{scoreCell(row, true)}</td>
+                   <td style={{ ...num, fontWeight: 700, color: row.total != null ? 'var(--accent)' : 'var(--muted)' }}>
+                     {row.total ?? '—'}
+                   </td>
+                   <td style={{ ...num, color: 'var(--muted)', fontSize: '0.72rem' }}>{row.date || '—'}</td>
++                  <td style={{ ...cell, textAlign: 'center' }}>
++                    <button
++                      type="button"
++                      title="Edit raw score"
++                      onClick={() => setEditing(row)}
++                      style={{ border: 'none', background: 'none', cursor: 'pointer', color: 'var(--muted)', fontSize: '0.85rem', padding: 2 }}
++                    >
++                      ✎
++                    </button>
++                  </td>
+                 </tr>
+               ))}
+             </tbody>
+           </table>
+         </div>
+       )}
++      {editing && (
++        <EditModal
++          row={editing}
++          onClose={() => setEditing(null)}
++          onError={onError}
++          onSaved={async () => { setEditing(null); await load(); }}
++        />
++      )}
+     </div>
+   );
+ }

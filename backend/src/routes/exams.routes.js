@@ -146,6 +146,128 @@ router.get('/available-tests', async (req, res, next) => {
   }
 });
 
+// ── Manual raw-score overrides ──────────────────────────────────────────────
+// Raw scores only — the scaled 1600 value is never stored and never editable:
+// it regenerates from the curve on every read, so returning the refreshed
+// scoreboard row IS the re-run of the conversion.
+
+const { findCachedAttempt } = require('../services/classmarker.service');
+
+function validateOverrideInput({ score, reason, maxScore }) {
+  const trimmedReason = String(reason ?? '').trim();
+  if (!trimmedReason) return { error: 'A reason is required for every manual score edit.' };
+  const n = Number(score);
+  if (!Number.isInteger(n) || n < 0) {
+    return { error: 'Score must be a non-negative whole number.' };
+  }
+  if (maxScore != null && n > Number(maxScore)) {
+    return { error: `Score must be between 0 and ${maxScore} for this test.` };
+  }
+  if (maxScore == null) {
+    return { error: 'Cannot determine the valid score range for this test (no max score on record).' };
+  }
+  return { score: n, reason: trimmedReason };
+}
+
+// Refreshed scoreboard rows for every exam this test belongs to — the caller
+// gets the regenerated scaled/1600 values without a second round trip.
+async function refreshedScoring(testId, studentId) {
+  const out = [];
+  const infos = exams.getTestExamsMap().get(String(testId)) || [];
+  for (const { examId } of infos) {
+    try {
+      const board = await getExamScoreboard(examId);
+      const row = board?.rows?.find((r) => String(r.studentId) === String(studentId)) || null;
+      out.push({ examId, examName: board?.name || null, row });
+    } catch (e) {
+      console.warn('[exams] Could not refresh scoring for exam', examId, e.message);
+    }
+  }
+  return out;
+}
+
+// PATCH /api/exams/results/:recordId — edit the raw score of a stored record.
+// Body: { score, reason }. The override survives ClassMarker re-imports.
+router.patch('/results/:recordId', async (req, res, next) => {
+  try {
+    const record = await db.getRecordById(req.params.recordId);
+    if (!record) return res.status(404).json({ success: false, error: 'Result record not found' });
+
+    const maxScore = record.maxScore ?? ((record.questions || []).length || null);
+    const v = validateOverrideInput({ ...req.body, maxScore });
+    if (v.error) return res.status(400).json({ success: false, error: v.error });
+
+    const updated = await db.setManualRawScore(record.id, v);
+    const scoring = await refreshedScoring(updated.test_id, updated.user_id);
+    res.json({ success: true, data: { record: updated, scoring } });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// DELETE /api/exams/results/:recordId/override — revert to the imported score.
+router.delete('/results/:recordId/override', async (req, res, next) => {
+  try {
+    const record = await db.getRecordById(req.params.recordId);
+    if (!record) return res.status(404).json({ success: false, error: 'Result record not found' });
+    if (!record.manualOverride) {
+      return res.status(400).json({ success: false, error: 'This record has no manual override to revert.' });
+    }
+    const updated = await db.clearManualOverride(record.id);
+    const scoring = await refreshedScoring(updated.test_id, updated.user_id);
+    res.json({ success: true, data: { record: updated, scoring } });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/exams/results/override — edit an attempt that only exists in the
+// ClassMarker API cache (no webhook record). Materializes an override record
+// under the record_key a webhook would use, so a late webhook re-send lands
+// on the same row and the guard protects the edit. Body: { studentId, testId,
+// score, reason }.
+router.post('/results/override', async (req, res, next) => {
+  try {
+    const { studentId, testId } = req.body || {};
+    if (!studentId || !testId) {
+      return res.status(400).json({ success: false, error: 'studentId and testId are required.' });
+    }
+    const cached = await findCachedAttempt(studentId, testId);
+    if (!cached) {
+      return res.status(404).json({ success: false, error: 'No ClassMarker attempt found for that student and test.' });
+    }
+    const { row, groupName, testName } = cached;
+    const maxScore = row.points_available != null ? Number(row.points_available) : null;
+    const v = validateOverrideInput({ ...req.body, maxScore });
+    if (v.error) return res.status(400).json({ success: false, error: v.error });
+
+    const name = `${row.first || ''} ${row.last || ''}`.trim() || row.email || null;
+    const record = {
+      // Same key shape as webhook.service.buildRecordKey (group payloads).
+      key: `group:${row.user_id}:${row.test_id}:${row.group_id}:${row.time_started ?? 'unknown'}`,
+      student: {
+        userId: String(row.user_id),
+        email: row.email || null,
+        name,
+        normalizedName: String(name || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, ''),
+        normalizedEmail: String(row.email || '').trim().toLowerCase(),
+      },
+      test: { testId: String(row.test_id), testName },
+      group: { groupId: String(row.group_id), groupName },
+      duration: row.duration || null,
+      timeStarted: row.time_started ?? null,
+      timeFinished: row.time_finished ?? null,
+      maxScore,
+      importedRaw: row.points_scored != null ? Number(row.points_scored) : null,
+    };
+    const created = await db.createOverrideRecord(record, v);
+    const scoring = await refreshedScoring(created.test_id, created.user_id);
+    res.json({ success: true, data: { record: created, scoring } });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // GET /api/exams/:examId/takers
 // Every student with at least one attempt on any of the exam's tests
 // (webhook store + API cache), as { id, name } pairs. Feeds the per-exam
