@@ -155,25 +155,6 @@ export async function fetchExamScoreboard(examId) {
   return response.data.data;
 }
 
-// ── Manual raw-score edits ─────────────────────────────────────
-// Raw scores only — scaled 1600 values always regenerate from the curve.
-
-export async function updateRawScore(recordId, { score, reason }) {
-  const response = await apiClient.patch(`/exams/results/${encodeURIComponent(recordId)}`, { score, reason });
-  return response.data.data;
-}
-
-export async function revertRawScore(recordId) {
-  const response = await apiClient.delete(`/exams/results/${encodeURIComponent(recordId)}/override`);
-  return response.data.data;
-}
-
-// For attempts that only exist in the ClassMarker API cache (no webhook record).
-export async function createRawScoreOverride({ studentId, testId, score, reason }) {
-  const response = await apiClient.post('/exams/results/override', { studentId, testId, score, reason });
-  return response.data.data;
-}
-
 // ── SAT programs ───────────────────────────────────────────────
 // A program groups exams into a cohort and owns the student roster for every
 // exam inside it. Enrolling a student makes all the program's exams appear in

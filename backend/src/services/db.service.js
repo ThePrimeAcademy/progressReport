@@ -89,24 +89,9 @@ async function getDb() {
       questions        TEXT,
       category_results TEXT,
       raw              TEXT,
-      received_at      TEXT,
-      manual_override  INTEGER DEFAULT 0,
-      original_raw     REAL,
-      override_reason  TEXT,
-      override_at      TEXT
+      received_at      TEXT
     )
   `);
-
-    // Migrate pre-existing databases created before manual raw-score edits:
-    // same harmless-ALTER pattern as scheduled_batches below.
-    for (const stmt of [
-        'ALTER TABLE webhook_results ADD COLUMN manual_override INTEGER DEFAULT 0',
-        'ALTER TABLE webhook_results ADD COLUMN original_raw REAL',
-        'ALTER TABLE webhook_results ADD COLUMN override_reason TEXT',
-        'ALTER TABLE webhook_results ADD COLUMN override_at TEXT',
-    ]) {
-        try { _db.run(stmt); } catch (_) { /* column already exists */ }
-    }
 
     _db.run(`
     CREATE TABLE IF NOT EXISTS student_contacts (
@@ -283,16 +268,8 @@ async function upsertRecord(record) {
       questions, category_results, raw, received_at
     ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     ON CONFLICT(record_key) DO UPDATE SET
-      percentage       = CASE
-        WHEN webhook_results.manual_override = 1
-        THEN webhook_results.percentage
-        ELSE excluded.percentage
-      END,
-      score            = CASE
-        WHEN webhook_results.manual_override = 1
-        THEN webhook_results.score
-        ELSE excluded.score
-      END,
+      percentage       = excluded.percentage,
+      score            = excluded.score,
       max_score        = excluded.max_score,
       passed           = excluded.passed,
       duration         = excluded.duration,
@@ -380,11 +357,6 @@ function parseRow(row) {
     return {
         ...row,
         passed: row.passed === 1,
-        manualOverride: row.manual_override === 1,
-        originalRaw: row.original_raw ?? null,
-        overrideReason: row.override_reason ?? null,
-        overrideAt: row.override_at ?? null,
-        maxScore: row.max_score ?? null,
         questions: JSON.parse(row.questions || '[]'),
         categoryResults: JSON.parse(row.category_results || '[]'),
         raw: JSON.parse(row.raw || '{}'),
@@ -412,133 +384,6 @@ async function getAllRecords() {
         cols.forEach((c, i) => { obj[c] = row[i]; });
         return parseRow(obj);
     });
-}
-
-// ── Manual raw-score overrides ─────────────────────────────────────────────
-// An admin can correct a raw score after import. The override survives
-// re-imports via the CASE guard in upsertRecord; the original ClassMarker
-// value is preserved in original_raw on the FIRST edit only, so repeated
-// edits never lose the imported value.
-
-async function getRecordById(id) {
-    const db = await getDb();
-    const rows = rowsToObjects(db.exec('SELECT * FROM webhook_results WHERE id = ?', [Number(id)]));
-    return rows.length ? parseRow(rows[0]) : null;
-}
-
-async function setManualRawScore(id, { score, reason }) {
-    const db = await getDb();
-    const existing = await getRecordById(id);
-    if (!existing) return null;
-    // SET expressions see the pre-update row, so COALESCE(original_raw, score)
-    // captures the imported value exactly once. Percentage is a restatement of
-    // score/max_score — recompute it so the row stays internally consistent.
-    db.run(
-        `UPDATE webhook_results SET
-           original_raw    = COALESCE(original_raw, score),
-           score           = ?,
-           percentage      = CASE WHEN max_score > 0 THEN ROUND(? * 100.0 / max_score, 1) ELSE percentage END,
-           manual_override = 1,
-           override_reason = ?,
-           override_at     = ?
-         WHERE id = ?`,
-        [Number(score), Number(score), String(reason || '').trim(), new Date().toISOString(), Number(id)]
-    );
-    flushNow(); // durability: an audit-relevant edit must survive an immediate crash
-    return getRecordById(id);
-}
-
-// Revert to the imported value. original_raw is kept as-is only while an
-// override is active; on revert the row returns to normal import behaviour.
-async function clearManualOverride(id) {
-    const db = await getDb();
-    const existing = await getRecordById(id);
-    if (!existing) return null;
-    db.run(
-        `UPDATE webhook_results SET
-           score           = COALESCE(original_raw, score),
-           percentage      = CASE
-             WHEN max_score > 0 THEN ROUND(COALESCE(original_raw, score) * 100.0 / max_score, 1)
-             ELSE percentage
-           END,
-           manual_override = 0,
-           original_raw    = NULL,
-           override_reason = NULL,
-           override_at     = NULL
-         WHERE id = ?`,
-        [Number(id)]
-    );
-    flushNow();
-    return getRecordById(id);
-}
-
-// Materialize an override for an attempt that exists ONLY in the ClassMarker
-// API cache (no webhook ever fired). Uses the SAME record_key format the
-// webhook would use, so if the webhook is ever re-sent it lands on this row
-// via ON CONFLICT and the override guard protects the edited score.
-async function createOverrideRecord(record, { score, reason }) {
-    const db = await getDb();
-    const existing = rowsToObjects(db.exec(
-        'SELECT id FROM webhook_results WHERE record_key = ?', [record.key]
-    ));
-    if (existing.length) {
-        // A record appeared in the meantime (late webhook) — edit it instead.
-        return setManualRawScore(existing[0].id, { score, reason });
-    }
-    db.run(
-        `INSERT INTO webhook_results (
-           record_key, user_id, email, name, normalized_name, normalized_email,
-           test_id, test_name, group_id, group_name,
-           percentage, score, max_score, passed, duration,
-           time_started, time_finished, date,
-           questions, category_results, raw, received_at,
-           manual_override, original_raw, override_reason, override_at
-         ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,?,?)`,
-        [
-            record.key,
-            record.student?.userId ?? null,
-            record.student?.email ?? null,
-            record.student?.name ?? null,
-            record.student?.normalizedName ?? null,
-            record.student?.normalizedEmail ?? null,
-            record.test?.testId ?? null,
-            record.test?.testName ?? null,
-            record.group?.groupId ?? null,
-            record.group?.groupName ?? null,
-            record.maxScore > 0 ? Math.round((Number(score) / record.maxScore) * 1000) / 10 : null,
-            Number(score),
-            record.maxScore ?? null,
-            null,
-            record.duration ?? null,
-            record.timeStarted ?? null,
-            record.timeFinished ?? null,
-            record.timeFinished ? new Date(record.timeFinished * 1000).toISOString().split('T')[0] : null,
-            JSON.stringify([]),
-            JSON.stringify([]),
-            JSON.stringify({ source: 'manual-override', importedRaw: record.importedRaw ?? null }),
-            new Date().toISOString(),
-            record.importedRaw ?? null, // original_raw = what ClassMarker's API reported
-            String(reason || '').trim(),
-            new Date().toISOString(),
-        ]
-    );
-    flushNow();
-    const rows = rowsToObjects(db.exec(
-        'SELECT * FROM webhook_results WHERE record_key = ?', [record.key]
-    ));
-    return rows.length ? parseRow(rows[0]) : null;
-}
-
-// Overridden attempts for one student, for overlaying display paths that read
-// the ClassMarker API cache (weekly results table). Keyed by test + finish
-// time — the same identity the cache rows carry.
-async function getOverridesForUser(userId) {
-    const db = await getDb();
-    const rows = rowsToObjects(db.exec(
-        'SELECT * FROM webhook_results WHERE manual_override = 1 AND user_id = ?',
-        [String(userId)]
-    ));
-    return rows.map(parseRow);
 }
 
 async function updateQuestions(id, questions) {
@@ -846,11 +691,6 @@ module.exports = {
     upsertRecord,
     findMatchingRecords,
     getAllRecords,
-    getRecordById,
-    setManualRawScore,
-    clearManualOverride,
-    createOverrideRecord,
-    getOverridesForUser,
     updateQuestions,
     getTotalResults,
     getLatestUpdatedAt,
