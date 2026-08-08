@@ -265,7 +265,7 @@ function buildSatHistorySection(allScores) {
     const taken = s.total != null;
     const accent = taken ? '#1a56db' : '#6b7280';
     return `
-      <div style="flex:1 1 0;min-width:0;background:#fafbff;border:1px solid var(--border);border-radius:10px;padding:10px 12px;">
+      <div style="min-width:0;background:#fafbff;border:1px solid var(--border);border-radius:10px;padding:10px 12px;">
         <div style="font-size:0.7rem;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:0.07em;margin-bottom:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
           ${escapeHtml(s.groupName || 'SAT')}
         </div>
@@ -276,8 +276,10 @@ function buildSatHistorySection(allScores) {
         ${s.date ? `<div style="font-size:0.66rem;color:var(--muted);margin-top:2px;white-space:nowrap;">${escapeHtml(s.date)}</div>` : ''}
       </div>`;
   }).join('');
-  // Single row — cards shrink to fit however many exams there are.
-  return `<div style="display:flex;gap:8px;flex-wrap:nowrap;margin:0 0 12px;">${cards}</div>`;
+  // Grid so many exams wrap into extra rows instead of shrinking cards until
+  // their nowrap score text clips; 100px min keeps "RW 700 · M 720" intact.
+  // break-inside keeps the strip on one page if content above it grows.
+  return `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(100px,1fr));gap:8px;margin:0 0 12px;break-inside:avoid;">${cards}</div>`;
 }
 
 // ── Homework completion ───────────────────────────────────────

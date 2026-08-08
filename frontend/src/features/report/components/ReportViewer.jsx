@@ -81,8 +81,9 @@ function SatScoreHistory({ allScores }) {
   if (!allScores || allScores.length === 0) return null;
 
   return (
-    // Single row — cards shrink to fit however many exams there are.
-    <div style={{ display: 'flex', gap: 8, flexWrap: 'nowrap', marginBottom: 24 }}>
+    // Grid so many exams wrap into extra rows instead of shrinking cards
+    // until their score text clips; 100px min matches the PDF template.
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(100px, 1fr))', gap: 8, marginBottom: 24 }}>
       {allScores.map((s) => {
         // No total → the student didn't complete the test: show it as "Not taken".
         const taken = s.total != null;
@@ -91,7 +92,6 @@ function SatScoreHistory({ allScores }) {
           <div
             key={s.groupId}
             style={{
-              flex: '1 1 0',
               minWidth: 0,
               background: '#fafbff',
               border: '1.5px solid var(--border)',
