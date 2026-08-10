@@ -20,8 +20,13 @@ const LEGACY_CACHE_FILE = path.join(__dirname, '../../cache.json');
 const CACHE_TTL = 55 * 60 * 1000;
 const FETCH_FAILURE_BACKOFF_MS = 10 * 60 * 1000;
 const WINDOW_DAYS = 85;
-const INCREMENTAL_OVERLAP_SECONDS = 24 * 3600; 
-const PAGE_CAP = 30;
+const INCREMENTAL_OVERLAP_SECONDS = 24 * 3600;
+// Max result pages fetched per refresh run, out of ClassMarker's 30 req/hour —
+// the rest is headroom for the category fetch and manual probes. A run that
+// exhausts the budget is NOT done: the persisted cursors resume the walk on
+// the next refresh, so a full 85-day backfill completes over several hourly
+// windows instead of silently dropping whatever lies past one run's reach.
+const PER_RUN_PAGE_BUDGET = 25;
 
 function loadCache() {
   // Any age is acceptable — stale data beats no data, and the incremental
@@ -125,9 +130,9 @@ function authParams() {
   return `api_key=${API_KEY}&signature=${signature}&timestamp=${timestamp}`;
 }
 
-async function fetchResultsPage(finishedAfterTimestamp) {
+async function fetchResultsPage(finishedAfterTimestamp, kind = 'groups') {
   const res = await fetch(
-    `${BASE_URL}/groups/recent_results.json?${authParams()}&finishedAfterTimestamp=${finishedAfterTimestamp}&limit=200`
+    `${BASE_URL}/${kind}/recent_results.json?${authParams()}&finishedAfterTimestamp=${finishedAfterTimestamp}&limit=200`
   );
   if (!res.ok) throw new Error(`ClassMarker HTTP error: ${res.status}`);
   const data = await res.json();
@@ -135,44 +140,18 @@ async function fetchResultsPage(finishedAfterTimestamp) {
   return data;
 }
 
-const resultKey = (r) =>
-  r.pk_id != null ? `pk:${r.pk_id}` : `${r.user_id}:${r.test_id}:${r.time_finished}`;
+const isRateLimitError = (e) => /rate limit/i.test(e?.message || '');
 
-// Paginate from `fromTimestamp` forward, upserting into the provided
-// containers. Returns the number of pages fetched.
-async function paginateResults(fromTimestamp, byKey, groupMap, testMap) {
-  let currentTimestamp = fromTimestamp;
-  let page = 0;
-  while (true) {
-    page++;
-    console.log(`Fetching page ${page}…`);
-    const data = await fetchResultsPage(currentTimestamp);
-    if (data.status === 'no_results' || !data.results) break;
+const resultKey = (r) => {
+  if (r.pk_id != null) return `pk:${r.pk_id}`;
+  if (r.link_result_id != null) return `lnk:${r.link_result_id}`;
+  return `${r.user_id}:${r.test_id}:${r.time_finished}`;
+};
 
-    for (const g of (data.groups || [])) {
-      const grp = g.group || g;
-      if (grp.group_id) groupMap[String(grp.group_id)] = grp.group_name;
-    }
-    for (const t of (data.tests || [])) {
-      const tst = t.test || t;
-      if (tst.test_id) testMap[String(tst.test_id)] = tst.test_name;
-    }
-    for (const raw of data.results) {
-      const r = raw.result || raw;
-      byKey.set(resultKey(r), r);
-    }
-
-    if (!data.more_results_exist || !data.next_finished_after_timestamp) break;
-    // Safety cap only — pagination walks forward in time, so stopping early
-    // would silently drop the NEWEST results.
-    if (page >= PAGE_CAP) {
-      console.warn(`[classmarker] Page cap hit at ${page} pages — newest results may be missing`);
-      break;
-    }
-    currentTimestamp = data.next_finished_after_timestamp;
-  }
-  return page;
-}
+// Identity a webhook-merged row shares with its API twin (webhook rows have no
+// pk_id, so resultKey alone would let the same attempt into the cache twice).
+const attemptKey = (r) =>
+  r.user_id != null && r.test_id != null ? `${r.user_id}:${r.test_id}:${r.time_finished}` : null;
 
 let inflightFetch = null;
 
@@ -185,37 +164,145 @@ async function fetchAllResults() {
   if (inflightFetch) return inflightFetch;
 
   inflightFetch = (async () => {
-    const windowStart = Math.floor(Date.now() / 1000) - WINDOW_DAYS * 24 * 3600;
-    try {
-      const byKey = new Map();
-      const groupMap = { ...(memCache?.groupMap || {}) };
-      const testMap = { ...(memCache?.testMap || {}) };
-      let from = windowStart;
+    const nowSec = () => Math.floor(Date.now() / 1000);
+    const windowStart = nowSec() - WINDOW_DAYS * 24 * 3600;
+    const cache = memCache || { results: [], groupMap: {}, testMap: {}, cacheTime: 0 };
 
-      if (memCache) {
-        // Incremental: only pull results newer than the cache (small overlap
-        // for clock skew / late arrivals). Usually a single request.
-        for (const r of memCache.results) byKey.set(resultKey(r), r);
-        const newest = memCache.results.reduce((m, r) => Math.max(m, r.time_finished || 0), 0);
-        if (newest > 0) from = Math.max(newest - INCREMENTAL_OVERLAP_SECONDS, windowStart);
+    // Index existing rows by API key AND by attempt identity, so an API row
+    // replaces its earlier webhook-merged twin instead of duplicating it.
+    const byKey = new Map();
+    const byAttempt = new Map(); // attemptKey → resultKey currently holding it
+    const addRow = (r) => {
+      const a = attemptKey(r);
+      if (a != null && byAttempt.has(a)) {
+        const prev = byKey.get(byAttempt.get(a));
+        // API rows carry no per-question or category detail — keep the
+        // webhook-merged twin's when it replaces one, or category-driven
+        // consumers (weekly performance, latest test) would lose data.
+        if (prev) {
+          if (r.category_results == null && prev.category_results != null) r.category_results = prev.category_results;
+          if (r.questions == null && prev.questions != null) r.questions = prev.questions;
+        }
+        byKey.delete(byAttempt.get(a));
       }
+      byKey.set(resultKey(r), r);
+      if (a != null) byAttempt.set(a, resultKey(r));
+    };
+    for (const r of cache.results) addRow(r);
 
-      const pages = await paginateResults(from, byKey, groupMap, testMap);
-      const results = Array.from(byKey.values())
+    // Fetch frontiers, persisted in the cache file: everything finishing
+    // before a cursor has been pulled from that endpoint. A legacy cache
+    // without cursors re-walks the whole window — the upsert above makes that
+    // safe, and it is exactly what heals a hole left by the old code.
+    // Cursors deliberately ignore result timestamps: webhook merges push the
+    // newest RESULT to "now" while the API walk may still be weeks behind,
+    // which is how the old newest-derived incremental skipped whole weeks.
+    let cursors = {
+      groups: Math.max(Number(cache.groupsCursor) || windowStart, windowStart),
+      links: Math.max(Number(cache.linksCursor) || windowStart, windowStart),
+    };
+
+    let budget = PER_RUN_PAGE_BUDGET;
+    let rateLimited = false;
+
+    const persist = () => {
+      cache.results = Array.from(byKey.values())
         .filter((r) => (r.time_finished || 0) >= windowStart);
-      console.log(`[classmarker] ${memCache ? 'Incremental' : 'Full'} refresh: ${pages} page(s), ${results.length} results in window`);
-
-      memCache = { results, groupMap, testMap, cacheTime: Date.now() };
+      cache.groupsCursor = cursors.groups;
+      cache.linksCursor = cursors.links;
+      memCache = cache;
       dataVersion++;
-      saveCache(memCache);
-      return memCache;
+      saveCache(cache);
+    };
+
+    // Walk one endpoint forward from its cursor until caught up, the budget
+    // runs out, or the API rate-limits us. Progress persists after EVERY page
+    // so nothing is lost to a mid-walk failure or restart.
+    const walk = async (kind) => {
+      let ts = Math.max(windowStart, cursors[kind] - INCREMENTAL_OVERLAP_SECONDS);
+      let pages = 0;
+      while (budget > 0) {
+        budget--;
+        let data;
+        try {
+          data = await fetchResultsPage(ts, kind);
+        } catch (e) {
+          if (isRateLimitError(e)) {
+            rateLimited = true;
+            console.warn(`[classmarker] Rate limited during ${kind} walk — resuming next refresh from ${new Date(cursors[kind] * 1000).toISOString()}`);
+            return pages;
+          }
+          throw e;
+        }
+        pages++;
+        if (data.status === 'no_results' || !Array.isArray(data.results) || data.results.length === 0) {
+          cursors[kind] = Math.max(cursors[kind], nowSec());
+          persist();
+          return pages;
+        }
+        for (const g of (data.groups || [])) {
+          const grp = g.group || g;
+          if (grp.group_id) cache.groupMap[String(grp.group_id)] = grp.group_name;
+        }
+        for (const t of (data.tests || [])) {
+          const tst = t.test || t;
+          if (tst.test_id) cache.testMap[String(tst.test_id)] = tst.test_name;
+        }
+        let newestOnPage = 0;
+        for (const raw of data.results) {
+          const r = raw.result || raw;
+          // Link results carry cm_user_id — normalize so downstream consumers
+          // (students, scoreboards) see one field. Null stays null (anonymous).
+          if (r.user_id == null && r.cm_user_id != null) r.user_id = r.cm_user_id;
+          newestOnPage = Math.max(newestOnPage, r.time_finished || 0);
+          addRow(r);
+        }
+        const next = Number(data.next_finished_after_timestamp);
+        if (!data.more_results_exist || !next) {
+          cursors[kind] = Math.max(cursors[kind], newestOnPage, ts);
+          persist();
+          return pages;
+        }
+        if (next <= ts) {
+          // A non-advancing cursor would refetch this page forever.
+          console.warn(`[classmarker] ${kind} pagination cursor did not advance (${next} <= ${ts}) — stopping this walk`);
+          cursors[kind] = Math.max(cursors[kind], newestOnPage, ts);
+          persist();
+          return pages;
+        }
+        ts = next;
+        cursors[kind] = Math.max(cursors[kind], ts);
+        persist();
+      }
+      return pages;
+    };
+
+    try {
+      const groupPages = await walk('groups');
+      const linkPages = rateLimited ? 0 : await walk('links');
+
+      const caughtUp = !rateLimited && budget > 0;
+      const fmt = (s) => new Date(s * 1000).toISOString().slice(0, 16);
+      console.log(
+        `[classmarker] Refresh: ${groupPages} group page(s) + ${linkPages} link page(s), ` +
+        `${cache.results.length} results in window, cursors groups=${fmt(cursors.groups)} links=${fmt(cursors.links)}` +
+        (caughtUp ? '' : rateLimited ? ' — RATE LIMITED, resuming next refresh' : ' — budget exhausted, resuming next refresh')
+      );
+
+      // Full TTL either way: the page budget is sized to the hourly quota, so
+      // retrying sooner could not fetch more anyway.
+      cache.cacheTime = Date.now();
+      persist();
+      return cache;
     } catch (e) {
-      if (memCache) {
-        // Serve stale data and back off — a rate-limited refresh must never
-        // leave the app dataless or retry on every request.
-        console.error('[classmarker] Refresh failed — serving stale cache:', e.message);
-        memCache.cacheTime = Date.now() - CACHE_TTL + FETCH_FAILURE_BACKOFF_MS;
-        return memCache;
+      if (cache.results.length > 0) {
+        // Serve what we have and back off — a failed refresh must never leave
+        // the app dataless or retry on every request. Cursor progress from
+        // already-persisted pages is kept.
+        console.error('[classmarker] Refresh failed — serving cached results:', e.message);
+        cache.cacheTime = Date.now() - CACHE_TTL + FETCH_FAILURE_BACKOFF_MS;
+        persist();
+        return cache;
       }
       throw e;
     } finally {
@@ -288,6 +375,8 @@ async function getAllStudents() {
 
   const seen = new Map();
   for (const r of results) {
+    // Anonymous link-based attempts have no user — they can't become students.
+    if (r.user_id == null) continue;
     const id = String(r.user_id);
     const fullName = `${r.first || ''} ${r.last || ''}`.trim() || r.email || `User ${id}`;
     const email = r.email || null;
