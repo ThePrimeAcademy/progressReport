@@ -125,6 +125,34 @@ function buildHtmlBody(studentName) {
 
 // ── ZeptoMail HTTPS API (Railway-friendly) ─────────────────────────────────
 
+// ZeptoMail's API messages can be cryptic ("Resource Limit Exhausted."), so
+// translate the known sub-codes into what the admin should actually do.
+// Codes: https://www.zoho.com/zeptomail/help/api/error-codes.html
+const ZEPTO_ERROR_HINTS = {
+  LE_101: 'ZeptoMail credits have expired - purchase new credits on the ZeptoMail Subscription page.',
+  LE_102: 'ZeptoMail credits are used up - purchase credits (or enable auto top-up) on the ZeptoMail Subscription page.',
+  SMI_115: 'ZeptoMail daily sending limit reached - sends resume tomorrow.',
+  SM_133: 'ZeptoMail account is still in trial/sandbox - it can only send to your own verified addresses until the account is approved.',
+};
+
+function describeZeptoError(res, data, text) {
+  const code = data?.error?.code || '';
+  const sub = data?.error?.details?.[0]?.code || '';
+  const subMessage = data?.error?.details?.[0]?.message || '';
+  let detail =
+    data?.error?.message ||
+    data?.message ||
+    subMessage ||
+    text.slice(0, 300) ||
+    `HTTP ${res.status}`;
+  if (code || sub) {
+    detail += ` [${[code, sub].filter(Boolean).join('/')}${subMessage ? `: ${subMessage}` : ''}]`;
+  }
+  const hint = ZEPTO_ERROR_HINTS[sub] || ZEPTO_ERROR_HINTS[code];
+  if (hint) detail += ` ${hint}`;
+  return detail;
+}
+
 function bufferToBase64(buf) {
   if (!buf) return '';
   if (Buffer.isBuffer(buf)) return buf.toString('base64');
@@ -181,13 +209,7 @@ async function sendViaZeptoMail({ studentName, recipients, pdfBuffer, filename, 
       try { data = text ? JSON.parse(text) : null; } catch (_) { /* non-json */ }
 
       if (!res.ok) {
-        const detail =
-          data?.error?.message ||
-          data?.message ||
-          data?.error?.details?.[0]?.message ||
-          text.slice(0, 300) ||
-          `HTTP ${res.status}`;
-        throw new Error(detail);
+        throw new Error(describeZeptoError(res, data, text));
       }
 
       const id = data?.request_id || data?.data?.[0]?.message_id || `zepto-${Date.now()}`;

@@ -26,12 +26,8 @@
 //   testId=NNN   force the ClassMarker test id if name matching is ambiguous
 //   tzOffset=-4  hours from UTC for the CSV's dates (default -4 = EDT)
 const express = require('express');
-const path = require('path');
-const fs = require('fs');
 const router = express.Router();
 const db = require('../services/db.service');
-
-const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '../../data');
 
 router.use(express.text({ type: () => true, limit: '25mb' }));
 
@@ -100,15 +96,11 @@ function parseCmDate(s, tzOffsetHours) {
 }
 
 // ── Lookups built from what the server already knows ────────────────────────
+// The classmarker service already holds the cache in memory (and owns the
+// on-disk format, gzipped since 2026-08) - use its snapshot instead of
+// re-reading and re-parsing the file here.
 function loadApiCache() {
-  try {
-    const file = path.join(DATA_DIR, 'classmarker-cache.json');
-    if (fs.existsSync(file)) {
-      const data = JSON.parse(fs.readFileSync(file, 'utf-8'));
-      if (Array.isArray(data.results)) return data;
-    }
-  } catch (_) { /* cache optional */ }
-  return { results: [], groupMap: {}, testMap: {} };
+  return require('../services/classmarker.service').getCacheSnapshot();
 }
 
 // email → userId and normalized name → userId, from the webhook store + the

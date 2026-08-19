@@ -6,6 +6,7 @@
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
+const zlib = require('zlib');
 
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '../../data');
 const DB_PATH = path.join(DATA_DIR, 'progressreport.db');
@@ -18,17 +19,35 @@ let _db = null;
 let _dirty = false;
 
 // Atomic write + rolling daily backup.
+// The volume is small (500MB) and the flush needs ~1x DB size of headroom for
+// the tmp file, so two rules keep a full disk from wedging us (2026-08-19
+// incident: flushes failed with ENOSPC for 5 days while writes piled up in
+// memory):
+//   - a failed tmp write is deleted, so it can't pin ~1x DB size of dead space
+//   - the daily backup is gzipped (~6x smaller); restore with
+//     `gunzip -c progressreport.db.bak.gz > progressreport.db`
 let _lastBackup = 0;
 function writeDbFileSync() {
     const tmp = DB_PATH + '.tmp';
-    fs.writeFileSync(tmp, Buffer.from(_db.export()));
-    fs.renameSync(tmp, DB_PATH);
+    const data = Buffer.from(_db.export());
+    try {
+        fs.writeFileSync(tmp, data);
+        fs.renameSync(tmp, DB_PATH);
+    } catch (e) {
+        try { fs.rmSync(tmp, { force: true }); } catch (_) { /* best effort */ }
+        throw e;
+    }
     // Once a day, keep a copy so corruption/mistakes are a 5-minute restore.
     if (Date.now() - _lastBackup > 24 * 60 * 60 * 1000) {
+        const bak = DB_PATH + '.bak.gz';
         try {
-            fs.copyFileSync(DB_PATH, DB_PATH + '.bak');
+            fs.writeFileSync(bak + '.tmp', zlib.gzipSync(data, { level: 6 }));
+            fs.renameSync(bak + '.tmp', bak);
+            // Pre-gzip deployments left a full-size copy; reclaim its space.
+            fs.rmSync(DB_PATH + '.bak', { force: true });
             _lastBackup = Date.now();
         } catch (e) {
+            try { fs.rmSync(bak + '.tmp', { force: true }); } catch (_) { /* best effort */ }
             console.error('[db] backup failed:', e.message);
         }
     }

@@ -2,6 +2,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const zlib = require('zlib');
 
 const API_KEY = process.env.CLASSMARKER_API_KEY;
 const API_SECRET = process.env.CLASSMARKER_API_SECRET;
@@ -15,6 +16,10 @@ const BASE_URL = 'https://api.classmarker.com/v1';
 //   - a failed refresh serves the stale cache and backs off instead of
 //     leaving the app dataless and hammering the API
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '../../data');
+// Gzipped since 2026-08: the plain-JSON cache had grown to 66MB on a 500MB
+// volume shared with the SQLite store (whose flush needs 1x-DB-size headroom).
+// Gzip keeps it under ~10MB. Reads still accept the old plain-JSON names.
+const CACHE_GZ_FILE = path.join(DATA_DIR, 'classmarker-cache.json.gz');
 const CACHE_FILE = path.join(DATA_DIR, 'classmarker-cache.json');
 const LEGACY_CACHE_FILE = path.join(__dirname, '../../cache.json');
 const CACHE_TTL = 55 * 60 * 1000;
@@ -31,10 +36,13 @@ const PER_RUN_PAGE_BUDGET = 25;
 function loadCache() {
   // Any age is acceptable — stale data beats no data, and the incremental
   // refresh catches up cheaply on the first fetchAllResults call.
-  for (const file of [CACHE_FILE, LEGACY_CACHE_FILE]) {
+  for (const file of [CACHE_GZ_FILE, CACHE_FILE, LEGACY_CACHE_FILE]) {
     try {
       if (fs.existsSync(file)) {
-        const data = JSON.parse(fs.readFileSync(file, 'utf-8'));
+        let buf = fs.readFileSync(file);
+        // Sniff the gzip magic bytes rather than trusting the extension.
+        if (buf.length > 2 && buf[0] === 0x1f && buf[1] === 0x8b) buf = zlib.gunzipSync(buf);
+        const data = JSON.parse(buf.toString('utf-8'));
         if (Array.isArray(data.results)) {
           console.log(`Loaded cache from ${path.basename(file)} (${data.results.length} results).`);
           return data;
@@ -52,7 +60,15 @@ function saveCache(data) {
     if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
     // Keep the original cacheTime when present — webhook merges re-save the
     // cache but must not push back the 55-min API reconcile window.
-    fs.writeFileSync(CACHE_FILE, JSON.stringify({ cacheTime: Date.now(), ...data }));
+    // Gzip level 1: webhook merges save on every result, so favor speed —
+    // still ~5x smaller than plain JSON. tmp+rename so a crash mid-write
+    // can't leave a truncated cache (which would cost a full 85-day re-pull).
+    const json = JSON.stringify({ cacheTime: Date.now(), ...data });
+    const tmp = CACHE_GZ_FILE + '.tmp';
+    fs.writeFileSync(tmp, zlib.gzipSync(json, { level: 1 }));
+    fs.renameSync(tmp, CACHE_GZ_FILE);
+    // Reclaim the pre-gzip plain-JSON copy once a gzipped one exists.
+    fs.rmSync(CACHE_FILE, { force: true });
     console.log('Cache saved to file.');
   } catch (e) {
     console.error('Failed to save cache:', e.message);
@@ -67,6 +83,14 @@ let memCache = loadCache();
 let dataVersion = 0;
 function getDataVersion() {
   return dataVersion;
+}
+
+// Read-only view of the current in-memory cache for consumers that only need
+// "what the server already knows" (e.g. import matching) - saves them from
+// re-reading and re-parsing the cache file on every request.
+function getCacheSnapshot() {
+  if (memCache && Array.isArray(memCache.results)) return memCache;
+  return { results: [], groupMap: {}, testMap: {} };
 }
 
 // Category ID → name lookup map, shared with webhook.service
@@ -670,7 +694,8 @@ function invalidateCache() {
 function clearCache() {
   memCache = null;
   try {
-    if (fs.existsSync(CACHE_FILE)) fs.unlinkSync(CACHE_FILE);
+    fs.rmSync(CACHE_GZ_FILE, { force: true });
+    fs.rmSync(CACHE_FILE, { force: true });
   } catch (e) {
     console.warn('Could not delete cache file:', e.message);
   }
@@ -848,6 +873,7 @@ module.exports = {
   findCachedAttempt,
   mergeWebhookResult,
   getDataVersion,
+  getCacheSnapshot,
   backfillFromApi
 };
 
