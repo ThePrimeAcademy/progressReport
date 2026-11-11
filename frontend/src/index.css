@@ -53,3 +53,44 @@ button:focus-visible {
     from { opacity: 1; transform: none; }
   }
 }
+
+/* ── Exam rows ─────────────────────────────────────
+   Every exam row in a program, and the column header above them, share one
+   grid so the English / Math scoring-sheet pickers line up down the page:
+     drag · chevron · name · date · English · Math · scoreboard            */
+.exam-grid {
+  display: grid;
+  grid-template-columns: 14px 12px minmax(120px, 1fr) 132px 208px 208px 94px;
+  align-items: center;
+  column-gap: 10px;
+}
+/* The two pickers sit directly in the grid's English and Math columns. */
+.exam-grid-pickers { display: contents; }
+.exam-picker { display: inline-flex; align-items: center; }
+/* The column header names the pickers; each one only needs its own label
+   once the header is gone (narrow screens, below). */
+.exam-picker-label { display: none; }
+
+@media (max-width: 1040px) {
+  .exam-grid {
+    grid-template-columns: 14px 12px minmax(120px, 1fr) auto auto;
+    row-gap: 8px;
+  }
+  .exam-grid-pickers {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 18px;
+    grid-column: 3 / -1;
+    grid-row: 2;
+  }
+  .exam-picker { gap: 6px; }
+  .exam-picker-label {
+    display: inline;
+    font-size: 0.64rem;
+    font-weight: 700;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  .exam-grid-header { display: none; }
+}

@@ -53,9 +53,26 @@ export async function requestReportPdf(payload) {
   };
 }
 
-export async function listScoringSheets() {
-  const response = await apiClient.get('/scoring-sheets');
-  return response.data.data || {};
+// ── Scoring sheets ─────────────────────────────────────────────
+// A scoring sheet converts a raw score into a scaled section score. There is a
+// shared library of three sheets per subject (Easy / Medium / Hard) that exams
+// pick from, plus an optional custom sheet per exam. Both are stored under a
+// key: the library's keys come back from fetchSheetLibrary(), an exam's custom
+// key is exam.curveKey. `section` is 'rw' (English) or 'math'.
+
+// { levels, keys: { easy, medium, hard }, sheets: { rw: { easy: summary|null,
+//   ... }, math }, usage: { rw: { easy: [{ examId, name, programName }] } } }
+export async function fetchSheetLibrary() {
+  const response = await apiClient.get('/scoring-sheets/library');
+  return response.data.data;
+}
+
+// One stored sheet with all its points: { curve: [{ raw, lower, upper }], summary, ... }
+export async function fetchScoringSheet({ groupId, section }) {
+  const response = await apiClient.get(
+    `/scoring-sheets/${encodeURIComponent(groupId)}/${encodeURIComponent(section)}`
+  );
+  return response.data.data;
 }
 
 function fileToBase64(file) {
@@ -71,18 +88,24 @@ function fileToBase64(file) {
   });
 }
 
-export async function uploadScoringSheet({ groupId, section, file }) {
-  const fileBase64 = await fileToBase64(file);
+// Read a file (.xlsx / .csv) or pasted cells and return the score table(s)
+// found, without saving: { tables: [{ sheetName, columns: [{ label }],
+// rows: [{ raw, values }], rawMin, rawMax, warnings }] }
+export async function parseScoringSheet({ file, text }) {
+  const body = file ? { fileBase64: await fileToBase64(file) } : { text };
+  const response = await apiClient.post('/scoring-sheets/parse', body);
+  return response.data.data;
+}
+
+// Save points picked in the import preview. curve: [{ raw, lower, upper }].
+export async function saveScoringSheet({ groupId, section, curve, bound, filename, columnLabel }) {
   const response = await apiClient.post('/scoring-sheets', {
-    groupId,
-    section,
-    filename: file.name,
-    fileBase64,
+    groupId, section, curve, bound, filename, columnLabel,
   });
   return response.data.data;
 }
 
-// Reuse a curve already uploaded to another exam — no file re-upload needed.
+// Reuse a sheet already stored under another key - no re-upload needed.
 export async function copyScoringSheet({ fromGroupId, toGroupId, section }) {
   const response = await apiClient.post('/scoring-sheets/copy', { fromGroupId, toGroupId, section });
   return response.data.data;
@@ -93,6 +116,7 @@ export async function deleteScoringSheet({ groupId, section }) {
   return response.data;
 }
 
+// For a sheet that lists a score range: which end to use ('lower' | 'upper').
 export async function setScoringSheetBound({ groupId, section, bound }) {
   const response = await apiClient.patch(
     `/scoring-sheets/${encodeURIComponent(groupId)}/${encodeURIComponent(section)}`,
@@ -102,8 +126,10 @@ export async function setScoringSheetBound({ groupId, section, bound }) {
 }
 
 // ── SAT exams ──────────────────────────────────────────────────
-// An exam maps up to four ClassMarker tests onto DSAT sections 1-4.
-// Curves upload through the scoring-sheet endpoints with groupId = exam.curveKey.
+// An exam maps up to four ClassMarker tests onto DSAT sections 1-4. Each exam
+// carries `difficulty: { rw, math }` ('easy' | 'medium' | 'hard' | null), which
+// selects its scoring sheet per subject, and `scoring`, which describes the
+// sheet currently grading each subject.
 
 export async function fetchExams() {
   const response = await apiClient.get('/exams');
@@ -115,8 +141,9 @@ export async function fetchAvailableTests() {
   return response.data.data || [];
 }
 
-// payload: { name, date?, sections?, studentIds?, hiddenStudentIds? } — fields
-// omitted from an update keep their stored value.
+// payload: { name, date?, sections?, studentIds?, hiddenStudentIds?,
+// difficulty?: { rw?, math? } }. Fields omitted from an update keep their
+// stored value.
 export async function createExam(payload) {
   const response = await apiClient.post('/exams', payload);
   return response.data.data;

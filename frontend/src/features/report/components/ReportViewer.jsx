@@ -85,7 +85,8 @@ function SatScoreHistory({ allScores }) {
     // until their score text clips; 100px min matches the PDF template.
     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(100px, 1fr))', gap: 8, marginBottom: 24 }}>
       {allScores.map((s) => {
-        // No total → the student didn't complete the test: show it as "Not taken".
+        // No total → the student didn't complete the test: show it as "Not taken",
+        // unless they did sit it and it is only waiting on a scoring sheet.
         const taken = s.total != null;
         const accent = taken ? '#1a56db' : '#6b7280';
         return (
@@ -124,7 +125,7 @@ function SatScoreHistory({ allScores }) {
               </div>
             ) : (
               <div style={{ fontSize: '0.66rem', color: 'var(--muted)', marginTop: 6, fontStyle: 'italic' }}>
-                Not taken
+                {s.pending ? 'Score pending' : 'Not taken'}
               </div>
             )}
             {s.date && (

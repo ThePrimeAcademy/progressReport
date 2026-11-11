@@ -7,18 +7,32 @@
 const CHEVRON = `url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%236b7280' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")`;
 
 export const s = {
-  card: { background: 'var(--bg)', borderRadius: 16, boxShadow: 'var(--shadow-lg)', border: '1.5px solid var(--border)', overflow: 'hidden', marginTop: 24 },
-  head: { padding: '18px 24px', display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', userSelect: 'none' },
+  card: { background: 'var(--bg)', borderRadius: 16, boxShadow: 'var(--shadow-lg)', border: '1.5px solid var(--border)', overflow: 'hidden' },
+  head: { padding: '16px 24px', display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '8px 10px' },
   dot: { width: 8, height: 8, borderRadius: '50%', background: 'var(--accent)' },
   title: { fontSize: '0.85rem', fontWeight: 600, color: 'var(--ink)', flex: 1 },
-  count: { fontSize: '0.72rem', color: 'var(--muted)', fontWeight: 500 },
+  count: { fontSize: '0.72rem', color: 'var(--muted)', fontWeight: 500, whiteSpace: 'nowrap' },
   chevron: { fontSize: '0.8rem', color: 'var(--muted)' },
   body: { borderTop: '1px solid var(--border)', padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 16 },
   // Longhand border properties (not the shorthand) so state styles can
   // override borderColor alone without React's shorthand-conflict warning.
   examRow: { borderWidth: 1.5, borderStyle: 'solid', borderColor: 'var(--border)', borderRadius: 12, overflow: 'hidden', transition: 'box-shadow 150ms ease, opacity 150ms ease, transform 150ms ease, border-color 150ms ease' },
-  examHead: { display: 'flex', alignItems: 'center', gap: 10, padding: '12px 16px', background: '#fafbff', flexWrap: 'wrap' },
-  examName: { fontWeight: 600, fontSize: '0.88rem', color: 'var(--ink)', flex: 1 },
+  // Layout comes from the .exam-grid class (index.css) so every exam row and
+  // the column header above them share the same columns.
+  examHead: { padding: '10px 16px', background: '#fafbff', cursor: 'pointer' },
+  examNameCell: { display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, flexWrap: 'wrap' },
+  examName: { fontWeight: 600, fontSize: '0.88rem', color: 'var(--ink)', flex: 1, overflowWrap: 'anywhere' },
+  dragHandle: { color: 'var(--muted)', fontSize: '0.9rem', lineHeight: 1, userSelect: 'none' },
+  // Column labels above a program's exam rows.
+  examColumns: { padding: '0 17.5px', fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase', color: 'var(--muted)' },
+  practiceBadge: { fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase', color: '#b45309', background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: 999, padding: '1px 8px', whiteSpace: 'nowrap' },
+  // Rarely-used exam settings, at the bottom of an expanded row.
+  examSettings: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10, padding: '10px 16px', borderTop: '1px dashed var(--border)', background: '#fff' },
+  settingsField: { display: 'inline-flex', alignItems: 'center', gap: 6 },
+  settingsLabel: { fontSize: '0.66rem', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--muted)' },
+  // Something needs attention but nothing is broken.
+  notice: { padding: '10px 14px', background: '#fffbeb', border: '1.5px solid #fcd34d', borderRadius: 8, color: '#92400e', fontSize: '0.8rem', display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10, lineHeight: 1.45 },
+  noticeAction: { appearance: 'none', border: '1px solid #f59e0b', background: '#fff', color: '#92400e', padding: '4px 12px', borderRadius: 6, cursor: 'pointer', fontSize: '0.74rem', fontWeight: 600, fontFamily: 'inherit', marginLeft: 'auto', whiteSpace: 'nowrap' },
   sectionList: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 8, padding: '12px 16px' },
   sectionChip: { fontSize: '0.74rem', borderWidth: 1, borderStyle: 'solid', borderColor: 'var(--border)', borderRadius: 8, padding: '8px 10px', background: '#fff', transition: 'border-color 180ms var(--ease), background 180ms var(--ease), box-shadow 180ms var(--ease)' },
   // While its test picker is open: accent border + soft ring instead of the

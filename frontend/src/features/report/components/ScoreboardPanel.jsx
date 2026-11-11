@@ -24,6 +24,21 @@ function overrideTitle(tests, isMath) {
     .join('\n');
 }
 
+// Subjects with no scoring sheet to scale them, e.g. ['English', 'Math'].
+function missingSheets(board) {
+  return [!board.hasRwCurve && 'English', !board.hasMathCurve && 'Math'].filter(Boolean);
+}
+
+// What to do about it: a level was picked but its shared sheet is not added
+// yet, or nothing has been picked at all.
+function missingHint(board) {
+  const waiting = ['rw', 'math']
+    .map((key) => board.scoring?.[key])
+    .filter((sc) => sc && !sc.ready && sc.level);
+  if (waiting.length > 0) return 'the chosen sheet has not been added on the Scoring Sheets tab yet';
+  return 'choose a scoring sheet for this exam to see scaled scores';
+}
+
 function EditModal({ row, onClose, onSaved, onError }) {
   const [drafts, setDrafts] = useState(() =>
     Object.fromEntries((row.tests || []).map((t) => [t.testId, String(t.correct ?? '')]))
@@ -178,7 +193,7 @@ export default function ScoreboardPanel({ exam, onError }) {
         Scoreboard{board?.date ? ` · ${board.date}` : ''}
         {board && !(board.hasRwCurve && board.hasMathCurve) && (
           <span style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>
-            {' '}— upload {!board.hasRwCurve && !board.hasMathCurve ? 'the RW and Math sheets' : !board.hasRwCurve ? 'the RW sheet' : 'the Math sheet'} for scaled scores
+            {' '}- showing raw scores for {missingSheets(board).join(' and ')}: {missingHint(board)}
           </span>
         )}
       </div>
