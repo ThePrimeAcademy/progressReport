@@ -98,7 +98,17 @@ let categoryMap = {};
 const CATEGORY_CACHE_TTL = 60 * 60 * 1000; // 1 hour
 let categoryFetchedAt = 0;
 
+// Without credentials there is nothing to fetch with - a request would go out
+// signed with "undefined" and fail. That is the normal state of a local
+// development copy: it runs entirely from the webhook store and whatever
+// cache is on disk. Production always has both variables set.
+const API_CONFIGURED = Boolean(API_KEY && API_SECRET);
+if (!API_CONFIGURED) {
+  console.warn('[classmarker] CLASSMARKER_API_KEY / CLASSMARKER_API_SECRET not set - running offline from stored data only.');
+}
+
 async function fetchCategoryMap() {
+  if (!API_CONFIGURED) return categoryMap;
   if (Object.keys(categoryMap).length > 0 && Date.now() - categoryFetchedAt < CATEGORY_CACHE_TTL) {
     return categoryMap;
   }
@@ -180,6 +190,10 @@ const attemptKey = (r) =>
 let inflightFetch = null;
 
 async function fetchAllResults() {
+  if (!API_CONFIGURED) {
+    if (!memCache) memCache = { results: [], groupMap: {}, testMap: {}, cacheTime: Date.now() };
+    return memCache;
+  }
   if (memCache && (Date.now() - memCache.cacheTime) < CACHE_TTL) {
     return memCache;
   }

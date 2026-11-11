@@ -1,10 +1,11 @@
 import axios from 'axios';
 
 const RAILWAY_URL = 'https://progressreport-production.up.railway.app/api';
-const LOCAL_URL = `http://${window.location.hostname}:5000/api`;
 
-// Always use Railway — it has the webhook data and full backend
-const baseURL = RAILWAY_URL;
+// The live Railway backend by default - it has the webhook data. Set
+// VITE_API_URL to point a local build at a local backend instead, e.g.
+//   VITE_API_URL=http://localhost:5000/api npm run dev
+const baseURL = import.meta.env.VITE_API_URL || RAILWAY_URL;
 
 const apiClient = axios.create({
   baseURL,

@@ -34,7 +34,10 @@ __pycache__/
 *.pyc
 
 # ── Runtime data ─────────────────────────────────
-backend/data/*.db
+# Everything the backend stores at runtime: the results database, exam and
+# program definitions, scoring sheets and the ClassMarker cache. Real student
+# data lives here - it must never be committed.
+backend/data/
 
 # ── Stray / backup files ─────────────────────────
 .codex
