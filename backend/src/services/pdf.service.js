@@ -261,7 +261,8 @@ function buildSatHistorySection(allScores) {
   if (!allScores || allScores.length === 0) return '';
   const cards = allScores.map((s) => {
     // A null total means the student didn't complete the test — show it as "Not
-    // taken" rather than a fabricated score.
+    // taken" rather than a fabricated score. If they did sit it and it is only
+    // waiting on a scoring sheet, say the score is pending instead.
     const taken = s.total != null;
     const accent = taken ? '#1a56db' : '#6b7280';
     return `
@@ -272,7 +273,7 @@ function buildSatHistorySection(allScores) {
         <div style="font-size:1.4rem;font-weight:700;color:${accent};line-height:1;">${taken ? s.total : '—'}</div>
         ${taken
           ? `<div style="font-size:0.7rem;color:var(--muted);margin-top:5px;white-space:nowrap;">RW ${s.english ?? '—'} &middot; M ${s.math ?? '—'}</div>`
-          : `<div style="font-size:0.66rem;color:var(--muted);margin-top:5px;white-space:nowrap;font-style:italic;">Not taken</div>`}
+          : `<div style="font-size:0.66rem;color:var(--muted);margin-top:5px;white-space:nowrap;font-style:italic;">${s.pending ? 'Score pending' : 'Not taken'}</div>`}
         ${s.date ? `<div style="font-size:0.66rem;color:var(--muted);margin-top:2px;white-space:nowrap;">${escapeHtml(s.date)}</div>` : ''}
       </div>`;
   }).join('');
@@ -346,8 +347,11 @@ async function generateReportPDF(student, groups, stats, satScores, startDate, e
     studentId: student.id,
     initials,
     generatedDate: now.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }),
-    startDate: new Date(startDate).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }),
-    endDate: new Date(endDate).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }),
+    // The period arrives as calendar dates ("2026-06-22"), which JavaScript
+    // parses as UTC midnight. Format in UTC too, or a server running west of
+    // UTC prints each date one day early.
+    startDate: new Date(startDate).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric', timeZone: 'UTC' }),
+    endDate: new Date(endDate).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric', timeZone: 'UTC' }),
     reportId,
     year: now.getFullYear(),
     totalTests,

@@ -1,0 +1,230 @@
+{
+ "description": "Math sheet with a Lower/Upper score range per raw score (45 points, raw 0-44).",
+ "curve": [
+  {
+   "raw": 0,
+   "lower": 200,
+   "upper": 200
+  },
+  {
+   "raw": 1,
+   "lower": 210,
+   "upper": 220
+  },
+  {
+   "raw": 2,
+   "lower": 210,
+   "upper": 230
+  },
+  {
+   "raw": 3,
+   "lower": 210,
+   "upper": 240
+  },
+  {
+   "raw": 4,
+   "lower": 210,
+   "upper": 250
+  },
+  {
+   "raw": 5,
+   "lower": 220,
+   "upper": 260
+  },
+  {
+   "raw": 6,
+   "lower": 230,
+   "upper": 270
+  },
+  {
+   "raw": 7,
+   "lower": 260,
+   "upper": 310
+  },
+  {
+   "raw": 8,
+   "lower": 270,
+   "upper": 330
+  },
+  {
+   "raw": 9,
+   "lower": 300,
+   "upper": 360
+  },
+  {
+   "raw": 10,
+   "lower": 320,
+   "upper": 380
+  },
+  {
+   "raw": 11,
+   "lower": 330,
+   "upper": 390
+  },
+  {
+   "raw": 12,
+   "lower": 340,
+   "upper": 400
+  },
+  {
+   "raw": 13,
+   "lower": 350,
+   "upper": 410
+  },
+  {
+   "raw": 14,
+   "lower": 360,
+   "upper": 430
+  },
+  {
+   "raw": 15,
+   "lower": 390,
+   "upper": 450
+  },
+  {
+   "raw": 16,
+   "lower": 400,
+   "upper": 460
+  },
+  {
+   "raw": 17,
+   "lower": 410,
+   "upper": 470
+  },
+  {
+   "raw": 18,
+   "lower": 420,
+   "upper": 480
+  },
+  {
+   "raw": 19,
+   "lower": 430,
+   "upper": 490
+  },
+  {
+   "raw": 20,
+   "lower": 450,
+   "upper": 510
+  },
+  {
+   "raw": 21,
+   "lower": 470,
+   "upper": 520
+  },
+  {
+   "raw": 22,
+   "lower": 490,
+   "upper": 530
+  },
+  {
+   "raw": 23,
+   "lower": 510,
+   "upper": 550
+  },
+  {
+   "raw": 24,
+   "lower": 520,
+   "upper": 560
+  },
+  {
+   "raw": 25,
+   "lower": 540,
+   "upper": 580
+  },
+  {
+   "raw": 26,
+   "lower": 550,
+   "upper": 590
+  },
+  {
+   "raw": 27,
+   "lower": 550,
+   "upper": 600
+  },
+  {
+   "raw": 28,
+   "lower": 560,
+   "upper": 610
+  },
+  {
+   "raw": 29,
+   "lower": 570,
+   "upper": 620
+  },
+  {
+   "raw": 30,
+   "lower": 580,
+   "upper": 630
+  },
+  {
+   "raw": 31,
+   "lower": 590,
+   "upper": 650
+  },
+  {
+   "raw": 32,
+   "lower": 600,
+   "upper": 660
+  },
+  {
+   "raw": 33,
+   "lower": 610,
+   "upper": 670
+  },
+  {
+   "raw": 34,
+   "lower": 630,
+   "upper": 680
+  },
+  {
+   "raw": 35,
+   "lower": 650,
+   "upper": 700
+  },
+  {
+   "raw": 36,
+   "lower": 660,
+   "upper": 710
+  },
+  {
+   "raw": 37,
+   "lower": 680,
+   "upper": 720
+  },
+  {
+   "raw": 38,
+   "lower": 690,
+   "upper": 730
+  },
+  {
+   "raw": 39,
+   "lower": 700,
+   "upper": 740
+  },
+  {
+   "raw": 40,
+   "lower": 720,
+   "upper": 750
+  },
+  {
+   "raw": 41,
+   "lower": 740,
+   "upper": 770
+  },
+  {
+   "raw": 42,
+   "lower": 760,
+   "upper": 790
+  },
+  {
+   "raw": 43,
+   "lower": 770,
+   "upper": 800
+  },
+  {
+   "raw": 44,
+   "lower": 800,
+   "upper": 800
+  }
+ ]
+}

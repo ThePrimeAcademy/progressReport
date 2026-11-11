@@ -5,7 +5,9 @@
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
-    "dev": "nodemon src/server.js"
+    "dev": "nodemon src/server.js",
+    "test": "node --test --test-force-exit test/*.test.js",
+    "seed:demo": "node scripts/seed-demo.js"
   },
   "dependencies": {
     "cors": "^2.8.5",

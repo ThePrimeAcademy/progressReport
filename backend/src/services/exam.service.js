@@ -9,7 +9,9 @@
 //   [{ examId, name, date: "YYYY-MM-DD" | null, programId: "<id>" | null,
 //      sections: { "1": { testId, testName } | null, ... "4" },
 //      studentIds: ["<user_id>", ...], hiddenStudentIds: ["<user_id>", ...],
-//      isPractice: boolean, createdAt, updatedAt }]
+//      isPractice: boolean,
+//      difficulty: { rw: "easy" | "medium" | "hard" | null, math: (same) },
+//      createdAt, updatedAt }]
 //
 // programId: optional link to a program (see program.service). When set, the
 // program owns the roster — the exam's score is gated by program enrollment,
@@ -27,18 +29,26 @@
 // score cards, no history entry, no super-score contribution, no upcoming
 // placeholder. The admin scoreboard still shows them.
 //
-// Scoring curves for an exam live in scoring-sheet.service under the key
-// `exam:<examId>` (sections 'rw' | 'math'), reusing the same storage and
-// upload pipeline as the legacy per-group curves.
+// difficulty: how the admins categorised this exam, separately for Reading &
+// Writing and for Math. It selects the scoring sheet: an "easy" exam is graded
+// with the shared Easy sheet for that subject, and so on. null means the exam
+// has not been categorised for that subject, in which case it is graded with
+// its own custom sheet if one was uploaded (see exam-curve.service).
+//
+// A custom sheet for one exam lives in scoring-sheet.service under the key
+// `exam:<examId>` (sections 'rw' | 'math').
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { getProgram, markExamOrderCustom } = require('./program.service');
+const { LEVELS } = require('./scoring-sheet.service');
 
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '../../data');
 const EXAMS_FILE = path.join(DATA_DIR, 'exams.json');
 
 const SECTION_KEYS = ['1', '2', '3', '4'];
+// The two subjects an exam is categorised and graded in.
+const SUBJECTS = ['rw', 'math'];
 
 let exams = null; // lazy-loaded, kept in memory between writes
 
@@ -59,6 +69,9 @@ function load() {
     console.error('[exams] Could not read exams.json:', e.message);
   }
   if (!Array.isArray(exams)) exams = [];
+  // Exams saved before difficulty existed have no such field - give every
+  // record the same shape so callers never need to check.
+  exams = exams.map((e) => ({ ...e, difficulty: storedDifficulty(e?.difficulty) }));
   return exams;
 }
 
@@ -90,6 +103,38 @@ function normalizeSections(sections) {
 function normalizeHidden(ids) {
   if (!Array.isArray(ids)) return [];
   return [...new Set(ids.map((id) => String(id)).filter(Boolean))];
+}
+
+// A stored difficulty, tolerating missing or unknown values (treated as
+// uncategorised) - used when reading records from disk.
+function storedDifficulty(value) {
+  const out = {};
+  for (const subject of SUBJECTS) {
+    out[subject] = LEVELS.includes(value?.[subject]) ? value[subject] : null;
+  }
+  return out;
+}
+
+// A difficulty coming from the API. `patch` may name one subject or both;
+// subjects it leaves out keep their value from `base`. null / '' clears a
+// subject back to uncategorised. Unknown levels are rejected.
+function normalizeDifficulty(patch, base) {
+  const out = storedDifficulty(base);
+  if (patch == null) return out;
+  if (typeof patch !== 'object' || Array.isArray(patch)) {
+    throw Object.assign(new Error('difficulty must be an object like { rw, math }'), { status: 400 });
+  }
+  for (const subject of SUBJECTS) {
+    if (!(subject in patch)) continue;
+    const value = patch[subject];
+    if (value == null || value === '') { out[subject] = null; continue; }
+    const level = String(value).toLowerCase();
+    if (!LEVELS.includes(level)) {
+      throw Object.assign(new Error(`difficulty.${subject} must be one of: ${LEVELS.join(', ')}`), { status: 400 });
+    }
+    out[subject] = level;
+  }
+  return out;
 }
 
 function normalizeProgramId(value) {
@@ -135,7 +180,7 @@ function validateExam(name, sections, ignoreExamId) {
   // exam, which the duplicate check above already prevents.
 }
 
-function createExam({ name, date, programId, sections, studentIds, hiddenStudentIds, isPractice }) {
+function createExam({ name, date, programId, sections, studentIds, hiddenStudentIds, isPractice, difficulty }) {
   const normalized = normalizeSections(sections);
   validateExam(name, normalized, null);
   const pid = requireProgram(programId);
@@ -149,6 +194,7 @@ function createExam({ name, date, programId, sections, studentIds, hiddenStudent
     studentIds: normalizeHidden(studentIds),
     hiddenStudentIds: normalizeHidden(hiddenStudentIds),
     isPractice: Boolean(isPractice),
+    difficulty: normalizeDifficulty(difficulty),
     createdAt: now,
     updatedAt: now,
   };
@@ -184,7 +230,7 @@ function reorderExams(programId, orderedIds) {
   return ordered.map((e) => e.examId);
 }
 
-function updateExam(examId, { name, date, programId, sections, studentIds, hiddenStudentIds, isPractice }) {
+function updateExam(examId, { name, date, programId, sections, studentIds, hiddenStudentIds, isPractice, difficulty }) {
   const all = load();
   const idx = all.findIndex((e) => e.examId === String(examId));
   if (idx < 0) throw Object.assign(new Error('Exam not found'), { status: 404 });
@@ -207,6 +253,8 @@ function updateExam(examId, { name, date, programId, sections, studentIds, hidde
     isPractice: isPractice !== undefined
       ? Boolean(isPractice)
       : Boolean(all[idx].isPractice),
+    // A partial patch ({ rw: 'easy' }) changes one subject and keeps the other.
+    difficulty: normalizeDifficulty(difficulty, all[idx].difficulty),
     updatedAt: new Date().toISOString(),
   };
   validateExam(next.name, next.sections, next.examId);
@@ -216,8 +264,9 @@ function updateExam(examId, { name, date, programId, sections, studentIds, hidde
 }
 
 // Copy an exam's planning data (name + student roster) into a new
-// placeholder. Sections can't be copied — a test may belong to only one
-// exam — and the date/hidden list are specific to the original sitting.
+// placeholder. Sections can't be copied - a test may belong to only one
+// exam - and the date, hidden list and difficulty are specific to the
+// original sitting and its tests.
 function duplicateExam(examId) {
   const source = getExam(examId);
   if (!source) throw Object.assign(new Error('Exam not found'), { status: 404 });
@@ -297,4 +346,5 @@ module.exports = {
   examCurveKey,
   getExamsVersion,
   SECTION_KEYS,
+  SUBJECTS,
 };

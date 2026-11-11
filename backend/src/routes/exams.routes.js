@@ -1,19 +1,23 @@
 // routes/exams.routes.js
 // CRUD for admin-defined SAT exams plus the test picker feed.
-// Curves for an exam are uploaded through the existing /api/scoring-sheets
-// routes using groupId = `exam:<examId>`.
+// An exam is graded by the shared Easy / Medium / Hard scoring sheet its
+// `difficulty` selects, or by a custom sheet uploaded just for it through the
+// /api/scoring-sheets routes using groupId = `exam:<examId>`.
 const express = require('express');
 const exams = require('../services/exam.service');
 const { listCurves, deleteCurve } = require('../services/scoring-sheet.service');
 const { getKnownTests, getTakersForTests } = require('../services/classmarker.service');
 const { getExamScoreboard, getExamTakenDates } = require('../services/sat.service');
+const { describeExamScoring } = require('../services/exam-curve.service');
 const { getProgramRoster, getProgram } = require('../services/program.service');
 const db = require('../services/db.service');
 
 const router = express.Router();
 router.use(express.json());
 
-// GET /api/exams — all exams with their curve upload status merged in.
+// GET /api/exams - all exams with their scoring-sheet status merged in:
+//   sheets  - the exam's own custom sheets, if any ({ rw?, math? })
+//   scoring - the sheet actually grading each subject right now
 router.get('/', async (req, res, next) => {
   try {
     const curves = listCurves();
@@ -25,6 +29,7 @@ router.get('/', async (req, res, next) => {
       takenDate: takenDates[exam.examId] || null,
       curveKey: exams.examCurveKey(exam.examId),
       sheets: curves[exams.examCurveKey(exam.examId)] || {},
+      scoring: describeExamScoring(exam),
     }));
     // Until a program's exams have been dragged into a manual order
     // (program.examOrderCustom), show them chronologically: undated
@@ -360,30 +365,34 @@ router.post('/reorder', (req, res, next) => {
   }
 });
 
-// POST /api/exams — body: { name, date?, sections: { "1": { testId, testName } | null, ... },
-// studentIds?, hiddenStudentIds? }. Sections may all be empty — placeholder
-// exams get created in advance and have tests attached later.
+// POST /api/exams - body: { name, date?, sections: { "1": { testId, testName } | null, ... },
+// studentIds?, hiddenStudentIds?, difficulty?: { rw?, math? } }. Sections may
+// all be empty - placeholder exams get created in advance and have tests
+// attached later.
 router.post('/', (req, res, next) => {
   try {
-    const { name, date, programId, sections, studentIds, hiddenStudentIds, isPractice } = req.body || {};
-    res.json({ success: true, data: exams.createExam({ name, date, programId, sections, studentIds, hiddenStudentIds, isPractice }) });
+    const { name, date, programId, sections, studentIds, hiddenStudentIds, isPractice, difficulty } = req.body || {};
+    res.json({ success: true, data: exams.createExam({ name, date, programId, sections, studentIds, hiddenStudentIds, isPractice, difficulty }) });
   } catch (err) {
     next(err);
   }
 });
 
-// PUT /api/exams/:examId — rename, re-date, re-map sections, set student
-// rosters and/or flip the practice flag.
+// PUT /api/exams/:examId - rename, re-date, re-map sections, set student
+// rosters, flip the practice flag and/or categorise the exam. `difficulty`
+// may name one subject ({ rw: 'easy' }) to leave the other untouched; null
+// clears a subject back to its custom sheet.
 router.put('/:examId', (req, res, next) => {
   try {
-    const { name, date, programId, sections, studentIds, hiddenStudentIds, isPractice } = req.body || {};
-    res.json({ success: true, data: exams.updateExam(req.params.examId, { name, date, programId, sections, studentIds, hiddenStudentIds, isPractice }) });
+    const { name, date, programId, sections, studentIds, hiddenStudentIds, isPractice, difficulty } = req.body || {};
+    res.json({ success: true, data: exams.updateExam(req.params.examId, { name, date, programId, sections, studentIds, hiddenStudentIds, isPractice, difficulty }) });
   } catch (err) {
     next(err);
   }
 });
 
-// DELETE /api/exams/:examId — removes the exam and its uploaded curves.
+// DELETE /api/exams/:examId - removes the exam and its own custom sheets.
+// The shared Easy / Medium / Hard library sheets are never touched.
 router.delete('/:examId', (req, res, next) => {
   try {
     const { examId } = req.params;

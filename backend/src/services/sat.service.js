@@ -1,18 +1,20 @@
 // services/sat.service.js
-// Computes SAT section + total + super scores from webhook question data
-// and per-group scoring curves uploaded via /api/scoring-sheets.
+// Computes SAT section + total + super scores from webhook question data and
+// scoring sheets (see scoring-sheet.service and exam-curve.service for which
+// sheet grades which exam).
 //
 // Section convention (matches webhook.service.js):
 //   Sections 1 & 2 → Reading & Writing (RW)
 //   Sections 3 & 4 → Math
 //
-// Display value is the UPPER bound of each curve at the student's raw correct count.
-// Total = RW_upper + Math_upper for the most recently attempted group.
-// Super = best RW ever + best Math ever, across every group the student took.
+// A section's scaled score is its scoring sheet's value at the student's raw
+// correct count. Total = RW + Math for the most recently attempted exam.
+// Super = best RW ever + best Math ever, across every exam the student took.
 
 const db = require('./db.service');
 const { getCurve, gradeScaled, getCurvesVersion } = require('./scoring-sheet.service');
 const { getTestSectionMap, getTestExamsMap, examCurveKey, getExam, listExams, getExamsVersion } = require('./exam.service');
+const { resolveExamCurve, describeExamScoring } = require('./exam-curve.service');
 const { getProgram, getProgramRoster, isProgramArchived, getProgramsVersion } = require('./program.service');
 const { getStudentResultsGrouped, getResultsForTests, getDataVersion } = require('./classmarker.service');
 
@@ -163,16 +165,29 @@ function gradeRecordsByGroup(records) {
   return Object.values(buckets);
 }
 
+// The exam behind a score bucket, or null for a legacy group bucket (those are
+// keyed by the ClassMarker group id rather than `exam:<id>`).
+function examOfBucket(bucket) {
+  const m = /^exam:(.+)$/.exec(String(bucket.groupId));
+  return m ? getExam(m[1]) : null;
+}
+
 function applyCurves(bucket) {
-  const mathCurve = getCurve(bucket.groupId, 'math');
-  const rwCurve = getCurve(bucket.groupId, 'rw');
+  // Exam buckets are graded by the sheet the exam's difficulty selects (or its
+  // own custom sheet); legacy group buckets by the sheet uploaded to the group.
+  const exam = examOfBucket(bucket);
+  const mathCurve = exam ? resolveExamCurve(exam, 'math').curve : getCurve(bucket.groupId, 'math');
+  const rwCurve = exam ? resolveExamCurve(exam, 'rw').curve : getCurve(bucket.groupId, 'rw');
   // Only scale a section the student actually attempted — a bucket exists as
   // soon as ANY section is taken, so an unattempted section would otherwise be
   // graded as 0 raw and floor to ~200, fabricating a score that was never sat.
   const mathScaled = bucket.mathSeen && mathCurve ? gradeScaled(mathCurve, bucket.mathRaw) : null;
   const rwScaled = bucket.rwSeen && rwCurve ? gradeScaled(rwCurve, bucket.rwRaw) : null;
   const total = mathScaled != null && rwScaled != null ? mathScaled + rwScaled : null;
-  return { ...bucket, mathScaled, rwScaled, total };
+  // The student sat a section that has no scoring sheet yet. Their score is
+  // coming - reports must not describe this exam as "not taken".
+  const awaitingSheet = (bucket.mathSeen && !mathCurve) || (bucket.rwSeen && !rwCurve);
+  return { ...bucket, mathScaled, rwScaled, total, awaitingSheet };
 }
 
 // Program roster for an exam, or null when the exam isn't program-gated. An
@@ -207,7 +222,9 @@ function examRosteredForPlaceholder(exam, sid) {
 // Empty history cards for exams the student is rostered on but has no
 // graded score for yet — upcoming/placeholder exams appear on the report
 // with their scheduled date and dashes, so families see what's coming.
-function rosterPlaceholders(student, gradedKeys) {
+// pendingKeys: exams the student HAS sat but that cannot be scaled yet (no
+// scoring sheet) - their card says the score is pending, not "not taken".
+function rosterPlaceholders(student, gradedKeys, pendingKeys = new Set()) {
   const sid = String(student?.id || '');
   if (!sid || sid.startsWith('sheets:')) return [];
   const placeholders = [];
@@ -224,6 +241,7 @@ function rosterPlaceholders(student, gradedKeys) {
       total: null,
       english: null,
       math: null,
+      pending: pendingKeys.has(key),
       date: exam.date || null,
       timeFinished: exam.date ? Math.floor(new Date(exam.date).getTime() / 1000) : null,
     });
@@ -311,6 +329,8 @@ async function getSatScoresForStudent(student) {
       return examScoreVisible(exam, sid);
     });
   if (buckets.length === 0) return empty;
+  // Sat, but waiting on a scoring sheet.
+  const pendingKeys = new Set(buckets.filter((b) => b.awaitingSheet).map((b) => String(b.groupId)));
 
   // Latest = most recently finished group with AT LEAST ONE section graded.
   // Each card falls back independently to the most recent exam that HAS that
@@ -341,12 +361,13 @@ async function getSatScoresForStudent(student) {
       total: b.total,
       english: b.rwScaled,
       math: b.mathScaled,
+      pending: Boolean(b.awaitingSheet),
       date: b.latestFinished
         ? new Date(b.latestFinished * 1000).toISOString().split('T')[0]
         : null,
       timeFinished: b.latestFinished || null,
     }));
-  allScores.push(...rosterPlaceholders(student, new Set(allScores.map((s) => s.groupId))));
+  allScores.push(...rosterPlaceholders(student, new Set(allScores.map((s) => s.groupId)), pendingKeys));
   // Dated placeholders sort into position; undated ones go last (upcoming).
   allScores.sort((a, b) => (a.timeFinished ?? Infinity) - (b.timeFinished ?? Infinity));
 
@@ -489,9 +510,8 @@ async function getExamScoreboard(examId) {
     }
   }
 
-  const rwCurve = getCurve(examCurveKey(examId), 'rw');
-  const mathCurve = getCurve(examCurveKey(examId), 'math');
-
+  const rwCurve = resolveExamCurve(exam, 'rw').curve;
+  const mathCurve = resolveExamCurve(exam, 'math').curve;
 
   const rows = Array.from(perStudent.entries()).map(([uid, entry]) => {
     let rwRaw = null;
@@ -551,6 +571,8 @@ const isMath = section > 2;
     date: exam.date || modeDate(rows.map((r) => r.date)) || null,
     hasRwCurve: Boolean(rwCurve),
     hasMathCurve: Boolean(mathCurve),
+    // Which sheet grades each subject, so the UI can say what is missing.
+    scoring: describeExamScoring(exam),
     rows,
   };
 }
