@@ -1,334 +1,144 @@
 # ProgressReport
 
-> A full-stack web application that generates professional PDF progress reports for students — built with **React + Vite** (frontend) and **Node.js + Express + Puppeteer** (backend).
+Prime Academy's SAT progress reports. It reads test results from ClassMarker, turns raw scores into scaled SAT scores with scoring sheets, and produces a report for each student that can be viewed, downloaded as a PDF, or emailed to the student and their parents.
+
+- **Frontend:** React 18 + Vite, deployed to GitHub Pages on every push to `main` that touches `frontend/`.
+- **Backend:** Node + Express, deployed to Railway on every push to `main`. PDFs are rendered with Puppeteer. Data lives on a Railway volume (`DATA_DIR=/data`).
 
 ---
 
-## Table of Contents
+## What it does
 
-- [Features](#features)
-- [Tech Stack](#tech-stack)
-- [Project Structure](#project-structure)
-- [Prerequisites](#prerequisites)
-- [Quick Start](#quick-start)
-- [Manual Setup](#manual-setup)
-- [Environment Variables](#environment-variables)
-- [API Reference](#api-reference)
-- [How It Works](#how-it-works)
-- [Troubleshooting](#troubleshooting)
+| Tab | Purpose |
+|---|---|
+| **Students** | Pick a ClassMarker group or a program, list its students, then view or email any student's report. |
+| **Single Student** | Choose a student and a date range, preview the report, download the PDF, or email it. |
+| **Programs** | Group exams into programs, enroll students, map each exam's four DSAT sections to ClassMarker tests, and choose the scoring sheet each exam uses. Scoreboard, hidden students and manual raw-score edits live here too. |
+| **Scoring Sheets** | The shared Easy / Medium / Hard scoring sheets for English and for Math. |
+| **Bulk Send** | Email reports to many students at once, now or at a scheduled time. |
+| **Email** | Write a message to selected students and parents, with or without the report attached. |
+| **Sent Log** | Every email the system has sent. |
+
+## Scoring sheets
+
+A scoring sheet converts a raw score (number of correct answers) into a scaled section score from 200 to 800.
+
+There are **three shared sheets per subject**: Easy, Medium and Hard, for English (Reading & Writing) and for Math. They are added once on the **Scoring Sheets** tab. On the **Programs** tab every exam then gets one English choice and one Math choice:
+
+| Choice | The exam is graded with |
+|---|---|
+| Easy / Medium / Hard | the shared sheet of that level |
+| Custom | a sheet uploaded just for that exam |
+
+Replacing or editing a shared sheet re-grades every exam that uses it. An exam with no choice, or set to a level whose sheet has not been added yet, shows raw scores only, and reports mark it "Score pending" rather than inventing a score.
+
+Exams created before the shared sheets existed keep their own custom sheets and their exact scores until someone picks a level for them.
+
+### Adding a sheet
+
+Upload an `.xlsx` or `.csv`, or paste the cells straight out of Excel or Google Sheets. The layout does not matter: the importer finds the column counting correct answers (0, 1, 2, ...) and the score column(s) next to it. It handles a title row, merged headers, a long table split into side-by-side blocks, several worksheet tabs, and a "480-520" range written in one cell. You always see a preview of what was read before anything is saved.
+
+- **Several score columns** (for example Easy / Medium / Hard in one file): pick the column to use. When a column or tab is named after the level you are filling, it is preselected.
+- **A Lower / Upper range:** both ends are kept, with a switch for which one is used.
+- **Problems in the sheet** (a skipped raw score, a score that goes down) are flagged in the preview.
 
 ---
 
-## Features
-
-- **Student selector** — dropdown populated live from the backend
-- **Date range picker** — pick any start/end date window
-- **One-click PDF generation** — Puppeteer renders a styled, printable PDF server-side
-- **Auto-download** — the PDF lands in your browser's Downloads folder automatically
-- **Stats computed per report** — average, highest, lowest score + performance trend
-- **Clean service-layer architecture** — config / routes / services / templates fully separated
-
----
-
-## Tech Stack
-
-| Layer     | Technology                          |
-|-----------|-------------------------------------|
-| Frontend  | React 18, Vite 5, Axios             |
-| Backend   | Node.js 18+, Express 4, Puppeteer 22|
-| PDF       | Puppeteer (headless Chromium)        |
-| Fonts     | DM Serif Display + DM Sans (Google) |
-| Dev tools | nodemon, concurrently                |
-
----
-
-## Project Structure
+## Project structure
 
 ```
-ProgressReport/
-│
-├── start.sh                  ← Mac/Linux one-click launcher
-├── start.bat                 ← Windows  one-click launcher
-├── package.json              ← Root scripts (concurrently)
-├── requirements.txt          ← Dependency reference doc
-├── README.md
-│
-├── backend/
-│   ├── .env.example          ← Copy to .env before running
-│   ├── package.json
-│   └── src/
-│       ├── server.js         ← Express app entry point
-│       ├── config/
-│       │   └── classmarker.js        ← Mock data & student config
-│       ├── routes/
-│       │   ├── students.routes.js    ← GET /api/students
-│       │   └── report.routes.js      ← POST /api/report
-│       ├── services/
-│       │   ├── classmarker.service.js ← Data fetching logic
-│       │   ├── stats.service.js       ← Score computation (pure)
-│       │   └── pdf.service.js         ← Puppeteer PDF generation
-│       └── templates/
-│           └── report.template.html  ← Styled HTML report template
-│
-└── frontend/
-    ├── index.html
-    ├── vite.config.js
-    ├── package.json
-    └── src/
-        ├── main.jsx
-        ├── App.jsx
-        ├── index.css
-        ├── components/
-        │   └── ui/
-        │       └── Button.jsx          ← Reusable button component
-        ├── features/
-        │   └── report/
-        │       ├── api/
-        │       │   └── reportApi.js    ← Axios calls
-        │       ├── components/
-        │       │   ├── StudentSelector.jsx
-        │       │   ├── DateRangePicker.jsx
-        │       │   └── GenerateReportButton.jsx
-        │       └── hooks/
-        │           └── useGenerateReport.js  ← All form/report logic
-        ├── pages/
-        │   └── ReportPage.jsx          ← Main page
-        ├── services/
-        │   └── apiClient.js            ← Axios instance (baseURL)
-        └── utils/
-            └── downloadFile.js         ← Blob → browser download
+backend/
+  src/
+    server.js
+    routes/        students, report, exams, programs, scoring-sheets, webhooks
+    services/
+      classmarker.service.js   results cache for the ClassMarker API
+      webhook.service.js       per-question results pushed by ClassMarker webhooks
+      db.service.js            SQLite (sql.js) store
+      exam.service.js          exams: sections, program, difficulty
+      program.service.js       programs and their rosters
+      scoring-sheet.service.js storing, reading and applying scoring sheets
+      sheet-parser.service.js  finding the score table in any spreadsheet layout
+      exam-curve.service.js    which sheet grades which exam
+      sat.service.js           section, total and super scores; scoreboards
+      pdf.service.js           report and program summary PDFs
+      email.service.js         ZeptoMail (HTTPS) or SMTP
+    scripts/       python helpers that read .xlsx files
+    templates/     report HTML
+  scripts/seed-demo.js   made-up data for local development
+  test/                  node:test suites
+frontend/
+  src/pages/ReportPage.jsx        tabs and page shell
+  src/features/report/            components, API calls, hooks
 ```
 
 ---
 
-## Prerequisites
+## Running it locally
 
-You need **Node.js 18 or newer** installed on your machine.
-
-| OS      | Download |
-|---------|----------|
-| Mac     | https://nodejs.org  OR  `brew install node` |
-| Windows | https://nodejs.org (use the LTS installer) |
-| Linux   | `sudo apt install nodejs npm`  (Ubuntu/Debian) |
-
-Verify your install:
-```bash
-node -v   # should print v18.x.x or higher
-npm -v    # should print 9.x.x or higher
-```
-
-> **Note:** Puppeteer automatically downloads a compatible version of Chromium (~170 MB) the first time you run `npm install` in the backend folder. This is normal and required for PDF generation.
-
----
-
-## Quick Start
-
-### Mac / Linux
+You need Node 20 or newer and `python3` (used to read `.xlsx` uploads).
 
 ```bash
-# 1. Enter the project folder
-cd ProgressReport
+# Install
+npm install --prefix backend
+npm install --prefix frontend
 
-# 2. Make the script executable (first time only)
-chmod +x start.sh
+# Create made-up programs, exams, students and results (no real data, no
+# ClassMarker credentials needed). Add `-- --empty-library` to start with no
+# shared scoring sheets, or `-- --force` to wipe and reseed.
+npm run seed:demo --prefix backend
 
-# 3. Run everything
-./start.sh
+# Backend on http://localhost:5000
+npm run dev --prefix backend
+
+# Frontend on http://localhost:5173/progressReport/, pointed at the local backend
+VITE_API_URL=http://localhost:5000/api npm run dev --prefix frontend
 ```
 
-The script will:
-- Check for Node.js
-- Copy `.env.example` → `.env` automatically
-- Install all dependencies (backend + frontend)
-- Start both servers
-- Print the URLs to visit
+Without `VITE_API_URL` the frontend talks to the **live** Railway backend, so anything you change there is real.
 
-### Windows
+Without ClassMarker credentials the backend runs offline from whatever is in its data directory, which is what you want for development.
 
-```
-Double-click  start.bat
-```
+On macOS port 5000 is often taken by AirPlay Receiver; set `PORT=5055` for the backend (and use the same port in `VITE_API_URL`) if the server fails to start.
 
-Or from PowerShell / Command Prompt:
-```powershell
-cd ProgressReport
-.\start.bat
-```
-
-Two new terminal windows will open — one for the backend, one for the frontend.
-
-### Using npm (any OS)
-
-From the **project root**:
-```bash
-# Install root + all workspace deps in one shot
-npm install && npm run install:all
-
-# Start both servers concurrently (coloured output)
-npm run dev
-```
-
----
-
-## Manual Setup
-
-If you prefer to run each server separately:
-
-### Backend
-```bash
-cd ProgressReport/backend
-
-# Copy environment file
-cp .env.example .env        # Mac/Linux
-copy .env.example .env      # Windows
-
-# Install (downloads Puppeteer/Chromium on first run)
-npm install
-
-# Start in dev mode (auto-restarts on changes)
-npm run dev
-
-# OR start in production mode
-npm start
-```
-
-Backend runs on → **http://localhost:5000**
-
----
-
-### Frontend
-```bash
-# In a second terminal
-cd ProgressReport/frontend
-
-npm install
-
-npm run dev
-```
-
-Frontend runs on → **http://localhost:5173**
-
----
-
-## Environment Variables
-
-Backend reads from `backend/.env`:
-
-| Variable | Default | Description                    |
-|----------|---------|--------------------------------|
-| `PORT`   | `5000`  | Port the Express server binds to |
-
-The `start.sh` / `start.bat` scripts create this file automatically.  
-To set it manually:
+## Tests
 
 ```bash
-cp backend/.env.example backend/.env
-# Then edit backend/.env if you need a different port
+npm test --prefix backend
 ```
 
-> If you change `PORT`, also update `baseURL` in `frontend/src/services/apiClient.js`.
+The suite covers reading scoring sheets in every supported layout, storing and applying them, and the full path from an exam's Easy / Medium / Hard choice to the scores on the scoreboard and the student report. Each test file uses its own temporary data directory and never touches the network. CI runs the tests and the frontend build on every pull request and every push to `main`.
 
 ---
 
-## API Reference
+## Environment variables (backend)
 
-### `GET /api/students`
+| Variable | Purpose |
+|---|---|
+| `PORT` | Port to listen on. Default `5000`. |
+| `DATA_DIR` | Where all runtime data is stored. Default `backend/data`. On Railway, mount a volume and set `DATA_DIR=/data`. |
+| `CLASSMARKER_API_KEY`, `CLASSMARKER_API_SECRET` | ClassMarker API access. Without them the backend runs offline. |
+| `CLASSMARKER_WEBHOOK_SECRET` | Verifies the signature on incoming ClassMarker webhooks. |
+| `ZEPTOMAIL_TOKEN` | Sends email over HTTPS. Required on Railway plans that block SMTP ports. |
+| `EMAIL_FROM` | Sender, for example `"Prime Academy <admin@primeacademynova.com>"`. |
+| `ZOHO_USER`, `ZOHO_APP_PASSWORD`, `SMTP_HOST`, `SMTP_PORT` | SMTP alternative to ZeptoMail. |
+| `EXPORT_TOKEN` | Protects the results export endpoint. |
 
-Returns all available students.
+Copy `backend/.env.example` to `backend/.env` for local values. Never commit `.env` or anything under `backend/data/`.
 
-**Response**
-```json
-{
-  "success": true,
-  "data": [
-    { "id": "stu-001", "name": "Amara Osei" },
-    { "id": "stu-002", "name": "Liam Nakamura" }
-  ]
-}
-```
+## Deploying
 
----
+Pushing to `main` deploys both halves: Railway rebuilds the backend from `backend/Dockerfile`, and GitHub Actions publishes the frontend to GitHub Pages. The backend takes a few minutes longer than the frontend, so right after a release that adds API endpoints the new pages can briefly show a "Route not found" message until Railway finishes.
 
-### `POST /api/report`
-
-Generates and streams a PDF report.
-
-**Request body**
-```json
-{
-  "studentId": "stu-001",
-  "startDate": "2024-01-01",
-  "endDate":   "2024-03-31"
-}
-```
-
-**Response**  
-Binary PDF stream with headers:
-```
-Content-Type: application/pdf
-Content-Disposition: attachment; filename="progress-report-amara-osei-2024-01-01-to-2024-03-31.pdf"
-```
-
-**Error responses**
-| Status | Cause |
-|--------|-------|
-| `400`  | Missing / invalid fields, or startDate > endDate |
-| `404`  | Student ID not found |
-| `500`  | Internal server error (PDF generation failed) |
-
----
-
-## How It Works
-
-```
-Browser                   Backend
-  │                          │
-  ├─ GET /api/students ──────►│ classmarker.service → returns mock list
-  │◄─ [{ id, name }, …] ─────┤
-  │                          │
-  │  (user fills form)       │
-  │                          │
-  ├─ POST /api/report ───────►│ 1. validate input
-  │  { studentId,            │ 2. classmarker.service → fetch results
-  │    startDate, endDate }  │ 3. stats.service → compute avg/high/low/trend
-  │                          │ 4. pdf.service → render HTML template
-  │                          │ 5. Puppeteer → print to PDF buffer
-  │◄─ [PDF binary stream] ───┤ 6. stream back as application/pdf
-  │                          │
-  downloadFile() saves PDF   │
-  to browser Downloads       │
-```
-
----
+Backend data on the volume is read as-is by newer versions; no migration step is needed.
 
 ## Troubleshooting
 
-**`Error: Cannot find module 'puppeteer'`**  
-→ Run `npm install` inside the `backend/` folder.
+**`npm install` fails in `backend/` with "browser folder exists but the executable is missing"**
+A previous Chrome download was interrupted. Delete `~/.cache/puppeteer/chrome-headless-shell` and install again.
 
-**Puppeteer fails to launch Chromium**  
-On Linux you may need extra dependencies:
-```bash
-sudo apt-get install -y libgbm-dev libnss3 libatk-bridge2.0-0 libdrm2 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libgbm1 libasound2
-```
+**Puppeteer cannot launch Chrome on Linux**
+Install the shared libraries listed in `backend/Dockerfile`.
 
-**CORS error in browser console**  
-→ Make sure the backend is running on port `5000`. Check `backend/.env` and ensure the frontend's `apiClient.js` `baseURL` matches.
-
-**Port already in use**  
-```bash
-# Find and kill the process using port 5000 (Mac/Linux)
-lsof -ti:5000 | xargs kill -9
-# Windows
-netstat -ano | findstr :5000
-taskkill /PID <PID> /F
-```
-
-**PDF is blank or fonts look wrong**  
-→ The report template loads Google Fonts over the network. If you're offline, it falls back to system serif/sans-serif fonts gracefully — content is still correct.
-
----
-
-## License
-
-MIT — free to use, modify, and distribute.
+**Scaled scores are missing for an exam**
+Open the exam's scoreboard on the Programs tab: its title says whether no scoring sheet has been chosen or the chosen level has no sheet yet.
