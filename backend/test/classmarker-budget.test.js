@@ -12,6 +12,7 @@ const requests = []; // pathname of every request sent to ClassMarker
 let categoriesStatus = 200;
 let groupsGate = null; // when set, results requests wait for it to resolve
 let nextGroupsPage = null; // served once by the next results request
+let nextLinksPage = null; // served once by the next link-results request
 
 const reply = (body, status = 200) => ({ ok: status < 400, status, json: async () => body });
 global.fetch = async (url) => {
@@ -28,7 +29,11 @@ global.fetch = async (url) => {
     nextGroupsPage = null;
     return reply(page || { status: 'no_results' });
   }
-  if (pathname.endsWith('/links/recent_results.json')) return reply({ status: 'no_results' });
+  if (pathname.endsWith('/links/recent_results.json')) {
+    const page = nextLinksPage;
+    nextLinksPage = null;
+    return reply(page || { status: 'no_results' });
+  }
   throw new Error(`unexpected ClassMarker request: ${pathname}`);
 };
 
@@ -42,6 +47,19 @@ nextGroupsPage = {
   }],
   groups: [{ group: { group_id: 7, group_name: 'Fall SAT' } }],
   tests: [{ test: { test_id: 5, test_name: 'Diagnostic' } }],
+  more_results_exist: false,
+};
+
+// An anonymous test-link attempt: no ClassMarker login, so an empty id. It
+// must not turn into a student.
+nextLinksPage = {
+  status: 'ok',
+  results: [{
+    result: {
+      cm_user_id: '', first: 'Anon', last: 'Taker', email: 'anon@example.com', test_id: 5, link_result_id: 77,
+      points_scored: 3, points_available: 27, time_finished: Math.floor(Date.now() / 1000) - 1800,
+    },
+  }],
   more_results_exist: false,
 };
 

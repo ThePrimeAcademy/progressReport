@@ -38,6 +38,18 @@ const INCREMENTAL_OVERLAP_SECONDS = 24 * 3600;
 // windows instead of silently dropping whatever lies past one run's reach.
 const PER_RUN_PAGE_BUDGET = 25;
 
+// Who took an attempt, as one field. Link results carry cm_user_id instead
+// of user_id, and an anonymous link attempt (no ClassMarker login) carries an
+// EMPTY id - that is no id at all: kept as '', every anonymous attempt
+// collapsed into one bogus "student" named after whoever took a link test
+// last. Missing ids are null, which every consumer already skips.
+function normalizeUserId(r) {
+  if (r.user_id == null || r.user_id === '') {
+    r.user_id = r.cm_user_id != null && r.cm_user_id !== '' ? r.cm_user_id : null;
+  }
+  return r;
+}
+
 function loadCache() {
   // Any age is acceptable — stale data beats no data, and the incremental
   // refresh catches up cheaply on the first fetchAllResults call.
@@ -49,6 +61,7 @@ function loadCache() {
         if (buf.length > 2 && buf[0] === 0x1f && buf[1] === 0x8b) buf = zlib.gunzipSync(buf);
         const data = JSON.parse(buf.toString('utf-8'));
         if (Array.isArray(data.results)) {
+          data.results.forEach(normalizeUserId);
           console.log(`Loaded cache from ${path.basename(file)} (${data.results.length} results).`);
           return data;
         }
@@ -341,9 +354,7 @@ function refreshFromApi() {
         let newestOnPage = 0;
         for (const raw of data.results) {
           const r = raw.result || raw;
-          // Link results carry cm_user_id — normalize so downstream consumers
-          // (students, scoreboards) see one field. Null stays null (anonymous).
-          if (r.user_id == null && r.cm_user_id != null) r.user_id = r.cm_user_id;
+          normalizeUserId(r);
           newestOnPage = Math.max(newestOnPage, r.time_finished || 0);
           addRow(r);
         }
@@ -451,7 +462,7 @@ function mergeWebhookResult(payload) {
   const groupId = payload?.group?.group_id;
   // No cache yet (cold start, initial fetch in flight) or a link-type payload
   // without group context — skip; the API fetch will pick the result up.
-  if (!memCache || !result || result.user_id == null || testId == null || groupId == null) {
+  if (!memCache || !result || result.user_id == null || result.user_id === '' || testId == null || groupId == null) {
     return false;
   }
 
@@ -959,7 +970,7 @@ async function backfillFromApi(fromTs, maxPages = 25) {
       if (tst.test_id) testMap[String(tst.test_id)] = tst.test_name;
     }
     for (const raw of data.results) {
-      const r = raw.result || raw;
+      const r = normalizeUserId(raw.result || raw);
       const k = resultKey(r);
       if (!byKey.has(k)) byKey.set(k, r);
     }
