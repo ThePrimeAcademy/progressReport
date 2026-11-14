@@ -13,8 +13,13 @@ const BASE_URL = 'https://api.classmarker.com/v1';
 //   - a stale cache refreshes INCREMENTALLY (finishedAfter newest cached
 //     result — normally a single request) instead of re-pulling 85 days
 //   - concurrent callers share one in-flight fetch
+//   - readers never wait on a refresh: a stale cache is served while the
+//     refresh runs in the background (only a cold start with nothing cached
+//     waits), so page loads cost no requests at all
 //   - a failed refresh serves the stale cache and backs off instead of
 //     leaving the app dataless and hammering the API
+//   - a manual Refresh soon after the last sync is answered from the cache:
+//     webhooks already deliver new results within seconds
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '../../data');
 // Gzipped since 2026-08: the plain-JSON cache had grown to 66MB on a 500MB
 // volume shared with the SQLite store (whose flush needs 1x-DB-size headroom).
@@ -97,6 +102,8 @@ function getCacheSnapshot() {
 let categoryMap = {};
 const CATEGORY_CACHE_TTL = 60 * 60 * 1000; // 1 hour
 let categoryFetchedAt = 0;
+let categoryFailedAt = 0;
+let categoryInflight = null;
 
 // Without credentials there is nothing to fetch with - a request would go out
 // signed with "undefined" and fail. That is the normal state of a local
@@ -107,18 +114,47 @@ if (!API_CONFIGURED) {
   console.warn('[classmarker] CLASSMARKER_API_KEY / CLASSMARKER_API_SECRET not set - running offline from stored data only.');
 }
 
-async function fetchCategoryMap() {
-  if (!API_CONFIGURED) return categoryMap;
-  if (Object.keys(categoryMap).length > 0 && Date.now() - categoryFetchedAt < CATEGORY_CACHE_TTL) {
-    return categoryMap;
+// Every request sent to ClassMarker in the last hour, oldest first, so the
+// app can show how much of the hourly budget is in use.
+const HOURLY_REQUEST_LIMIT = 30;
+const HOUR_MS = 60 * 60 * 1000;
+const requestLog = [];
+function noteApiRequest() {
+  requestLog.push(Date.now());
+}
+function requestsLastHour() {
+  const cutoff = Date.now() - HOUR_MS;
+  while (requestLog.length > 0 && requestLog[0] <= cutoff) requestLog.shift();
+  return requestLog.length;
+}
+
+// Category names change rarely, so callers are served the map they already
+// have while a stale one refreshes in the background, concurrent callers share
+// one request (boot used to send two), and a failed fetch waits out a backoff
+// instead of being retried by every webhook and report in the meantime. Only
+// an empty map (first use, or after a hard reset) is waited for.
+function fetchCategoryMap() {
+  if (!API_CONFIGURED) return Promise.resolve(categoryMap);
+  const now = Date.now();
+  const have = Object.keys(categoryMap).length > 0;
+  if (have && now - categoryFetchedAt < CATEGORY_CACHE_TTL) return Promise.resolve(categoryMap);
+  if (!categoryInflight && now - categoryFailedAt >= FETCH_FAILURE_BACKOFF_MS) {
+    categoryInflight = loadCategoryMap().finally(() => { categoryInflight = null; });
   }
+  if (have || !categoryInflight) return Promise.resolve(categoryMap);
+  return categoryInflight;
+}
+
+async function loadCategoryMap() {
   try {
     const url = `${BASE_URL}/categories.json?${authParams()}`;
     console.log("[categories] Fetching categories...");
+    noteApiRequest();
     const res = await fetch(url);
     console.log("[categories] Status:", res.status);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
+    if (data.status === 'error') throw new Error(data.error?.error_message || 'ClassMarker error');
     console.log("[categories] Raw:", JSON.stringify(data).slice(0, 300));
     const newMap = {};
     const addCat = (c) => {
@@ -143,6 +179,7 @@ async function fetchCategoryMap() {
     categoryFetchedAt = Date.now();
     console.log(`[categories] Loaded ${Object.keys(categoryMap).length} categories`);
   } catch (e) {
+    categoryFailedAt = Date.now();
     console.error("[categories] Failed:", e.message);
   }
   return categoryMap;
@@ -165,6 +202,7 @@ function authParams() {
 }
 
 async function fetchResultsPage(finishedAfterTimestamp, kind = 'groups') {
+  noteApiRequest();
   const res = await fetch(
     `${BASE_URL}/${kind}/recent_results.json?${authParams()}&finishedAfterTimestamp=${finishedAfterTimestamp}&limit=200`
   );
@@ -188,8 +226,13 @@ const attemptKey = (r) =>
   r.user_id != null && r.test_id != null ? `${r.user_id}:${r.test_id}:${r.time_finished}` : null;
 
 let inflightFetch = null;
+let lastRefreshFailedAt = 0;
 
-async function fetchAllResults() {
+// The cached results. A stale cache is returned straight away while a refresh
+// runs in the background - nobody waits on ClassMarker, and a slow or
+// rate-limited API can't stall a page load. Only a cold start with nothing
+// cached (or `waitForFresh`, for an explicit refresh) waits for the fetch.
+async function fetchAllResults({ waitForFresh = false } = {}) {
   if (!API_CONFIGURED) {
     if (!memCache) memCache = { results: [], groupMap: {}, testMap: {}, cacheTime: Date.now() };
     return memCache;
@@ -197,6 +240,15 @@ async function fetchAllResults() {
   if (memCache && (Date.now() - memCache.cacheTime) < CACHE_TTL) {
     return memCache;
   }
+  const refresh = refreshFromApi();
+  if (memCache && !waitForFresh) {
+    refresh.catch(() => { /* logged by refreshFromApi; the cache keeps serving */ });
+    return memCache;
+  }
+  return refresh;
+}
+
+function refreshFromApi() {
   // One fetch at a time — concurrent cold callers used to each fire their own
   // full pagination, burning through the 30 req/hour budget in one page load.
   if (inflightFetch) return inflightFetch;
@@ -330,9 +382,12 @@ async function fetchAllResults() {
       // Full TTL either way: the page budget is sized to the hourly quota, so
       // retrying sooner could not fetch more anyway.
       cache.cacheTime = Date.now();
+      if (rateLimited) lastRefreshFailedAt = Date.now();
+      else cache.syncedAt = Date.now();
       persist();
       return cache;
     } catch (e) {
+      lastRefreshFailedAt = Date.now();
       if (cache.results.length > 0) {
         // Serve what we have and back off — a failed refresh must never leave
         // the app dataless or retry on every request. Cursor progress from
@@ -348,6 +403,42 @@ async function fetchAllResults() {
     }
   })();
   return inflightFetch;
+}
+
+// A person pressing Refresh. Every reconcile costs at least two of the 30
+// hourly requests, and new results already arrive through webhooks within
+// seconds, so a refresh shortly after the last sync (or while ClassMarker is
+// backing us off) is answered from the cache instead. Otherwise it waits for
+// the fetch, so the caller gets current data.
+// → { refreshed: boolean, reason?: 'offline' | 'recent' | 'backoff' }
+const MANUAL_REFRESH_MIN_GAP_MS = 5 * 60 * 1000;
+async function refreshResults() {
+  if (!API_CONFIGURED) return { refreshed: false, reason: 'offline' };
+  const now = Date.now();
+  if (memCache && now - (memCache.syncedAt || 0) < MANUAL_REFRESH_MIN_GAP_MS) {
+    return { refreshed: false, reason: 'recent' };
+  }
+  if (memCache && now - lastRefreshFailedAt < FETCH_FAILURE_BACKOFF_MS) {
+    return { refreshed: false, reason: 'backoff' };
+  }
+  const syncedBefore = memCache?.syncedAt || 0;
+  if (memCache) memCache.cacheTime = 0;
+  await fetchAllResults({ waitForFresh: true });
+  // A failed or rate-limited fetch still resolves (with the cached results).
+  return (memCache?.syncedAt || 0) > syncedBefore
+    ? { refreshed: true }
+    : { refreshed: false, reason: 'backoff' };
+}
+
+// How current the results are and how much of the hourly request budget is
+// in use - shown next to the student list.
+function getSyncStatus() {
+  return {
+    live: API_CONFIGURED,
+    syncedAt: memCache?.syncedAt ? new Date(memCache.syncedAt).toISOString() : null,
+    requestsLastHour: requestsLastHour(),
+    hourlyLimit: HOURLY_REQUEST_LIMIT,
+  };
 }
 
 // Splice a just-received webhook result into the cached ClassMarker results so
@@ -408,72 +499,67 @@ function isPlaceholderStudentName(name, id) {
   return String(name) === `User ${id}` || String(name) === `User ${String(id)}`;
 }
 
-async function getAllStudents() {
-  const { results } = await fetchAllResults();
+// Every student, and which of them belong to each ClassMarker group, built in
+// one pass over BOTH stores: the API results cache, and the webhook records -
+// which often carry the real name when the API row only has a bare user_id,
+// and cover students whose only activity predates the API window. A student
+// "belongs" to a group if they have at least one result under it.
+//
+// Reads only the records' identity columns, and is memoized until either
+// store changes: it used to parse every record's questions and raw payload,
+// several times per page load (~1s each in production). The result is shared,
+// so treat it as read-only.
+//   → { students: [{ id, name, email }], groups: [{ groupId, groupName, studentIds }] }
+let directoryMemo = null; // { key, value }
 
-  const seen = new Map();
+async function getStudentDirectory() {
+  const db = require('./db.service');
+  // Loads the cache on first use, and starts a background refresh when it is
+  // stale - without waiting for it.
+  await fetchAllResults();
+  let records = null;
+  try {
+    records = await db.getRecordSummaries();
+  } catch (e) {
+    // DB may not be ready on a cold path - API-cache data is still usable.
+  }
+  // Everything below is synchronous, so the versions read here describe
+  // exactly the data the directory is built from.
+  const key = `${dataVersion}:${db.getRecordsVersion()}`;
+  if (records && directoryMemo && directoryMemo.key === key) return directoryMemo.value;
+  const { results, groupMap } = memCache || { results: [], groupMap: {} };
+
+  const students = new Map(); // id → { id, name, email }
   for (const r of results) {
     // Anonymous link-based attempts have no user — they can't become students.
     if (r.user_id == null) continue;
     const id = String(r.user_id);
     const fullName = `${r.first || ''} ${r.last || ''}`.trim() || r.email || `User ${id}`;
     const email = r.email || null;
-    const prev = seen.get(id);
+    const prev = students.get(id);
     if (!prev) {
-      seen.set(id, { id, name: fullName, email });
+      students.set(id, { id, name: fullName, email });
       continue;
     }
     // Prefer a real name/email when a later attempt has better metadata.
-    const name = !isPlaceholderStudentName(fullName, id)
-      ? fullName
-      : prev.name;
-    seen.set(id, { id, name, email: prev.email || email });
+    const name = !isPlaceholderStudentName(fullName, id) ? fullName : prev.name;
+    students.set(id, { id, name, email: prev.email || email });
   }
-
-  // Webhook store often has first/last when the recent-results API cache only
-  // has a bare user_id — merge so program rosters / bulk send show real names.
-  try {
-    const db = require('./db.service');
-    const records = await db.getAllRecords();
-    for (const r of records) {
-      const id = String(r.student?.userId ?? r.user_id ?? '');
-      if (!id) continue;
-      const webhookName = String(r.student?.name || r.name || '').trim();
-      const webhookEmail = r.student?.email || r.email || null;
-      const prev = seen.get(id);
-      if (!prev) {
-        seen.set(id, {
-          id,
-          name: webhookName || webhookEmail || `User ${id}`,
-          email: webhookEmail,
-        });
-        continue;
-      }
-      const name = webhookName && isPlaceholderStudentName(prev.name, id)
-        ? webhookName
-        : prev.name;
-      seen.set(id, { id, name, email: prev.email || webhookEmail });
+  for (const r of records || []) {
+    const id = String(r.student?.userId ?? r.user_id ?? '');
+    if (!id) continue;
+    const webhookName = String(r.student?.name || r.name || '').trim();
+    const webhookEmail = r.student?.email || r.email || null;
+    const prev = students.get(id);
+    if (!prev) {
+      students.set(id, { id, name: webhookName || webhookEmail || `User ${id}`, email: webhookEmail });
+      continue;
     }
-  } catch (e) {
-    // DB may not be ready on a cold path — API-cache names are still usable.
+    const name = webhookName && isPlaceholderStudentName(prev.name, id) ? webhookName : prev.name;
+    students.set(id, { id, name, email: prev.email || webhookEmail });
   }
 
-  return Array.from(seen.values()).sort((a, b) => a.name.localeCompare(b.name));
-}
-
-// ClassMarker groups with their distinct students, for the main-page student
-// directory. Membership is derived from test attempts (a student "belongs" to
-// a group if they have at least one result under it) across BOTH the API
-// results cache and the webhook store, so students whose only activity
-// predates the API window still show up.
-async function getGroupsWithStudents() {
-  const [{ results, groupMap }, students] = await Promise.all([
-    fetchAllResults(),
-    getAllStudents(),
-  ]);
-  const byId = new Map(students.map((s) => [String(s.id), s]));
-
-  const groups = new Map(); // gid → { groupId, groupName, studentIds:Set }
+  const groups = new Map(); // gid → { groupId, groupName, studentIds: Set }
   const add = (gid, gname, sid) => {
     if (!gid || !sid) return;
     let g = groups.get(gid);
@@ -484,31 +570,48 @@ async function getGroupsWithStudents() {
     if (gname && g.groupName.startsWith('Group #')) g.groupName = gname;
     g.studentIds.add(sid);
   };
-
   for (const r of results) {
     add(String(r.group_id ?? ''), groupMap[String(r.group_id)] || null, String(r.user_id ?? ''));
   }
-  try {
-    const db = require('./db.service');
-    for (const r of await db.getAllRecords()) {
-      const gid = String(r.group?.groupId ?? r.group_id ?? '');
-      const gname = r.group?.groupName ?? r.group_name ?? null;
-      const sid = String(r.student?.userId ?? r.user_id ?? '');
-      add(gid, gname, sid);
-    }
-  } catch (e) {
-    // Webhook store unavailable — API-cache membership is still usable.
+  for (const r of records || []) {
+    add(
+      String(r.group?.groupId ?? r.group_id ?? ''),
+      r.group?.groupName ?? r.group_name ?? null,
+      String(r.student?.userId ?? r.user_id ?? '')
+    );
   }
 
-  return Array.from(groups.values())
-    .map((g) => ({
-      groupId: g.groupId,
-      groupName: g.groupName,
-      students: Array.from(g.studentIds)
-        .map((id) => byId.get(id) || { id, name: `User ${id}`, email: null })
-        .sort((a, b) => a.name.localeCompare(b.name)),
-    }))
-    .sort((a, b) => a.groupName.localeCompare(b.groupName));
+  const nameOf = (id) => students.get(id)?.name || `User ${id}`;
+  const value = {
+    students: Array.from(students.values()).sort((a, b) => a.name.localeCompare(b.name)),
+    groups: Array.from(groups.values())
+      .map((g) => ({
+        groupId: g.groupId,
+        groupName: g.groupName,
+        studentIds: Array.from(g.studentIds).sort((a, b) => nameOf(a).localeCompare(nameOf(b))),
+      }))
+      .sort((a, b) => a.groupName.localeCompare(b.groupName)),
+  };
+  // A directory built without the webhook store is incomplete - rebuild it
+  // on the next call rather than serving it until the data changes.
+  if (records) directoryMemo = { key, value };
+  return value;
+}
+
+async function getAllStudents() {
+  return (await getStudentDirectory()).students;
+}
+
+// ClassMarker groups with their students as full objects - the original
+// shape of GET /students/groups, kept for clients that still use it.
+async function getGroupsWithStudents() {
+  const { students, groups } = await getStudentDirectory();
+  const byId = new Map(students.map((s) => [s.id, s]));
+  return groups.map((g) => ({
+    groupId: g.groupId,
+    groupName: g.groupName,
+    students: g.studentIds.map((id) => byId.get(id) || { id, name: `User ${id}`, email: null }),
+  }));
 }
 
 async function getStudentById(studentId) {
@@ -519,7 +622,8 @@ async function getStudentById(studentId) {
     err.status = 404;
     throw err;
   }
-  return student;
+  // A copy: the directory is shared by every request.
+  return { ...student };
 }
 
 // Helper — apply day-of-week filter if provided (0=Sun,1=Mon,...,5=Fri,6=Sat)
@@ -707,6 +811,7 @@ function invalidateCache() {
 // exhaust ClassMarker's 30 req/hour budget alone — avoid on every boot.
 function clearCache() {
   memCache = null;
+  dataVersion++; // results derived from the dropped cache are stale now
   try {
     fs.rmSync(CACHE_GZ_FILE, { force: true });
     fs.rmSync(CACHE_FILE, { force: true });
@@ -717,6 +822,7 @@ function clearCache() {
   // the next fetch instead of waiting for the 1h TTL.
   categoryMap = {};
   categoryFetchedAt = 0;
+  categoryFailedAt = 0;
   console.log('Cache cleared (results + category map).');
 }
 
@@ -872,6 +978,9 @@ module.exports = {
   getAllStudents,
   getStudentById,
   getGroupsWithStudents,
+  getStudentDirectory,
+  refreshResults,
+  getSyncStatus,
   getStudentResults,
   getStudentResultsGrouped,
   getLatestTestResult,

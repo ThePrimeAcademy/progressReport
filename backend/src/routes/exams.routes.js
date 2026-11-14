@@ -65,7 +65,7 @@ router.get('/', async (req, res, next) => {
 // an exam so the UI can disable them.
 router.get('/available-tests', async (req, res, next) => {
   try {
-    const records = await db.getAllRecords();
+    const records = await db.getRecordSummaries();
     const assigned = exams.getTestSectionMap();
     const tests = new Map(); // testId → summary (groups: Map gid → {groupId, groupName, lastSeen})
 
@@ -298,7 +298,7 @@ router.get('/:examId/takers', async (req, res, next) => {
     const isEnrolled = (id) => enrolled === null || enrolled.has(id);
     const takers = new Map(); // id → name
 
-    for (const r of await db.getAllRecords()) {
+    for (const r of await db.getRecordSummaries()) {
       const tid = String(r.test?.testId ?? r.test_id ?? '');
       if (!testIds.has(tid)) continue;
       if (groupFilter && (r.group?.groupName ?? r.group_name ?? null) !== groupFilter) continue;

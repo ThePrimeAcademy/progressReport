@@ -353,6 +353,7 @@ async function upsertRecord(record) {
         JSON.stringify(record.raw || {}),
         record.receivedAt ?? new Date().toISOString(),
     ]);
+    noteRecordsChanged();
     flush();
 }
 
@@ -361,30 +362,24 @@ async function findMatchingRecords(student, startDate, endDate, dayOfWeek) {
     const startTs = Math.floor(new Date(startDate).getTime() / 1000);
     const endTs = Math.floor(new Date(endDate).getTime() / 1000) + 86399; // include the entire end day
 
-    const result = db.exec(
-        'SELECT * FROM webhook_results WHERE time_finished >= ? AND time_finished <= ?',
-        [startTs, endTs]
-    );
-
-    if (!result.length) return [];
-
-    const cols = result[0].columns;
-    const rows = result[0].values.map((row) => {
-        const obj = {};
-        cols.forEach((c, i) => { obj[c] = row[i]; });
-        return obj;
-    });
-
     const studentId = String(student.id || '');
     const studentEmail = (student.email || '').trim().toLowerCase();
     const studentName = (student.name || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '');
+    if (!studentId && !studentEmail && !studentName) return [];
 
-    const filtered = rows.filter((row) => {
-        if (studentId && row.user_id && row.user_id === studentId) return true;
-        if (studentEmail && row.normalized_email && row.normalized_email === studentEmail) return true;
-        if (studentName && row.normalized_name && row.normalized_name === studentName) return true;
-        return false;
-    });
+    // Match the student inside SQLite: copying every row of the window out of
+    // sql.js just to keep one student's handful cost ~0.3s per call. An empty
+    // identifier never matches (a blank email must not pull in every record
+    // that also lacks one).
+    const filtered = rowsToObjects(db.exec(
+        `SELECT * FROM webhook_results
+          WHERE time_finished >= ? AND time_finished <= ?
+            AND ((? <> '' AND user_id = ?)
+              OR (? <> '' AND normalized_email = ?)
+              OR (? <> '' AND normalized_name = ?))
+          ORDER BY id`,
+        [startTs, endTs, studentId, studentId, studentEmail, studentEmail, studentName, studentName]
+    ));
 
     let matched = filtered;
     if (dayOfWeek && dayOfWeek.length > 0) {
@@ -421,6 +416,10 @@ function parseRow(row) {
     };
 }
 
+// Every record with its per-question detail and raw ClassMarker payload
+// parsed. Expensive: those columns are most of the database (~1s per call in
+// production), so prefer getRecordSummaries() or getRecordsForTests() unless
+// every record's questions are really needed.
 async function getAllRecords() {
     const db = await getDb();
     const result = db.exec('SELECT * FROM webhook_results');
@@ -431,6 +430,68 @@ async function getAllRecords() {
         cols.forEach((c, i) => { obj[c] = row[i]; });
         return parseRow(obj);
     });
+}
+
+// ── Light record views ─────────────────────────────────────────────────────
+// Bumped on every write to webhook_results, so anything derived from the
+// records (student lists, group rosters) can be cached until they change.
+let _recordsVersion = 0;
+function noteRecordsChanged() {
+    _recordsVersion += 1;
+}
+function getRecordsVersion() {
+    return _recordsVersion;
+}
+
+// Who took which test, when, and under which group - every record, without
+// the heavy questions / category_results / raw JSON. Same field names as
+// getAllRecords() for the columns it has. ~17x cheaper to read, and cached
+// until the records change, so the array is shared: treat it as read-only.
+let _summaries = null; // { version, rows }
+async function getRecordSummaries() {
+    const db = await getDb();
+    if (_summaries && _summaries.version === _recordsVersion) return _summaries.rows;
+    const version = _recordsVersion;
+    const rows = rowsToObjects(db.exec(
+        `SELECT id, user_id, email, name, test_id, test_name, group_id, group_name,
+                time_finished, received_at
+           FROM webhook_results
+          ORDER BY id`
+    )).map((row) => ({
+        ...row,
+        student: { userId: row.user_id, email: row.email, name: row.name },
+        test: { testId: row.test_id, testName: row.test_name },
+        group: { groupId: row.group_id, groupName: row.group_name },
+        timeFinished: row.time_finished,
+        receivedAt: row.received_at,
+    }));
+    _summaries = { version, rows };
+    return rows;
+}
+
+// Full records (questions parsed) for the given test ids only - an exam's
+// scoreboard needs a few hundred rows, not the whole store.
+async function getRecordsForTests(testIds) {
+    const ids = [...new Set([...testIds].map(String))];
+    if (ids.length === 0) return [];
+    const db = await getDb();
+    return rowsToObjects(db.exec(
+        `SELECT * FROM webhook_results WHERE test_id IN (${ids.map(() => '?').join(',')}) ORDER BY id`,
+        ids
+    )).map(parseRow);
+}
+
+// test id, finish time and questions of every record - what the "latest
+// category of each question" lookup needs, without the raw payload.
+async function getQuestionSnapshots() {
+    const db = await getDb();
+    return rowsToObjects(db.exec(
+        'SELECT test_id, time_finished, questions FROM webhook_results ORDER BY id'
+    )).map((row) => ({
+        test_id: row.test_id,
+        timeFinished: row.time_finished,
+        questions: JSON.parse(row.questions || '[]'),
+    }));
 }
 
 // ── Manual raw-score overrides ─────────────────────────────────────────────
@@ -463,6 +524,7 @@ async function setManualRawScore(id, { score, reason }) {
          WHERE id = ?`,
         [Number(score), Number(score), String(reason || '').trim(), new Date().toISOString(), Number(id)]
     );
+    noteRecordsChanged();
     flushNow(); // durability: an audit-relevant edit must survive an immediate crash
     return getRecordById(id);
 }
@@ -487,6 +549,7 @@ async function clearManualOverride(id) {
          WHERE id = ?`,
         [Number(id)]
     );
+    noteRecordsChanged();
     flushNow();
     return getRecordById(id);
 }
@@ -541,6 +604,7 @@ async function createOverrideRecord(record, { score, reason }) {
             new Date().toISOString(),
         ]
     );
+    noteRecordsChanged();
     flushNow();
     const rows = rowsToObjects(db.exec(
         'SELECT * FROM webhook_results WHERE record_key = ?', [record.key]
@@ -565,6 +629,7 @@ async function updateQuestions(id, questions) {
     db.run('UPDATE webhook_results SET questions = ? WHERE id = ?', [
         JSON.stringify(questions), id,
     ]);
+    noteRecordsChanged();
     flush();
 }
 
@@ -865,6 +930,10 @@ module.exports = {
     upsertRecord,
     findMatchingRecords,
     getAllRecords,
+    getRecordSummaries,
+    getRecordsForTests,
+    getQuestionSnapshots,
+    getRecordsVersion,
     getRecordById,
     setManualRawScore,
     clearManualOverride,
