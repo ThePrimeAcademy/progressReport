@@ -11,9 +11,9 @@ export const LEVEL_LABEL = { easy: 'Easy', medium: 'Medium', hard: 'Hard' };
 // Tailwind classes: `badge` for a level chip (with Badge variant="outline"),
 // `on` for the selected button of a level picker.
 export const LEVEL_STYLE = {
-  easy: { badge: 'border-emerald-200 bg-emerald-50 text-emerald-700', on: 'data-[state=on]:bg-emerald-50 data-[state=on]:text-emerald-700' },
-  medium: { badge: 'border-sky-200 bg-sky-50 text-sky-700', on: 'data-[state=on]:bg-sky-50 data-[state=on]:text-sky-700' },
-  hard: { badge: 'border-violet-200 bg-violet-50 text-violet-700', on: 'data-[state=on]:bg-violet-50 data-[state=on]:text-violet-700' },
+  easy: { badge: 'border-green-200 bg-green-50 text-green-700', on: 'data-[state=on]:bg-green-50 data-[state=on]:text-green-700' },
+  medium: { badge: 'border-blue-200 bg-blue-50 text-blue-700', on: 'data-[state=on]:bg-blue-50 data-[state=on]:text-blue-700' },
+  hard: { badge: 'border-purple-200 bg-purple-50 text-purple-700', on: 'data-[state=on]:bg-purple-50 data-[state=on]:text-purple-700' },
 };
 
 // `key` is the section name the API uses.
