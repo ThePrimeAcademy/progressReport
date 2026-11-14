@@ -421,7 +421,7 @@ async function getExamTakenDates() {
     }
   };
   // Webhook store …
-  for (const r of await db.getAllRecords()) {
+  for (const r of await db.getRecordSummaries()) {
     push(r.test?.testId ?? r.test_id, r.timeFinished);
   }
   // … plus the ClassMarker API cache, so exams whose attempts predate webhook
@@ -463,7 +463,7 @@ async function getExamScoreboard(examId) {
   };
 
   if (sectionOfTest.size > 0) {
-    for (const r of await db.getAllRecords()) {
+    for (const r of await db.getRecordsForTests(sectionOfTest.keys())) {
       const tid = String(r.test?.testId ?? r.test_id ?? '');
       if (!sectionOfTest.has(tid)) continue;
       const uid = String(r.student?.userId ?? r.user_id ?? '');

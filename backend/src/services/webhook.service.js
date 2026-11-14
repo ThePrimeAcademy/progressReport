@@ -198,8 +198,16 @@ function computeLatestQuestionCategories(records) {
   return latest;
 }
 
+// Memoized until a record changes: the lookup reads every record's questions,
+// and a single report preview asks for it twice (a bulk send, once per
+// student). The map is shared - read it, never modify it.
+let latestCategoriesMemo = null; // { version, map }
 async function getLatestQuestionCategories() {
-  return computeLatestQuestionCategories(await db.getAllRecords());
+  const version = db.getRecordsVersion();
+  if (latestCategoriesMemo && latestCategoriesMemo.version === version) return latestCategoriesMemo.map;
+  const map = computeLatestQuestionCategories(await db.getQuestionSnapshots());
+  latestCategoriesMemo = { version, map };
+  return map;
 }
 
 // When a student has no SAT exam on file, Weekly Performance falls back to

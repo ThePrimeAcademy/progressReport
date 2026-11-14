@@ -4,8 +4,10 @@ const {
   getAllStudents,
   getStudentById,
   getGroupsWithStudents,
+  getStudentDirectory,
+  refreshResults,
+  getSyncStatus,
   clearCache,
-  invalidateCache,
   fetchCategoryMap,
   getCategoryName,
 } = require('../services/classmarker.service');
@@ -27,26 +29,57 @@ router.get('/', async (req, res, next) => {
 });
 
 /**
+ * GET /api/students/directory
+ * Everything the student pickers need in one response: every student, which
+ * of them belong to each ClassMarker group (as ids), and how current the
+ * results are. Served from the server's caches - it never calls ClassMarker.
+ *   → { students: [{ id, name, email }],
+ *       groups: [{ groupId, groupName, studentIds }],
+ *       sync: { live, syncedAt, requestsLastHour, hourlyLimit } }
+ */
+router.get('/directory', async (req, res, next) => {
+  try {
+    const directory = await getStudentDirectory();
+    res.json({ success: true, data: { ...directory, sync: getSyncStatus() } });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
  * POST /api/students/refresh
- * Soft-refresh by default: mark the in-memory cache stale so the next fetch
- * is incremental (usually 1 ClassMarker request). Pass ?hard=1 to wipe the
- * disk cache and re-pull the full window — that can burn the entire 30/hour
- * budget and should only be used when data is clearly corrupt/stale.
+ * Soft refresh by default: an incremental pull of anything new (usually 2
+ * ClassMarker requests) - skipped when the last sync was only minutes ago or
+ * ClassMarker is backing us off, since webhooks deliver new results anyway.
+ * Pass ?hard=1 to wipe the disk cache and re-pull the full window - that can
+ * burn the entire 30/hour budget and should only be used when data is clearly
+ * corrupt/stale.
  */
 router.post('/refresh', async (req, res, next) => {
   try {
     const hard = req.query.hard === '1' || req.query.hard === 'true'
       || req.body?.hard === true || req.body?.hard === '1';
-    if (hard) clearCache();
-    else invalidateCache();
-    const [students, categoryMap] = await Promise.all([getAllStudents(), fetchCategoryMap()]);
-    const categoriesLoaded = Object.keys(categoryMap || {}).length;
+    let outcome;
+    if (hard) {
+      clearCache();
+      const [, categoryMap] = await Promise.all([getAllStudents(), fetchCategoryMap()]);
+      outcome = { refreshed: true, categoriesLoaded: Object.keys(categoryMap || {}).length };
+    } else {
+      outcome = await refreshResults();
+    }
+    const directory = await getStudentDirectory();
+    const message = {
+      offline: 'Running offline - ClassMarker is not configured on this server.',
+      recent: 'Already up to date - synced with ClassMarker in the last few minutes.',
+      backoff: 'ClassMarker is not answering right now - showing the results already loaded.',
+    }[outcome.reason] || `Refreshed - ${directory.students.length} students.`;
     res.json({
       success: true,
-      message: `Cache ${hard ? 'hard-' : ''}refreshed — ${students.length} students, ${categoriesLoaded} categories loaded`,
-      categoriesLoaded,
+      ...outcome,
       hard: Boolean(hard),
-      data: students,
+      message,
+      data: directory.students,
+      directory: { ...directory, sync: getSyncStatus() },
     });
   } catch (err) {
     next(err);
