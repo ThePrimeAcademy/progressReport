@@ -1,221 +1,66 @@
 // features/report/components/BulkSendPanel.jsx
-import React, { useEffect, useMemo, useState } from 'react';
-import Button from '../../../components/ui/Button.jsx';
-import DateRangePicker from './DateRangePicker.jsx';
-import DayPicker from './DayPicker.jsx';
+// Bulk Send: email progress reports to many students at once - now (sent
+// from this page, three at a time) or at a scheduled time (sent by the
+// server, so the page can be closed).
+import React, { useMemo, useState } from 'react';
+import { LuCalendarClock, LuSave, LuSend, LuUsers } from 'react-icons/lu';
+import { cn } from '@/lib/utils';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { ButtonGroup } from '@/components/ui/button-group';
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty';
+import { Field, FieldDescription, FieldLabel } from '@/components/ui/field';
+import { Input } from '@/components/ui/input';
+import { Progress } from '@/components/ui/progress';
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectSeparator,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Spinner } from '@/components/ui/spinner';
+import { Notice } from '@/components/common/Notice';
+import DateRangePicker from '@/components/common/DateRangePicker';
+import DayOfWeekPicker from '@/components/common/DayOfWeekPicker';
+import ScheduleTimePicker from '@/components/common/ScheduleTimePicker';
 import {
   emailReport,
   fetchEmailJobStatus,
   saveStudentContacts,
-  fetchPrograms,
-  fetchStudents,
   scheduleBulkEmail,
 } from '../api/reportApi.js';
+import {
+  useContacts,
+  useEmailConfigured,
+  useNoteContactsSaved,
+  usePrograms,
+  useStudents,
+  useStudentsById,
+} from '../api/queries.js';
+import { DEFAULT_REPORT_SUBJECT, isValidContactField } from '../constants.js';
+import { SendStatusBadge, formatSendTime } from './sendStatus.jsx';
 
 const MAX_CONCURRENCY = 3;
 const POLL_INTERVAL_MS = 2000;
-// ~4 minutes — PDF + optional program summary + Zoho SMTP can exceed 2 min each.
+// ~4 minutes - PDF + optional program summary + email can exceed 2 min each.
 const MAX_POLL_ATTEMPTS = 120;
+const ALL_STUDENTS = '__all__';
 
-const STATUS_LABEL = {
-  pending: '⏳ Queued',
-  sending: '📨 Sending…',
-  sent: '✓ Sent',
-  deduped: '✓ Already sent',
-  skipped: '⊘ No contacts',
-  failed: '✗ Failed',
+// Which recipients a student would get, from their EFFECTIVE emails
+// (typed here > saved contacts > ClassMarker email).
+const CONTACT_STATE = {
+  both: { label: 'Student + parent', variant: 'success' },
+  studentOnly: { label: 'Student only', variant: 'secondary' },
+  parentOnly: { label: 'Parent only', variant: 'secondary' },
+  none: { label: 'No contacts', variant: 'warning' },
 };
-
-const STATUS_COLOR = {
-  pending: '#6b7280',
-  sending: '#1a56db',
-  sent: '#15803d',
-  deduped: '#15803d',
-  skipped: '#b45309',
-  failed: '#b91c1c',
-};
-
-const s = {
-  card: {
-    background: 'var(--bg)',
-    borderRadius: 16,
-    boxShadow: 'var(--shadow-lg)',
-    border: '1.5px solid var(--border)',
-    overflow: 'hidden',
-    marginTop: 28,
-  },
-  head: {
-    padding: '18px 24px',
-    borderBottom: '1px solid var(--border)',
-    display: 'flex',
-    alignItems: 'center',
-    gap: 10,
-  },
-  dot: { width: 8, height: 8, borderRadius: '50%', background: 'var(--accent)' },
-  title: { fontSize: '0.85rem', fontWeight: 600, color: 'var(--ink)' },
-  body: { padding: 24, display: 'flex', flexDirection: 'column', gap: 18 },
-  divider: { height: 1, background: 'var(--border)' },
-  label: {
-    fontSize: '0.72rem',
-    fontWeight: 600,
-    letterSpacing: '0.07em',
-    textTransform: 'uppercase',
-    color: 'var(--muted)',
-  },
-  listHeader: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 6,
-  },
-  selectActions: { display: 'flex', gap: 12, fontSize: '0.72rem' },
-  selectAction: {
-    background: 'none',
-    border: 'none',
-    color: 'var(--accent)',
-    cursor: 'pointer',
-    fontWeight: 600,
-    padding: '2px 4px',
-  },
-  list: {
-    maxHeight: 280,
-    overflowY: 'auto',
-    border: '1.5px solid var(--border)',
-    borderRadius: 8,
-    background: '#fafbff',
-  },
-  rowWrap: {
-    borderBottom: '1px solid var(--border)',
-  },
-  row: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 10,
-    padding: '8px 14px',
-    fontSize: '0.88rem',
-    cursor: 'pointer',
-    userSelect: 'none',
-  },
-  emailRow: {
-    display: 'grid',
-    gridTemplateColumns: '1fr 1fr',
-    gap: 8,
-    padding: '0 14px 10px 38px',
-    background: '#fafbff',
-  },
-  emailField: { display: 'flex', flexDirection: 'column', gap: 3 },
-  emailLabel: {
-    fontSize: '0.62rem',
-    fontWeight: 600,
-    letterSpacing: '0.06em',
-    textTransform: 'uppercase',
-    color: 'var(--muted)',
-  },
-  emailInput: {
-    padding: '6px 10px',
-    border: '1.5px solid var(--border)',
-    borderRadius: 6,
-    background: 'var(--bg)',
-    color: 'var(--ink)',
-    fontFamily: 'var(--font-sans)',
-    fontSize: '0.82rem',
-    outline: 'none',
-    width: '100%',
-    boxSizing: 'border-box',
-  },
-  checkbox: { accentColor: 'var(--accent)' },
-  studentName: { flex: 1 },
-  contactPill: {
-    fontSize: '0.65rem',
-    fontWeight: 600,
-    padding: '2px 8px',
-    borderRadius: 99,
-    letterSpacing: '0.04em',
-    textTransform: 'uppercase',
-  },
-  contactsBoth: { background: '#dcfce7', color: '#15803d' },
-  contactsPartial: { background: '#dbeafe', color: '#1a56db' },
-  contactsNone: { background: '#fef3c7', color: '#92400e' },
-  input: {
-    width: '100%',
-    boxSizing: 'border-box',
-    padding: '10px 14px',
-    border: '1.5px solid var(--border)',
-    borderRadius: 8,
-    background: 'var(--bg)',
-    color: 'var(--ink)',
-    fontFamily: 'var(--font-sans)',
-    fontSize: '0.95rem',
-    outline: 'none',
-  },
-  statusTable: {
-    border: '1.5px solid var(--border)',
-    borderRadius: 10,
-    overflow: 'hidden',
-  },
-  statusRow: {
-    display: 'grid',
-    gridTemplateColumns: '1fr 130px',
-    alignItems: 'center',
-    gap: 12,
-    padding: '8px 14px',
-    borderBottom: '1px solid var(--border)',
-    fontSize: '0.85rem',
-  },
-  statusName: { color: 'var(--ink)' },
-  statusBadge: { fontWeight: 600, fontSize: '0.78rem', textAlign: 'right' },
-  errLine: { gridColumn: '1 / -1', color: '#b91c1c', fontSize: '0.74rem', marginTop: 2 },
-  emptyHint: {
-    padding: '12px 14px',
-    fontSize: '0.82rem',
-    color: 'var(--muted)',
-    fontStyle: 'italic',
-  },
-  scheduleBox: {
-    border: '1.5px dashed var(--border)',
-    borderRadius: 12,
-    padding: '14px 16px',
-    background: '#fafbff',
-    display: 'flex',
-    flexDirection: 'column',
-    gap: 10,
-  },
-  scheduleHead: { display: 'flex', alignItems: 'center', gap: 8 },
-  scheduleOptional: {
-    fontSize: '0.6rem',
-    fontWeight: 600,
-    letterSpacing: '0.06em',
-    textTransform: 'uppercase',
-    color: 'var(--muted)',
-    background: 'var(--bg)',
-    border: '1px solid var(--border)',
-    borderRadius: 99,
-    padding: '2px 8px',
-  },
-  scheduleRow: { display: 'flex', gap: 10, alignItems: 'stretch', flexWrap: 'wrap' },
-  scheduleInput: {
-    flex: 1,
-    minWidth: 200,
-    padding: '10px 14px',
-    border: '1.5px solid var(--border)',
-    borderRadius: 8,
-    background: 'var(--bg)',
-    color: 'var(--ink)',
-    fontFamily: 'var(--font-sans)',
-    fontSize: '0.92rem',
-    outline: 'none',
-    colorScheme: 'light',
-  },
-  scheduleHint: { fontSize: '0.74rem', color: 'var(--muted)', lineHeight: 1.5, margin: 0 },
-  scheduleErr: { fontSize: '0.8rem', color: '#b91c1c', fontWeight: 500 },
-  scheduleOk: { fontSize: '0.8rem', color: '#15803d', fontWeight: 500 },
-};
-
-// datetime-local wants "YYYY-MM-DDTHH:mm" in LOCAL time (no timezone suffix).
-function toDatetimeLocalValue(date) {
-  const pad = (n) => String(n).padStart(2, '0');
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
-}
 
 async function pollJobUntilTerminal(jobId) {
   for (let i = 0; i < MAX_POLL_ATTEMPTS; i++) {
@@ -224,150 +69,100 @@ async function pollJobUntilTerminal(jobId) {
     try {
       job = await fetchEmailJobStatus(jobId);
     } catch (err) {
-      // Job map is in-memory — a Railway restart mid-send yields 404.
-      const msg = err.response?.data?.error || err.message || 'Job status check failed';
-      if (err.response?.status === 404) {
-        throw new Error('Send job lost (server restarted mid-send). Try again.');
+      // The job map is in memory - a Railway restart mid-send yields 404.
+      if (err.status === 404) {
+        throw new Error('Send job lost (the server restarted mid-send). Try again.');
       }
-      throw new Error(msg);
+      throw new Error(err.message || 'Job status check failed');
     }
     if (job?.status === 'sent' || job?.status === 'failed') return job;
   }
   throw new Error(
-    'Send timed out waiting for the server (~4 min). Check Railway logs for [report-delivery] / [SMTP ERROR].'
+    'Send timed out waiting for the server (~4 min). Check the Railway logs for [report-delivery] / [SMTP ERROR].'
+  );
+}
+
+function ListSkeleton() {
+  return (
+    <div aria-busy="true" aria-label="Loading students">
+      {Array.from({ length: 6 }, (_, i) => (
+        <div key={i} className="flex items-center gap-3 border-b px-4 py-3 last:border-b-0">
+          <Skeleton className="size-4 rounded-[4px]" />
+          <Skeleton className="h-3.5 w-44" />
+          <Skeleton className="ml-auto h-5 w-24 rounded-full" />
+        </div>
+      ))}
+    </div>
   );
 }
 
 export default function BulkSendPanel({
-  students,
-  startDate, endDate, dayOfWeek,
-  onStartDate, onEndDate, onDayOfWeek,
-  allContacts = {},
-  allContactsLoading = false,
-  onContactsPersisted,
+  startDate, endDate, onStartDate, onEndDate,
+  dayOfWeek, onDayOfWeek,
   onScheduled,
 }) {
+  const { students, isPending: studentsLoading } = useStudents();
+  const studentsById = useStudentsById();
+  const { programs } = usePrograms();
+  const { contacts: allContacts, isPending: contactsLoading } = useContacts();
+  const noteContactsSaved = useNoteContactsSaved();
+  const emailConfigured = useEmailConfigured();
+
   const [selectedIds, setSelectedIds] = useState(() => new Set());
-  const [subject, setSubject] = useState('Prime Academy Weekly Report');
+  const [subject, setSubject] = useState(DEFAULT_REPORT_SUBJECT);
   // Which program's summary rides along with each report: 'auto' = each
   // student's own program, 'none' = report only, or a specific programId.
   const [summaryProgramId, setSummaryProgramId] = useState('auto');
   const [running, setRunning] = useState(false);
   const [results, setResults] = useState({});
   const [globalError, setGlobalError] = useState(null);
-  // Per-row email overrides keyed by student id. Effective email =
+  // Per-row email edits keyed by student id. Effective email =
   // edit > saved contact > ClassMarker registered email (student field).
-  // Edits auto-save to student_contacts on blur (and via the Save-all
-  // button) so typed emails survive switching pages/modes — previously they
-  // only persisted as a side effect of a successful send.
+  // Edits save to the student's contacts on blur (and via "Save contacts"),
+  // so typed emails survive switching pages.
   const [rowEdits, setRowEdits] = useState({});
   // id → 'saving' | 'saved' | 'error:<message>'
   const [saveStates, setSaveStates] = useState({});
-  const contactsLoading = allContactsLoading;
 
-  // Schedule-for-later: a datetime-local string ('' = send now). Submitting
-  // persists a server-side batch instead of sending from the browser.
+  // Schedule for later: a local 'YYYY-MM-DDTHH:mm' string ('' = not set).
+  // Submitting stores a server-side batch instead of sending from the browser.
   const [sendAt, setSendAt] = useState('');
   const [scheduling, setScheduling] = useState(false);
-  const [scheduleMsg, setScheduleMsg] = useState(null); // { type: 'success'|'error', text }
+  const [scheduleMsg, setScheduleMsg] = useState(null); // { type: 'success' | 'error', text }
 
-  // Program scoping: '' = all active students (the date-filtered list passed
-  // in), otherwise a programId — the list then becomes that program's enrolled
-  // roster, all pre-selected so you send to the whole cohort and uncheck to
-  // omit anyone. Programs + the full student roster (id/name/email) are loaded
-  // here so a rostered student shows even if they weren't active this week.
-  const [scope, setScope] = useState('');
-  const [programs, setPrograms] = useState([]);
-  const [fullRoster, setFullRoster] = useState([]);
+  // Who the list shows: every student, or one program's enrolled roster.
+  const [scope, setScope] = useState(ALL_STUDENTS);
+  const activeProgram = programs.find((p) => p.programId === scope) || null;
 
-  useEffect(() => {
-    let cancelled = false;
-    Promise.all([fetchPrograms().catch(() => []), fetchStudents().catch(() => [])])
-      .then(([programList, roster]) => {
-        if (cancelled) return;
-        setPrograms(programList || []);
-        setFullRoster(roster || []);
-      });
-    return () => { cancelled = true; };
-  }, []);
+  // Students in the list, sorted by name. A program's roster maps each
+  // enrolled id to its student (falling back to a bare row, so nobody is
+  // silently dropped).
+  const sortedStudents = useMemo(() => {
+    const toRow = (rawId, st) => {
+      const id = String(rawId);
+      return { id, name: st?.name || `User ${id}`, email: st?.email || '' };
+    };
+    const base = activeProgram
+      ? (activeProgram.studentIds || []).map((id) => toRow(id, studentsById.get(String(id))))
+      : students.map((st) => toRow(st.id, st));
+    return base.sort((a, b) => a.name.localeCompare(b.name));
+  }, [activeProgram, studentsById, students]);
 
-  const EMAIL_RX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  const rowById = useMemo(() => new Map(sortedStudents.map((st) => [st.id, st])), [sortedStudents]);
 
-  const activeProgram = useMemo(
-    () => programs.find((p) => p.programId === scope) || null,
-    [programs, scope]
-  );
-
-  // ClassMarker sometimes returns bare user_ids with no first/last/email —
-  // those surface as "User 123". Prefer any richer name we already have.
-  function isPlaceholderName(name, id) {
-    if (!name) return true;
-    return String(name) === `User ${id}` || String(name) === `User ${String(id)}`;
+  // Picking a program selects its whole roster (uncheck to leave anyone
+  // out); going back to all students clears the selection. Done here rather
+  // than in an effect so a background refresh of the programs never undoes
+  // someone's unchecks.
+  function changeScope(next) {
+    setScope(next);
+    const program = programs.find((p) => p.programId === next);
+    setSelectedIds(program ? new Set((program.studentIds || []).map(String)) : new Set());
   }
 
-  // Merge full ClassMarker roster + the active-students list. Always key by
-  // String(id) so program enrollment (which may have been stored as numbers)
-  // still resolves to real names.
-  const rosterById = useMemo(() => {
-    const map = new Map();
-    const add = (st) => {
-      if (!st || st.id == null) return;
-      const id = String(st.id);
-      const incoming = {
-        id,
-        name: st.name || `User ${id}`,
-        email: st.email || '',
-      };
-      const prev = map.get(id);
-      if (!prev) {
-        map.set(id, incoming);
-        return;
-      }
-      const name = !isPlaceholderName(incoming.name, id)
-        ? incoming.name
-        : !isPlaceholderName(prev.name, id)
-          ? prev.name
-          : (incoming.name || prev.name);
-      map.set(id, {
-        id,
-        name,
-        email: incoming.email || prev.email || '',
-      });
-    };
-    for (const st of fullRoster || []) add(st);
-    for (const st of students || []) add(st);
-    return map;
-  }, [fullRoster, students]);
-
-  // Students shown in the list. For a program scope, map each enrolled id to
-  // its roster entry (falling back to a bare row so nobody is silently
-  // dropped); otherwise use the active-students list as before.
-  const sortedStudents = useMemo(() => {
-    const base = activeProgram
-      ? (activeProgram.studentIds || []).map((rawId) => {
-          const id = String(rawId);
-          return rosterById.get(id) || { id, name: `User ${id}`, email: '' };
-        })
-      : (students || []).map((st) => {
-          const id = String(st.id);
-          return rosterById.get(id) || { id, name: st.name || `User ${id}`, email: st.email || '' };
-        });
-    return [...base].sort((a, b) => a.name.localeCompare(b.name));
-  }, [activeProgram, rosterById, students]);
-
-  // Switching to a program pre-selects its whole roster (omit by unchecking);
-  // switching back to "all students" clears the selection.
-  useEffect(() => {
-    if (activeProgram) {
-      setSelectedIds(new Set((activeProgram.studentIds || []).map(String)));
-    } else {
-      setSelectedIds(new Set());
-    }
-  }, [activeProgram]);
-
   // Effective email for a student row. Priority:
-  //   1. user's edit in this batch
-  //   2. saved contact in DB
+  //   1. what was typed in this batch
+  //   2. the saved contact
   //   3. (student field only) the ClassMarker-registered email
   function effectiveEmail(rawId, field) {
     const id = String(rawId);
@@ -375,20 +170,14 @@ export default function BulkSendPanel({
     if (edit !== undefined) return edit;
     const saved = allContacts[id]?.[field] || allContacts[rawId]?.[field] || '';
     if (saved) return saved;
-    if (field === 'studentEmail') {
-      const stu = sortedStudents.find((s) => String(s.id) === id);
-      return stu?.email || '';
-    }
+    if (field === 'studentEmail') return rowById.get(id)?.email || '';
     return '';
   }
 
   function setEdit(rawId, field, value) {
     const id = String(rawId);
-    setRowEdits((prev) => ({
-      ...prev,
-      [id]: { ...(prev[id] || {}), [field]: value },
-    }));
-    // New keystrokes invalidate any previous saved/error indicator.
+    setRowEdits((prev) => ({ ...prev, [id]: { ...(prev[id] || {}), [field]: value } }));
+    // New keystrokes invalidate any previous saved / error indicator.
     setSaveStates((prev) => {
       if (!(id in prev)) return prev;
       const next = { ...prev };
@@ -397,9 +186,9 @@ export default function BulkSendPanel({
     });
   }
 
-  // Persist one row's contacts. No-ops when nothing was typed or the values
+  // Save one row's contacts. Does nothing when nothing was typed or the values
   // already match the saved contact; skips (with an inline error) when an
-  // email is malformed so a half-typed address never overwrites a good one.
+  // email is malformed, so a half-typed address never overwrites a good one.
   async function persistRow(rawId) {
     const id = String(rawId);
     if (!rowEdits[id]) return;
@@ -407,15 +196,15 @@ export default function BulkSendPanel({
     const parentEmail = (effectiveEmail(id, 'parentEmail') || '').trim();
     const saved = allContacts[id] || allContacts[rawId] || {};
     if ((saved.studentEmail || '') === studentEmail && (saved.parentEmail || '') === parentEmail) return;
-    if ((studentEmail && !EMAIL_RX.test(studentEmail)) || (parentEmail && !EMAIL_RX.test(parentEmail))) {
-      setSaveStates((prev) => ({ ...prev, [id]: 'error:Invalid email — not saved yet' }));
+    if (!isValidContactField(studentEmail) || !isValidContactField(parentEmail)) {
+      setSaveStates((prev) => ({ ...prev, [id]: 'error:Check the email - not saved yet.' }));
       return;
     }
     setSaveStates((prev) => ({ ...prev, [id]: 'saving' }));
     try {
       await saveStudentContacts(id, { studentEmail, parentEmail });
-      onContactsPersisted?.(id, { studentEmail, parentEmail });
-      // The saved contact now carries the values — drop the local edit.
+      noteContactsSaved(id, { studentEmail, parentEmail });
+      // The saved contact now carries the values - drop the local edit.
       setRowEdits((prev) => {
         const next = { ...prev };
         delete next[id];
@@ -423,7 +212,7 @@ export default function BulkSendPanel({
       });
       setSaveStates((prev) => ({ ...prev, [id]: 'saved' }));
     } catch (err) {
-      setSaveStates((prev) => ({ ...prev, [id]: `error:${err.message || 'Save failed'}` }));
+      setSaveStates((prev) => ({ ...prev, [id]: `error:${err.message || 'Save failed.'}` }));
     }
   }
 
@@ -432,8 +221,7 @@ export default function BulkSendPanel({
     await Promise.all(Object.keys(rowEdits).map((id) => persistRow(id)));
   }
 
-  // Returns one of: 'both' | 'studentOnly' | 'parentOnly' | 'none'
-  // — based on EFFECTIVE emails (edit > saved > ClassMarker), not just saved.
+  // 'both' | 'studentOnly' | 'parentOnly' | 'none', from the effective emails.
   function contactsState(id) {
     const hasStudent = Boolean((effectiveEmail(id, 'studentEmail') || '').trim());
     const hasParent = Boolean((effectiveEmail(id, 'parentEmail') || '').trim());
@@ -442,16 +230,7 @@ export default function BulkSendPanel({
     if (hasParent) return 'parentOnly';
     return 'none';
   }
-  function hasSavedContacts(id) {
-    return contactsState(id) !== 'none';
-  }
-
-  const CONTACT_PILL = {
-    both:        { label: 'Student + Parent',  style: s.contactsBoth },
-    studentOnly: { label: 'Student only',      style: s.contactsPartial },
-    parentOnly:  { label: 'Parent only',       style: s.contactsPartial },
-    none:        { label: 'No contacts',       style: s.contactsNone },
-  };
+  const hasRecipient = (id) => contactsState(id) !== 'none';
 
   function toggle(rawId) {
     const id = String(rawId);
@@ -462,69 +241,61 @@ export default function BulkSendPanel({
       return next;
     });
   }
-  function selectAll() { setSelectedIds(new Set(sortedStudents.map((s) => String(s.id)))); }
-  function selectNone() { setSelectedIds(new Set()); }
-  function selectWithContacts() {
-    setSelectedIds(new Set(sortedStudents.filter((s) => hasSavedContacts(s.id)).map((s) => String(s.id))));
-  }
+  const selectAll = () => setSelectedIds(new Set(sortedStudents.map((st) => st.id)));
+  const selectNone = () => setSelectedIds(new Set());
+  const selectWithContacts = () => setSelectedIds(new Set(sortedStudents.filter((st) => hasRecipient(st.id)).map((st) => st.id)));
 
   const totalSelected = selectedIds.size;
-  const sendableCount = sortedStudents.filter((s) => selectedIds.has(s.id) && hasSavedContacts(s.id)).length;
+  const sendableCount = sortedStudents.filter((st) => selectedIds.has(st.id) && hasRecipient(st.id)).length;
   const missingContactsCount = totalSelected - sendableCount;
-  const canSend = !running && totalSelected > 0 && Boolean(startDate) && Boolean(endDate);
+  const datesOk = Boolean(startDate && endDate && new Date(startDate) <= new Date(endDate));
+  // Without email set up on the server every send would just fail, one by one.
+  const canSend = emailConfigured && !running && totalSelected > 0 && datesOk;
 
   async function handleSendAll() {
     setGlobalError(null);
     setRunning(true);
 
-    const targets = sortedStudents.filter((stu) => selectedIds.has(stu.id));
+    const targets = sortedStudents.filter((st) => selectedIds.has(st.id));
     const initial = {};
-    for (const stu of targets) {
-      initial[stu.id] = { status: hasSavedContacts(stu.id) ? 'pending' : 'skipped' };
-    }
+    for (const st of targets) initial[st.id] = { status: hasRecipient(st.id) ? 'pending' : 'skipped' };
     setResults(initial);
 
-    const sendable = targets.filter((stu) => hasSavedContacts(stu.id));
+    const sendable = targets.filter((st) => hasRecipient(st.id));
     let cursor = 0;
     async function worker() {
       while (cursor < sendable.length) {
-        const stu = sendable[cursor++];
-        setResults((prev) => ({ ...prev, [stu.id]: { status: 'sending' } }));
+        const st = sendable[cursor++];
+        setResults((prev) => ({ ...prev, [st.id]: { status: 'sending' } }));
+        const recipients = {
+          studentEmail: effectiveEmail(st.id, 'studentEmail'),
+          parentEmail: effectiveEmail(st.id, 'parentEmail'),
+        };
         try {
           const start = await emailReport({
-            studentId: stu.id,
+            studentId: st.id,
             startDate,
             endDate,
             dayOfWeek: dayOfWeek || undefined,
             subject: subject || undefined,
             summaryProgramId,
-            studentEmail: effectiveEmail(stu.id, 'studentEmail'),
-            parentEmail: effectiveEmail(stu.id, 'parentEmail'),
+            ...recipients,
           });
-          if (!start?.jobId) throw new Error('No jobId returned.');
+          if (!start?.jobId) throw new Error('No job id returned.');
           const job = await pollJobUntilTerminal(start.jobId);
           if (job.status === 'failed') {
-            setResults((prev) => ({ ...prev, [stu.id]: { status: 'failed', error: job.error || 'Send failed.' } }));
+            setResults((prev) => ({ ...prev, [st.id]: { status: 'failed', error: job.error || 'Send failed.' } }));
           } else {
-            // Successful send — the backend just persisted these recipients
-            // as the student_contacts row. Mirror that into the hook-level
-            // cache so the pill shows the right state without a refetch.
-            if (onContactsPersisted) {
-              onContactsPersisted(stu.id, {
-                studentEmail: effectiveEmail(stu.id, 'studentEmail'),
-                parentEmail: effectiveEmail(stu.id, 'parentEmail'),
-              });
-            }
+            // A successful send stores these recipients as the student's
+            // contacts on the server - mirror that so the badge is right.
+            noteContactsSaved(st.id, recipients);
             setResults((prev) => ({
               ...prev,
-              [stu.id]: {
-                status: start.deduplicated ? 'deduped' : 'sent',
-                recipients: job.result?.to || [],
-              },
+              [st.id]: { status: start.deduplicated ? 'deduped' : 'sent', recipients: job.result?.to || [] },
             }));
           }
         } catch (err) {
-          setResults((prev) => ({ ...prev, [stu.id]: { status: 'failed', error: err.message } }));
+          setResults((prev) => ({ ...prev, [st.id]: { status: 'failed', error: err.message } }));
         }
       }
     }
@@ -539,9 +310,9 @@ export default function BulkSendPanel({
     }
   }
 
-  // Persist a server-side batch that fires at `sendAt`. Recipients are frozen
-  // now (the report date range is also frozen), so the browser need not stay
-  // open. Only selected students with a recipient email are included.
+  // Store a server-side batch that fires at `sendAt`. Recipients and the
+  // report date range are frozen now, so this page need not stay open. Only
+  // selected students with a recipient email are included.
   async function handleSchedule() {
     setScheduleMsg(null);
     if (!sendAt) {
@@ -550,27 +321,27 @@ export default function BulkSendPanel({
     }
     const when = new Date(sendAt);
     if (Number.isNaN(when.getTime()) || when.getTime() < Date.now()) {
-      setScheduleMsg({ type: 'error', text: 'Schedule time must be in the future.' });
+      setScheduleMsg({ type: 'error', text: 'The scheduled time must be in the future.' });
       return;
     }
-    const targets = sortedStudents.filter((stu) => selectedIds.has(stu.id) && hasSavedContacts(stu.id));
+    const targets = sortedStudents.filter((st) => selectedIds.has(st.id) && hasRecipient(st.id));
     if (targets.length === 0) {
-      setScheduleMsg({ type: 'error', text: 'No selected students have a recipient email.' });
+      setScheduleMsg({ type: 'error', text: 'None of the selected students has a recipient email.' });
       return;
     }
 
     setScheduling(true);
     try {
-      // Flush any unsaved typed emails so the snapshot uses the latest values.
+      // Save any typed emails first so the batch uses the latest values.
       await saveAllDirty();
-      const items = targets.map((stu) => ({
-        studentId: stu.id,
-        studentName: stu.name,
-        studentEmail: effectiveEmail(stu.id, 'studentEmail'),
-        parentEmail: effectiveEmail(stu.id, 'parentEmail'),
+      const items = targets.map((st) => ({
+        studentId: st.id,
+        studentName: st.name,
+        studentEmail: effectiveEmail(st.id, 'studentEmail'),
+        parentEmail: effectiveEmail(st.id, 'parentEmail'),
       }));
       const res = await scheduleBulkEmail({
-        label: activeProgram ? activeProgram.name : 'All active students',
+        label: activeProgram ? activeProgram.name : 'All students',
         subject: subject || undefined,
         startDate,
         endDate,
@@ -581,12 +352,12 @@ export default function BulkSendPanel({
       });
       setScheduleMsg({
         type: 'success',
-        text: `Scheduled ${res.scheduledCount} report${res.scheduledCount === 1 ? '' : 's'} for ${when.toLocaleString()}.`,
+        text: `Scheduled ${res.scheduledCount} report${res.scheduledCount === 1 ? '' : 's'} for ${formatSendTime(when)}.`,
       });
       setSendAt('');
       onScheduled?.();
     } catch (err) {
-      setScheduleMsg({ type: 'error', text: err.response?.data?.error || err.message || 'Failed to schedule.' });
+      setScheduleMsg({ type: 'error', text: err.message || 'Could not schedule the send.' });
     } finally {
       setScheduling(false);
     }
@@ -597,246 +368,306 @@ export default function BulkSendPanel({
     for (const r of Object.values(results)) t[r.status] = (t[r.status] || 0) + 1;
     return t;
   }, [results]);
+  const resultCount = Object.keys(results).length;
+  const finishedCount = tally.sent + tally.deduped + tally.failed + tally.skipped;
+  const listLoading = studentsLoading || contactsLoading;
 
   return (
-    <div style={s.card}>
-      <div style={s.head}>
-        <div style={s.dot} />
-        <span style={s.title}>Bulk Send — Email Reports to Multiple Students</span>
-      </div>
-      <div style={s.body}>
-
-        <DateRangePicker
-          startDate={startDate}
-          endDate={endDate}
-          onStartChange={onStartDate}
-          onEndChange={onEndDate}
-        />
-
-        <div style={s.divider} />
-
-        <DayPicker value={dayOfWeek} onChange={onDayOfWeek} />
-
-        <div style={s.divider} />
-
-        <div>
-          <label style={s.label} htmlFor="bulk-subject">Subject (shared across all)</label>
-          <input
-            id="bulk-subject"
-            type="text"
-            value={subject}
-            onChange={(e) => setSubject(e.target.value)}
-            style={{ ...s.input, marginTop: 6 }}
-            autoComplete="off"
-          />
-        </div>
-
-        <div style={s.divider} />
-
-        <div>
-          <label style={s.label} htmlFor="bulk-summary-program">Program summary attachment</label>
-          <select
-            id="bulk-summary-program"
-            value={summaryProgramId}
-            onChange={(e) => setSummaryProgramId(e.target.value)}
-            style={{ ...s.input, marginTop: 6 }}
-          >
-            <option value="auto">Each student's own program (default)</option>
-            <option value="none">No summary — report only</option>
-            {programs.map((p) => (
-              <option key={p.programId} value={p.programId}>{p.name}</option>
-            ))}
-          </select>
-        </div>
-
-        <div style={s.divider} />
-
-        <div>
-          <label style={s.label} htmlFor="bulk-scope">Send to</label>
-          <select
-            id="bulk-scope"
-            value={scope}
-            onChange={(e) => setScope(e.target.value)}
-            style={{ ...s.input, marginTop: 6 }}
-          >
-            <option value="">All active students</option>
-            {programs.map((p) => (
-              <option key={p.programId} value={p.programId}>
-                {p.name} — {(p.studentIds || []).length} enrolled
-              </option>
-            ))}
-          </select>
-          {activeProgram && (
-            <div style={{ marginTop: 6, fontSize: '0.78rem', color: 'var(--muted)' }}>
-              Showing the {activeProgram.name} roster — everyone’s pre-selected; uncheck to omit before sending.
-            </div>
-          )}
-        </div>
-
-        <div style={s.divider} />
-
-        <div>
-          <div style={s.listHeader}>
-            <span style={s.label}>Students ({totalSelected} selected · {sendableCount} sendable)</span>
-            <div style={s.selectActions}>
-              {dirtyCount > 0 && (
-                <button type="button" onClick={saveAllDirty} style={{ ...s.selectAction, color: '#15803d' }}>
-                  Save contacts ({dirtyCount})
-                </button>
-              )}
-              <button type="button" onClick={selectAll} style={s.selectAction}>All</button>
-              <button type="button" onClick={selectWithContacts} style={s.selectAction}>With contacts</button>
-              <button type="button" onClick={selectNone} style={s.selectAction}>None</button>
-            </div>
-          </div>
-          <div style={s.list}>
-            {contactsLoading && <div style={s.emptyHint}>Loading saved contacts…</div>}
-            {!contactsLoading && sortedStudents.length === 0 && <div style={s.emptyHint}>No students found.</div>}
-            {!contactsLoading && sortedStudents.map((stu) => {
-              const checked = selectedIds.has(stu.id);
-              const state = contactsState(stu.id);
-              const pill = CONTACT_PILL[state];
-              const studentEmail = effectiveEmail(stu.id, 'studentEmail');
-              const parentEmail = effectiveEmail(stu.id, 'parentEmail');
-              return (
-                <div key={stu.id} style={s.rowWrap}>
-                  <label style={s.row}>
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      onChange={() => toggle(stu.id)}
-                      style={s.checkbox}
-                    />
-                    <span style={s.studentName}>{stu.name}</span>
-                    <span style={{ ...s.contactPill, ...pill.style }}>
-                      {pill.label}
-                    </span>
-                  </label>
-                  {checked && (
-                    <div style={s.emailRow}>
-                      <div style={s.emailField}>
-                        <label style={s.emailLabel} htmlFor={`bulk-student-email-${stu.id}`}>Student email</label>
-                        <input
-                          id={`bulk-student-email-${stu.id}`}
-                          type="email"
-                          placeholder={stu.email || 'student@example.com'}
-                          value={studentEmail}
-                          onChange={(e) => setEdit(stu.id, 'studentEmail', e.target.value)}
-                          onBlur={() => persistRow(stu.id)}
-                          style={s.emailInput}
-                          autoComplete="off"
-                          spellCheck={false}
-                        />
-                      </div>
-                      <div style={s.emailField}>
-                        <label style={s.emailLabel} htmlFor={`bulk-parent-email-${stu.id}`}>Parent email</label>
-                        <input
-                          id={`bulk-parent-email-${stu.id}`}
-                          type="email"
-                          placeholder="parent@example.com"
-                          value={parentEmail}
-                          onChange={(e) => setEdit(stu.id, 'parentEmail', e.target.value)}
-                          onBlur={() => persistRow(stu.id)}
-                          style={s.emailInput}
-                          autoComplete="off"
-                          spellCheck={false}
-                        />
-                      </div>
-                      {saveStates[stu.id] && (
-                        <div style={{
-                          gridColumn: '1 / -1',
-                          fontSize: '0.68rem',
-                          color: saveStates[stu.id].startsWith('error:') ? '#b91c1c' : '#15803d',
-                        }}>
-                          {saveStates[stu.id] === 'saving' && 'Saving…'}
-                          {saveStates[stu.id] === 'saved' && '✓ Contacts saved'}
-                          {saveStates[stu.id].startsWith('error:') && `⚠ ${saveStates[stu.id].slice(6)}`}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-          {missingContactsCount > 0 && (
-            <div style={{ marginTop: 8, fontSize: '0.78rem', color: '#92400e' }}>
-              {missingContactsCount} selected student{missingContactsCount === 1 ? ' has' : 's have'} no recipient email and will be skipped. Fill in an email above to include them.
-            </div>
-          )}
-        </div>
-
-        <Button onClick={handleSendAll} disabled={!canSend} loading={running} size="lg" fullWidth>
-          {running
-            ? `Sending ${tally.sending + tally.sent + tally.deduped + tally.failed} / ${sendableCount}…`
-            : `Send to ${sendableCount} student${sendableCount === 1 ? '' : 's'}`}
-        </Button>
-
-        <div style={s.scheduleBox}>
-          <div style={s.scheduleHead}>
-            <span style={s.label}>Or schedule for later</span>
-            <span style={s.scheduleOptional}>optional</span>
-          </div>
-          <div style={s.scheduleRow}>
-            <input
-              type="datetime-local"
-              value={sendAt}
-              min={toDatetimeLocalValue(new Date())}
-              onChange={(e) => { setSendAt(e.target.value); setScheduleMsg(null); }}
-              style={s.scheduleInput}
-              aria-label="Schedule send date and time"
+    <div className="grid gap-6">
+      <Card>
+        <CardHeader>
+          <CardTitle>Report</CardTitle>
+          <CardDescription>What every selected student receives.</CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-5 md:grid-cols-2">
+          <Field>
+            <FieldLabel htmlFor="bulk-dates">Report dates</FieldLabel>
+            <DateRangePicker
+              id="bulk-dates"
+              startDate={startDate}
+              endDate={endDate}
+              onStartChange={onStartDate}
+              onEndChange={onEndDate}
             />
-            <Button
-              onClick={handleSchedule}
-              disabled={running || scheduling || !sendAt || sendableCount === 0}
-              loading={scheduling}
-              variant="secondary"
-              size="md"
-            >
-              Schedule {sendableCount > 0 ? `${sendableCount}` : ''}
-            </Button>
-          </div>
-          <p style={s.scheduleHint}>
-            Fires automatically at the chosen time — you can close this page. Track or cancel it in the queue below.
-          </p>
-          {scheduleMsg && (
-            <div style={scheduleMsg.type === 'error' ? s.scheduleErr : s.scheduleOk}>
-              {scheduleMsg.type === 'error' ? '⚠ ' : '✓ '}{scheduleMsg.text}
-            </div>
-          )}
-        </div>
+          </Field>
+          <Field>
+            <FieldLabel htmlFor="bulk-days">Day of week</FieldLabel>
+            <DayOfWeekPicker id="bulk-days" value={dayOfWeek} onChange={onDayOfWeek} />
+          </Field>
+          <Field>
+            <FieldLabel htmlFor="bulk-subject">Subject</FieldLabel>
+            <Input
+              id="bulk-subject"
+              value={subject}
+              onChange={(e) => setSubject(e.target.value)}
+              autoComplete="off"
+            />
+            <FieldDescription>Used for every email in this send.</FieldDescription>
+          </Field>
+          <Field>
+            <FieldLabel htmlFor="bulk-summary">Program summary</FieldLabel>
+            <Select value={summaryProgramId} onValueChange={setSummaryProgramId}>
+              <SelectTrigger id="bulk-summary" className="w-full"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="auto">Each student’s own program</SelectItem>
+                <SelectItem value="none">No summary - report only</SelectItem>
+                {programs.length > 0 && <SelectSeparator />}
+                {programs.map((p) => (
+                  <SelectItem key={p.programId} value={p.programId}>{p.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <FieldDescription>The cohort summary PDF attached next to each report.</FieldDescription>
+          </Field>
+        </CardContent>
+      </Card>
 
-        {globalError && (
-          <div style={{ padding: '10px 14px', background: '#fff1f2', border: '1.5px solid #fca5a5', borderRadius: 8, color: '#b91c1c', fontSize: '0.85rem' }}>
-            ⚠ {globalError}
-          </div>
-        )}
+      <Card>
+        <CardHeader>
+          <CardTitle>Recipients</CardTitle>
+          <CardDescription>
+            Reports go to each student’s student and parent emails. An email typed here is saved as that student’s contact.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-4">
+          <Field className="sm:max-w-sm">
+            <FieldLabel htmlFor="bulk-scope">Send to</FieldLabel>
+            <Select value={scope} onValueChange={changeScope}>
+              <SelectTrigger id="bulk-scope" className="w-full"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value={ALL_STUDENTS}>All students</SelectItem>
+                {programs.length > 0 && (
+                  <>
+                    <SelectSeparator />
+                    <SelectGroup>
+                      <SelectLabel>Programs</SelectLabel>
+                      {programs.map((p) => (
+                        <SelectItem key={p.programId} value={p.programId}>
+                          {p.name}
+                          <span className="text-muted-foreground">{(p.studentIds || []).length} enrolled</span>
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  </>
+                )}
+              </SelectContent>
+            </Select>
+            {activeProgram && (
+              <FieldDescription>
+                Everyone enrolled in {activeProgram.name} is selected - uncheck anyone to leave them out.
+              </FieldDescription>
+            )}
+          </Field>
 
-        {Object.keys(results).length > 0 && (
-          <div>
-            <div style={{ ...s.label, marginBottom: 6 }}>
-              Status — Sent {tally.sent + tally.deduped} · Failed {tally.failed} · Skipped {tally.skipped} · In-flight {tally.pending + tally.sending}
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="text-sm text-muted-foreground tabular-nums">
+              {totalSelected} selected · {sendableCount} with an email
+            </span>
+            <div className="flex flex-wrap items-center gap-2">
+              {dirtyCount > 0 && (
+                <Button size="sm" variant="outline" onClick={saveAllDirty}>
+                  <LuSave data-icon="inline-start" />
+                  Save contacts ({dirtyCount})
+                </Button>
+              )}
+              <ButtonGroup aria-label="Select students">
+                <Button size="sm" variant="outline" onClick={selectAll}>All</Button>
+                <Button size="sm" variant="outline" onClick={selectWithContacts}>With contacts</Button>
+                <Button size="sm" variant="outline" onClick={selectNone}>None</Button>
+              </ButtonGroup>
             </div>
-            <div style={s.statusTable}>
-              {sortedStudents
-                .filter((stu) => results[stu.id])
-                .map((stu) => {
-                  const r = results[stu.id];
-                  return (
-                    <div key={stu.id} style={s.statusRow}>
-                      <div style={s.statusName}>{stu.name}</div>
-                      <div style={{ ...s.statusBadge, color: STATUS_COLOR[r.status] }}>
-                        {STATUS_LABEL[r.status] || r.status}
+          </div>
+
+          <div className="max-h-[30rem] overflow-y-auto rounded-lg border bg-card">
+            {listLoading ? (
+              <ListSkeleton />
+            ) : sortedStudents.length === 0 ? (
+              <Empty>
+                <EmptyHeader>
+                  <EmptyMedia variant="icon"><LuUsers /></EmptyMedia>
+                  <EmptyTitle>No students</EmptyTitle>
+                  <EmptyDescription>
+                    {activeProgram ? 'Nobody is enrolled in this program yet.' : 'Students appear once they take a test.'}
+                  </EmptyDescription>
+                </EmptyHeader>
+              </Empty>
+            ) : (
+              sortedStudents.map((st) => {
+                const checked = selectedIds.has(st.id);
+                const contact = CONTACT_STATE[contactsState(st.id)];
+                const saveState = saveStates[st.id];
+                const studentEmail = effectiveEmail(st.id, 'studentEmail');
+                const parentEmail = effectiveEmail(st.id, 'parentEmail');
+                const fieldId = (name) => `bulk-${st.id}-${name}`;
+                // Flag a field only once saving it failed, not while typing.
+                const saveFailed = Boolean(saveState?.startsWith('error:'));
+                const studentInvalid = saveFailed && !isValidContactField(studentEmail);
+                const parentInvalid = saveFailed && !isValidContactField(parentEmail);
+                return (
+                  <div key={st.id} className={cn('border-b last:border-b-0', checked && 'bg-muted/30')}>
+                    <label className="flex cursor-pointer items-center gap-3 px-4 py-2.5 transition-colors hover:bg-muted/50">
+                      <Checkbox checked={checked} onCheckedChange={() => toggle(st.id)} />
+                      <span className="min-w-0 flex-1 truncate text-sm">{st.name}</span>
+                      <Badge variant={contact.variant}>{contact.label}</Badge>
+                    </label>
+                    {checked && (
+                      <div className="grid gap-3 px-4 pb-3 pl-11 sm:grid-cols-2">
+                        <Field className="gap-1.5" data-invalid={studentInvalid || undefined}>
+                          <FieldLabel htmlFor={fieldId('student')} className="text-xs font-normal text-muted-foreground">
+                            Student email
+                          </FieldLabel>
+                          <Input
+                            id={fieldId('student')}
+                            type="email"
+                            className="h-8 bg-background"
+                            placeholder={st.email || 'student@example.com'}
+                            value={studentEmail}
+                            aria-invalid={studentInvalid || undefined}
+                            onChange={(e) => setEdit(st.id, 'studentEmail', e.target.value)}
+                            onBlur={() => persistRow(st.id)}
+                            autoComplete="off"
+                            spellCheck={false}
+                          />
+                        </Field>
+                        <Field className="gap-1.5" data-invalid={parentInvalid || undefined}>
+                          <FieldLabel htmlFor={fieldId('parent')} className="text-xs font-normal text-muted-foreground">
+                            Parent email
+                          </FieldLabel>
+                          <Input
+                            id={fieldId('parent')}
+                            type="email"
+                            className="h-8 bg-background"
+                            placeholder="parent@example.com"
+                            value={parentEmail}
+                            aria-invalid={parentInvalid || undefined}
+                            onChange={(e) => setEdit(st.id, 'parentEmail', e.target.value)}
+                            onBlur={() => persistRow(st.id)}
+                            autoComplete="off"
+                            spellCheck={false}
+                          />
+                        </Field>
+                        {saveState && (
+                          <p
+                            className={cn(
+                              'flex items-center gap-1.5 text-xs sm:col-span-2',
+                              saveState.startsWith('error:') ? 'text-destructive' : 'text-muted-foreground'
+                            )}
+                            aria-live="polite"
+                          >
+                            {saveState === 'saving' && <><Spinner className="size-3" /> Saving…</>}
+                            {saveState === 'saved' && <span className="text-success">Contacts saved</span>}
+                            {saveState.startsWith('error:') && saveState.slice(6)}
+                          </p>
+                        )}
                       </div>
-                      {r.error && <div style={s.errLine}>{r.error}</div>}
+                    )}
+                  </div>
+                );
+              })
+            )}
+          </div>
+
+          {missingContactsCount > 0 && (
+            <Notice variant="warning">
+              {missingContactsCount} selected student{missingContactsCount === 1 ? ' has' : 's have'} no email and will be
+              skipped. Type an email in the list to include them.
+            </Notice>
+          )}
+        </CardContent>
+
+        <CardFooter className="grid items-start gap-6 border-t lg:grid-cols-[auto_minmax(0,28rem)] lg:justify-between">
+          <div className="grid content-start gap-2">
+            <span className="text-sm font-medium">Send now</span>
+            <div>
+              <Button onClick={handleSendAll} disabled={!canSend}>
+                {running ? <Spinner data-icon="inline-start" /> : <LuSend data-icon="inline-start" />}
+                {running
+                  ? `Sending ${tally.sending + tally.sent + tally.deduped + tally.failed} of ${sendableCount}…`
+                  : `Send to ${sendableCount} student${sendableCount === 1 ? '' : 's'}`}
+              </Button>
+            </div>
+            <p className="text-sm text-muted-foreground">
+              {!emailConfigured
+                ? 'Email isn’t set up on the server.'
+                : !datesOk
+                  ? 'Pick a valid date range first.'
+                  : running
+                    ? 'Keep this page open until every report has gone out.'
+                    : 'Sends from this page - keep it open until it finishes.'}
+            </p>
+          </div>
+          <Field>
+            <FieldLabel htmlFor="bulk-send-at">Or schedule for later</FieldLabel>
+            <div className="grid gap-2 sm:flex sm:flex-wrap sm:items-center">
+              <ScheduleTimePicker
+                id="bulk-send-at"
+                value={sendAt}
+                onChange={(value) => { setSendAt(value); setScheduleMsg(null); }}
+                className="min-w-0 sm:flex-1"
+              />
+              <Button
+                variant="outline"
+                className="w-full sm:w-auto"
+                onClick={handleSchedule}
+                disabled={!emailConfigured || running || scheduling || !sendAt || sendableCount === 0}
+              >
+                {scheduling ? <Spinner data-icon="inline-start" /> : <LuCalendarClock data-icon="inline-start" />}
+                Schedule{sendableCount > 0 ? ` ${sendableCount}` : ''}
+              </Button>
+            </div>
+            <FieldDescription>
+              Goes out automatically at that time, even with this page closed. Track or cancel it in the queue below.
+            </FieldDescription>
+            {scheduleMsg && (
+              <Notice variant={scheduleMsg.type === 'error' ? 'destructive' : 'success'}>{scheduleMsg.text}</Notice>
+            )}
+          </Field>
+        </CardFooter>
+      </Card>
+
+      {globalError && <Notice variant="destructive">{globalError}</Notice>}
+
+      {resultCount > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Send progress</CardTitle>
+            <CardDescription className="tabular-nums">
+              {tally.sent + tally.deduped} sent · {tally.failed} failed · {tally.skipped} skipped · {tally.pending + tally.sending} in progress
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="grid gap-4">
+            <div className="flex items-center gap-3">
+              <Progress
+                value={Math.round((finishedCount / resultCount) * 100)}
+                className="h-2"
+                aria-label={`${finishedCount} of ${resultCount} done`}
+              />
+              <span className="shrink-0 text-sm text-muted-foreground tabular-nums">
+                {finishedCount} of {resultCount}
+              </span>
+            </div>
+            <div className="max-h-96 overflow-y-auto rounded-lg border">
+              {sortedStudents
+                .filter((st) => results[st.id])
+                .map((st) => {
+                  const r = results[st.id];
+                  return (
+                    <div key={st.id} className="grid gap-1 border-b px-4 py-2.5 last:border-b-0">
+                      <div className="flex items-center gap-3">
+                        <span className="min-w-0 flex-1 truncate text-sm">{st.name}</span>
+                        <SendStatusBadge status={r.status} />
+                      </div>
+                      {r.status !== 'failed' && r.recipients?.length > 0 && (
+                        <p className="text-xs break-words text-muted-foreground">{r.recipients.join(', ')}</p>
+                      )}
+                      {r.error && <p className="text-xs break-words text-destructive">{r.error}</p>}
                     </div>
                   );
                 })}
             </div>
-          </div>
-        )}
-
-      </div>
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }

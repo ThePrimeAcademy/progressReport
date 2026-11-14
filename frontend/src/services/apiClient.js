@@ -51,7 +51,12 @@ apiClient.interceptors.response.use(
       error.response?.data?.error ||
       error.message ||
       'An unexpected error occurred';
-    return Promise.reject(new Error(message));
+    const failure = new Error(message);
+    // Callers sometimes need to tell "this endpoint doesn't exist (yet)"
+    // apart from a real failure, e.g. right after a release, when the new
+    // frontend is live a few minutes before Railway finishes the backend.
+    failure.status = error.response?.status ?? null;
+    return Promise.reject(failure);
   }
 );
 

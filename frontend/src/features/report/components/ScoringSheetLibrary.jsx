@@ -1,42 +1,26 @@
 // features/report/components/ScoringSheetLibrary.jsx
-// The Scoring Sheets tab: three shared sheets per subject (Easy, Medium, Hard)
-// that every exam picks from. Each slot can be filled from a file, from pasted
-// cells, or by copying a sheet that is already stored somewhere else (another
-// level, or a custom sheet uploaded to an exam in the past).
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import {
-  fetchSheetLibrary,
-  fetchExams,
-  copyScoringSheet,
-  deleteScoringSheet,
-  setScoringSheetBound,
-} from '../api/reportApi.js';
-import { LEVELS, LEVEL_LABEL, LEVEL_COLOR, SUBJECTS, formatDate } from '../scoring.js';
+// The Scoring Sheets page: three shared sheets per subject (Easy, Medium,
+// Hard) that every exam picks from. Each slot can be filled from a file, from
+// pasted cells, or by copying a sheet that is already stored somewhere else
+// (another level, or a custom sheet uploaded to an exam in the past).
+import React, { useCallback, useMemo, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
+import { LuEye, LuPlus, LuTrash2, LuTriangleAlert, LuUpload } from 'react-icons/lu';
+import { cn } from '@/lib/utils';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Popover, PopoverContent, PopoverHeader, PopoverTitle, PopoverTrigger } from '@/components/ui/popover';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Spinner } from '@/components/ui/spinner';
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
+import { Notice } from '@/components/common/Notice';
+import { useConfirm } from '@/components/common/confirm';
+import { copyScoringSheet, deleteScoringSheet, setScoringSheetBound } from '../api/reportApi.js';
+import { queryKeys, useExams, useSheetLibrary } from '../api/queries.js';
+import { LEVELS, LEVEL_LABEL, LEVEL_STYLE, SUBJECTS, formatDate } from '../scoring.js';
 import { SheetImportDialog, SheetTableDialog } from './SheetDialogs.jsx';
-import s from './examManagerStyles.js';
-
-const c = {
-  intro: { fontSize: '0.84rem', color: 'var(--ink-light)', lineHeight: 1.6 },
-  subjectCard: { ...s.card, marginTop: 0 },
-  subjectHead: { padding: '16px 24px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 10 },
-  slots: { padding: '20px 24px 24px', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(230px, 1fr))', gap: 14 },
-  slot: { borderWidth: 1.5, borderStyle: 'solid', borderColor: 'var(--border)', borderRadius: 12, padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 10, minHeight: 190 },
-  slotEmpty: { borderStyle: 'dashed', background: 'var(--surface)' },
-  slotTop: { display: 'flex', alignItems: 'center', gap: 8 },
-  levelChip: { fontSize: '0.7rem', fontWeight: 800, letterSpacing: '0.06em', textTransform: 'uppercase', borderRadius: 999, padding: '3px 10px', borderWidth: 1, borderStyle: 'solid' },
-  used: { fontSize: '0.7rem', color: 'var(--muted)', marginLeft: 'auto', whiteSpace: 'nowrap' },
-  filename: { fontSize: '0.84rem', fontWeight: 600, color: 'var(--ink)', overflowWrap: 'anywhere', lineHeight: 1.35 },
-  meta: { fontSize: '0.74rem', color: 'var(--muted)', lineHeight: 1.5 },
-  samples: { fontSize: '0.74rem', color: 'var(--ink-light)', fontVariantNumeric: 'tabular-nums' },
-  emptyText: { fontSize: '0.8rem', color: 'var(--muted)', lineHeight: 1.5, flex: 1 },
-  actions: { display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 'auto', alignItems: 'center' },
-  boundToggle: { display: 'inline-flex', borderRadius: 6, overflow: 'hidden', border: '1px solid var(--border)' },
-  boundBtn: { appearance: 'none', border: 'none', background: '#fff', color: 'var(--muted)', padding: '4px 9px', cursor: 'pointer', fontSize: '0.68rem', fontWeight: 600, letterSpacing: '0.04em', textTransform: 'uppercase', fontFamily: 'inherit' },
-  boundBtnOn: { background: 'var(--accent)', color: '#fff' },
-  // minWidth 0 lets it share the row with the button instead of growing to
-  // fit its longest option and wrapping underneath.
-  copySelect: { ...s.moveSelect, maxWidth: '100%', minWidth: 0, flex: '1 1 120px', padding: '5px 22px 5px 8px' },
-};
 
 // Sheets that could be copied into a slot of this subject: the other library
 // levels, then every distinct custom sheet uploaded to an exam (many exams
@@ -65,12 +49,52 @@ function copySources(section, level, library, exams) {
   return sources;
 }
 
+const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+
+// "Used by 3 exams" (or "2 exams waiting"), opening the list of those exams.
+function ExamUsage({ usedBy, waiting }) {
+  if (usedBy.length === 0) {
+    return <span className="text-xs text-muted-foreground">Not used yet</span>;
+  }
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className={cn(
+            'inline-flex items-center gap-1 rounded-sm text-xs underline decoration-dotted underline-offset-3 outline-none hover:decoration-solid focus-visible:ring-[3px] focus-visible:ring-ring/50',
+            waiting ? 'font-medium text-warning' : 'text-muted-foreground hover:text-foreground'
+          )}
+        >
+          {waiting && <LuTriangleAlert className="size-3.5" aria-hidden="true" />}
+          {waiting ? `${plural(usedBy.length, 'exam')} waiting` : `Used by ${plural(usedBy.length, 'exam')}`}
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="end" className="w-72">
+        <PopoverHeader>
+          <PopoverTitle>{waiting ? 'Exams waiting for this sheet' : 'Exams graded with this sheet'}</PopoverTitle>
+        </PopoverHeader>
+        <ul className="grid max-h-64 gap-1.5 overflow-y-auto text-sm">
+          {usedBy.map((exam) => (
+            <li key={exam.examId}>
+              {exam.programName && <span className="text-muted-foreground">{exam.programName}: </span>}
+              {exam.name}
+            </li>
+          ))}
+        </ul>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+const COPY_PLACEHOLDER = '';
+
 function Slot({ section, level, subject, library, exams, onImport, onView, onChanged, onError }) {
+  const confirm = useConfirm();
   const [busy, setBusy] = useState(false);
   const sheet = library.sheets[section][level];
-  const usedBy = library.usage[section][level];
+  const usedBy = library.usage?.[section]?.[level] || [];
   const key = library.keys[level];
-  const color = LEVEL_COLOR[level];
   const sources = useMemo(
     () => (sheet ? [] : copySources(section, level, library, exams)),
     [sheet, section, level, library, exams]
@@ -89,152 +113,197 @@ function Slot({ section, level, subject, library, exams, onImport, onView, onCha
     }
   }
 
-  function remove() {
-    const inUse = usedBy.length
-      ? ` ${usedBy.length} exam${usedBy.length === 1 ? ' uses' : 's use'} it and will show raw scores only until a new sheet is added.`
-      : '';
-    // eslint-disable-next-line no-alert
-    if (!window.confirm(`Remove the ${LEVEL_LABEL[level]} ${subject.label} sheet?${inUse}`)) return;
-    run(() => deleteScoringSheet({ groupId: key, section }), 'Could not remove the sheet');
+  async function remove() {
+    const impact = usedBy.length
+      ? `${plural(usedBy.length, 'exam')} ${usedBy.length === 1 ? 'uses' : 'use'} it and will show raw scores only until a new sheet is added.`
+      : 'No exam uses it yet.';
+    const confirmed = await confirm({
+      title: `Remove the ${LEVEL_LABEL[level]} ${subject.label} sheet?`,
+      description: impact,
+      confirmLabel: 'Remove sheet',
+      destructive: true,
+    });
+    if (confirmed) run(() => deleteScoringSheet({ groupId: key, section }), 'Could not remove the sheet');
   }
 
-  const groupLabel = `${subject.label} ${LEVEL_LABEL[level]} scoring sheet`;
-  const chip = (
-    <span style={{ ...c.levelChip, color: color.fg, background: color.bg, borderColor: color.border }}>
-      {LEVEL_LABEL[level]}
-    </span>
-  );
-
-  if (!sheet) {
-    return (
-      <div role="group" aria-label={groupLabel} style={{ ...c.slot, ...c.slotEmpty }}>
-        <div style={c.slotTop}>
-          {chip}
-          {usedBy.length > 0 && (
-            <span style={{ ...c.used, color: '#b45309', fontWeight: 600 }} title={usedBy.map((e) => `${e.programName ? `${e.programName}: ` : ''}${e.name}`).join('\n')}>
-              ⚠ {usedBy.length} exam{usedBy.length === 1 ? '' : 's'} waiting
-            </span>
-          )}
-        </div>
-        <div style={c.emptyText}>
-          No sheet yet.{usedBy.length > 0 ? ' Exams set to this level show raw scores only until one is added.' : ''}
-        </div>
-        <div style={c.actions}>
-          <button type="button" style={s.btn} disabled={busy} onClick={() => onImport({ section, level })}>
-            Add sheet
-          </button>
-          {sources.length > 0 && (
-            <select
-              style={c.copySelect}
-              value=""
-              disabled={busy}
-              aria-label={`Copy an existing sheet into ${LEVEL_LABEL[level]} ${subject.label}`}
-              onChange={(e) => {
-                const fromGroupId = e.target.value;
-                if (fromGroupId) run(() => copyScoringSheet({ fromGroupId, toGroupId: key, section }), 'Could not copy the sheet');
-              }}
-            >
-              <option value="">Copy existing…</option>
-              {sources.map((src) => <option key={src.key} value={src.key}>{src.label}</option>)}
-            </select>
-          )}
-        </div>
-      </div>
-    );
-  }
+  const meta = sheet && [
+    `${sheet.points} raw scores (${sheet.rawMin} to ${sheet.rawMax})`,
+    sheet.columnLabel || null,
+    formatDate(sheet.uploadedAt) ? `added ${formatDate(sheet.uploadedAt)}` : null,
+  ].filter(Boolean).join(' · ');
 
   return (
-    <div role="group" aria-label={groupLabel} style={c.slot}>
-      <div style={c.slotTop}>
-        {chip}
-        <span style={c.used} title={usedBy.map((e) => `${e.programName ? `${e.programName}: ` : ''}${e.name}`).join('\n') || undefined}>
-          {usedBy.length === 0 ? 'Not used yet' : `Used by ${usedBy.length} exam${usedBy.length === 1 ? '' : 's'}`}
-        </span>
-      </div>
-      <div>
-        <div style={c.filename}>{sheet.originalFilename || 'Pasted cells'}</div>
-        <div style={c.meta}>
-          {sheet.points} raw scores ({sheet.rawMin} to {sheet.rawMax})
-          {sheet.columnLabel ? ` · ${sheet.columnLabel}` : ''}
-          {formatDate(sheet.uploadedAt) ? ` · added ${formatDate(sheet.uploadedAt)}` : ''}
-        </div>
-      </div>
-      {(sheet.samples || []).length > 0 && (
-        <div style={c.samples}>
-          {sheet.samples.map((p) => `${p.raw} correct → ${p.score}`).join('   ·   ')}
-        </div>
+    <div
+      role="group"
+      aria-label={`${subject.label} ${LEVEL_LABEL[level]} scoring sheet`}
+      aria-busy={busy || undefined}
+      className={cn(
+        // Side by side, tiles share a height so their buttons line up.
+        'flex flex-col gap-3 rounded-lg border p-4 sm:min-h-52',
+        sheet ? 'bg-card' : 'border-dashed bg-muted/30'
       )}
-      {sheet.hasRange && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={c.meta}>Score range, use the</span>
-          <span style={c.boundToggle} role="group" aria-label="Which end of the score range to use">
-            {['lower', 'upper'].map((bound) => (
-              <button
-                key={bound}
-                type="button"
-                aria-pressed={sheet.bound === bound}
+    >
+      <div className="flex min-h-6 items-center justify-between gap-2">
+        <Badge variant="outline" className={LEVEL_STYLE[level].badge}>{LEVEL_LABEL[level]}</Badge>
+        <ExamUsage usedBy={usedBy} waiting={!sheet} />
+      </div>
+
+      {sheet ? (
+        <>
+          <div className="grid gap-1">
+            <div className="text-sm font-medium break-words">{sheet.originalFilename || 'Pasted cells'}</div>
+            <div className="text-xs text-muted-foreground">{meta}</div>
+          </div>
+          {(sheet.samples || []).length > 0 && (
+            <div className="flex flex-wrap gap-1.5" aria-label="Sample scores">
+              {sheet.samples.map((p) => (
+                <span key={p.raw} className="rounded-md bg-muted px-1.5 py-0.5 text-xs text-muted-foreground tabular-nums">
+                  {p.raw} → <span className="font-medium text-foreground">{p.score}</span>
+                </span>
+              ))}
+            </div>
+          )}
+          {sheet.hasRange && (
+            <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+              <span>Score range - use the</span>
+              <ToggleGroup
+                type="single"
+                variant="outline"
+                size="sm"
+                spacing={0}
+                value={sheet.bound}
                 disabled={busy}
-                style={{ ...c.boundBtn, ...(sheet.bound === bound ? c.boundBtnOn : null) }}
-                onClick={() => {
-                  if (sheet.bound !== bound) run(() => setScoringSheetBound({ groupId: key, section, bound }), 'Could not update the sheet');
+                aria-label="Which end of the score range to use"
+                onValueChange={(bound) => {
+                  if (bound && bound !== sheet.bound) {
+                    run(() => setScoringSheetBound({ groupId: key, section, bound }), 'Could not update the sheet');
+                  }
                 }}
               >
-                {bound}
-              </button>
-            ))}
-          </span>
-        </div>
+                <ToggleGroupItem value="lower" className="h-7 text-xs">Lower</ToggleGroupItem>
+                <ToggleGroupItem value="upper" className="h-7 text-xs">Upper</ToggleGroupItem>
+              </ToggleGroup>
+            </div>
+          )}
+          <div className="mt-auto flex flex-wrap items-center gap-2 pt-1">
+            <Button variant="outline" size="sm" disabled={busy} onClick={() => onView({ section, level })}>
+              <LuEye data-icon="inline-start" />
+              View
+            </Button>
+            <Button variant="outline" size="sm" disabled={busy} onClick={() => onImport({ section, level, replacing: true })}>
+              <LuUpload data-icon="inline-start" />
+              Replace
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+              disabled={busy}
+              onClick={remove}
+            >
+              {busy ? <Spinner data-icon="inline-start" /> : <LuTrash2 data-icon="inline-start" />}
+              Remove
+            </Button>
+          </div>
+        </>
+      ) : (
+        <>
+          <p className="text-sm text-muted-foreground">
+            No sheet yet.
+            {usedBy.length > 0 && ' Exams set to this level show raw scores only until one is added.'}
+          </p>
+          <div className="mt-auto flex flex-wrap items-center gap-2 pt-1">
+            <Button size="sm" disabled={busy} onClick={() => onImport({ section, level })}>
+              {busy ? <Spinner data-icon="inline-start" /> : <LuPlus data-icon="inline-start" />}
+              Add sheet
+            </Button>
+            {sources.length > 0 && (
+              <Select
+                value={COPY_PLACEHOLDER}
+                disabled={busy}
+                onValueChange={(fromGroupId) => {
+                  if (fromGroupId) run(() => copyScoringSheet({ fromGroupId, toGroupId: key, section }), 'Could not copy the sheet');
+                }}
+              >
+                <SelectTrigger
+                  size="sm"
+                  className="min-w-0 flex-1 bg-background"
+                  aria-label={`Copy an existing sheet into ${LEVEL_LABEL[level]} ${subject.label}`}
+                >
+                  <SelectValue placeholder="Copy existing…" />
+                </SelectTrigger>
+                <SelectContent position="popper" align="start">
+                  {sources.map((src) => <SelectItem key={src.key} value={src.key}>{src.label}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            )}
+          </div>
+        </>
       )}
-      <div style={c.actions}>
-        <button type="button" style={s.btnGhost} disabled={busy} onClick={() => onView({ section, level })}>View</button>
-        <button type="button" style={s.btnGhost} disabled={busy} onClick={() => onImport({ section, level, replacing: true })}>Replace</button>
-        <button type="button" style={s.btnDanger} disabled={busy} onClick={remove}>Remove</button>
-      </div>
+    </div>
+  );
+}
+
+function LibrarySkeleton() {
+  return (
+    <div className="grid gap-6" aria-busy="true" aria-label="Loading scoring sheets">
+      {SUBJECTS.map((subject) => (
+        <Card key={subject.key}>
+          <CardHeader>
+            <Skeleton className="h-5 w-56" />
+            <Skeleton className="h-4 w-36" />
+          </CardHeader>
+          <CardContent className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {LEVELS.map((level) => <Skeleton key={level} className="h-52 rounded-lg" />)}
+          </CardContent>
+        </Card>
+      ))}
     </div>
   );
 }
 
 export default function ScoringSheetLibrary({ onChanged }) {
-  const [library, setLibrary] = useState(null);
-  const [exams, setExams] = useState([]);
+  const queryClient = useQueryClient();
+  const libraryQuery = useSheetLibrary();
+  const { exams } = useExams();
+  const library = libraryQuery.data;
   const [error, setError] = useState(null);
   const [importing, setImporting] = useState(null); // { section, level, replacing }
   const [viewing, setViewing] = useState(null); // { section, level }
 
-  const load = useCallback(async () => {
-    try {
-      const [lib, examList] = await Promise.all([fetchSheetLibrary(), fetchExams().catch(() => [])]);
-      setLibrary(lib);
-      setExams(examList);
-    } catch (err) {
-      setError(err.message || 'Could not load the scoring sheets');
-    }
-  }, []);
-
-  useEffect(() => { load(); }, [load]);
-
+  // Exams are graded with these sheets, so both lists are re-read after a change.
   const reload = useCallback(async () => {
-    await load();
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: queryKeys.sheetLibrary }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.exams }),
+    ]);
     onChanged?.();
-  }, [load, onChanged]);
+  }, [queryClient, onChanged]);
 
   const slotLabel = (slot) => `${SUBJECTS.find((x) => x.key === slot.section).label} · ${LEVEL_LABEL[slot.level]}`;
 
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-      {error && <div style={s.error}>⚠ {error}</div>}
-      {!library && !error && <div style={s.empty}>Loading scoring sheets…</div>}
+  if (libraryQuery.isPending) return <LibrarySkeleton />;
+  if (!library) {
+    return (
+      <Notice variant="destructive" title="Could not load the scoring sheets">
+        {libraryQuery.error?.message || 'Try reloading the page.'}
+      </Notice>
+    );
+  }
 
-      {library && SUBJECTS.map((subject) => {
+  return (
+    <div className="grid gap-6">
+      {error && <Notice variant="destructive">{error}</Notice>}
+
+      {SUBJECTS.map((subject) => {
         const filled = LEVELS.filter((level) => library.sheets[subject.key][level]).length;
         return (
-          <section key={subject.key} style={c.subjectCard} aria-label={`${subject.long} scoring sheets`}>
-            <div style={c.subjectHead}>
-              <div style={s.dot} />
-              <span style={s.title}>{subject.long}</span>
-              <span style={s.count}>{filled} of {LEVELS.length} sheets added</span>
-            </div>
-            <div style={c.slots}>
+          <Card key={subject.key} aria-label={`${subject.long} scoring sheets`}>
+            <CardHeader>
+              <CardTitle>{subject.long}</CardTitle>
+              <CardDescription>{filled} of {LEVELS.length} sheets added</CardDescription>
+            </CardHeader>
+            <CardContent className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {LEVELS.map((level) => (
                 <Slot
                   key={level}
@@ -249,8 +318,8 @@ export default function ScoringSheetLibrary({ onChanged }) {
                   onError={setError}
                 />
               ))}
-            </div>
-          </section>
+            </CardContent>
+          </Card>
         );
       })}
 

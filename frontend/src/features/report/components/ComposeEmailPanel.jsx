@@ -1,76 +1,86 @@
 // features/report/components/ComposeEmailPanel.jsx
-// "Email" mode — write your own message and send it to selected students'
+// The Compose page: write your own message and send it to selected students'
 // saved contacts (student + parent). By design this does NOT send the
-// progress report: the PDF only rides along when "Attach progress report"
-// is explicitly checked. Exists so the bulk email pipeline can be exercised
-// without mailing out reports.
-import React, { useState, useEffect, useMemo } from 'react';
-import { sendCustomEmail, fetchCustomEmailJobStatus, fetchStudentGroups, fetchPrograms, scheduleCustomEmail, saveStudentContacts } from '../api/reportApi.js';
+// progress report - the PDF only rides along when "Attach progress report"
+// is checked.
+import React, { useMemo, useState } from 'react';
+import { LuCalendarClock, LuPencil, LuSearch, LuSend, LuUsers } from 'react-icons/lu';
+import { cn } from '@/lib/utils';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty';
+import { Field, FieldContent, FieldDescription, FieldLabel } from '@/components/ui/field';
+import { Input } from '@/components/ui/input';
+import { InputGroup, InputGroupAddon, InputGroupInput } from '@/components/ui/input-group';
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectSeparator,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Spinner } from '@/components/ui/spinner';
+import { Textarea } from '@/components/ui/textarea';
+import { Notice } from '@/components/common/Notice';
+import DateRangePicker from '@/components/common/DateRangePicker';
+import ScheduleTimePicker from '@/components/common/ScheduleTimePicker';
+import {
+  sendCustomEmail,
+  fetchCustomEmailJobStatus,
+  scheduleCustomEmail,
+  saveStudentContacts,
+} from '../api/reportApi.js';
+import {
+  useContacts,
+  useDirectory,
+  useEmailConfigured,
+  useNoteContactsSaved,
+  usePrograms,
+  useStudents,
+  useStudentsById,
+} from '../api/queries.js';
+import { isValidContactField } from '../constants.js';
+import { formatSendTime } from './sendStatus.jsx';
 
-const EMAIL_RX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-// A contact field may hold several addresses (e.g. two parents) separated by
-// comma, semicolon, or slash. Validate each piece, not the whole string.
-function splitAddresses(field) {
-  return String(field || '')
-    .split(/[,;/\n]+/)
-    .map((e) => e.trim())
-    .filter(Boolean);
-}
-function isValidContactField(field) {
-  const parts = splitAddresses(field);
-  return parts.length > 0 && parts.every((addr) => EMAIL_RX.test(addr));
-}
-const s = {
-  card: { background: 'var(--bg)', borderRadius: 16, boxShadow: 'var(--shadow-lg)', border: '1.5px solid var(--border)', overflow: 'hidden' },
-  cardHead: { padding: '18px 24px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 10 },
-  cardDot: { width: 8, height: 8, borderRadius: '50%', background: 'var(--accent)' },
-  cardTitle: { fontSize: '0.85rem', fontWeight: 600, color: 'var(--ink)' },
-  cardBody: { padding: '24px', display: 'flex', flexDirection: 'column', gap: 18 },
-  label: { fontSize: '0.7rem', fontWeight: 600, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 6, display: 'block' },
-  input: { width: '100%', padding: '10px 14px', fontSize: '0.9rem', border: '1.5px solid var(--border)', borderRadius: 10, fontFamily: 'var(--font-sans)', boxSizing: 'border-box' },
-  textarea: { width: '100%', minHeight: 160, padding: '12px 14px', fontSize: '0.9rem', lineHeight: 1.6, border: '1.5px solid var(--border)', borderRadius: 10, fontFamily: 'var(--font-sans)', resize: 'vertical', boxSizing: 'border-box' },
-  search: { width: '100%', padding: '9px 14px', fontSize: '0.88rem', border: '1.5px solid var(--border)', borderRadius: 10, fontFamily: 'var(--font-sans)', boxSizing: 'border-box', marginBottom: 8 },
-  pickList: { border: '1.5px solid var(--border)', borderRadius: 12, maxHeight: 260, overflowY: 'auto' },
-  pickRow: { display: 'flex', alignItems: 'center', gap: 10, padding: '9px 14px', borderTop: '1px solid var(--border)', cursor: 'pointer', userSelect: 'none', fontSize: '0.88rem' },
-  pill: { fontSize: '0.66rem', fontWeight: 600, borderRadius: 20, padding: '2px 8px', marginLeft: 'auto', whiteSpace: 'nowrap' },
-  pillOk: { background: '#f0fdf4', color: '#15803d', border: '1px solid #bbf7d0' },
-  pillWarn: { background: '#fffbeb', color: '#b45309', border: '1px solid #fde68a' },
-  checkboxRow: { display: 'flex', alignItems: 'flex-start', gap: 10, padding: '12px 14px', background: '#fafbff', border: '1.5px solid var(--border)', borderRadius: 10, cursor: 'pointer', userSelect: 'none' },
-  btn: { fontSize: '0.9rem', fontWeight: 600, padding: '12px 22px', borderRadius: 10, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer', fontFamily: 'var(--font-sans)' },
-  btnGhost: { fontSize: '0.78rem', fontWeight: 600, padding: '6px 12px', borderRadius: 8, border: '1.5px solid var(--border)', background: '#fff', color: 'var(--ink)', cursor: 'pointer', fontFamily: 'var(--font-sans)' },
-  hint: { fontSize: '0.78rem', color: 'var(--muted)' },
-  ok: { padding: '10px 14px', background: '#f0fdf4', border: '1.5px solid #86efac', borderRadius: 8, color: '#15803d', fontSize: '0.85rem', fontWeight: 500 },
-  err: { padding: '10px 14px', background: '#fff1f2', border: '1.5px solid #fca5a5', borderRadius: 8, color: '#b91c1c', fontSize: '0.85rem' },
-  resultRow: { display: 'flex', justifyContent: 'space-between', gap: 10, padding: '7px 12px', fontSize: '0.8rem', borderTop: '1px solid var(--border)' },
-  btnSecondary: { fontSize: '0.9rem', fontWeight: 600, padding: '12px 22px', borderRadius: 10, border: '1.5px solid var(--accent)', background: '#fff', color: 'var(--accent)', cursor: 'pointer', fontFamily: 'var(--font-sans)' },
-  btnTiny: { fontSize: '0.7rem', fontWeight: 600, padding: '3px 9px', borderRadius: 7, border: '1.5px solid var(--border)', background: '#fff', color: 'var(--ink)', cursor: 'pointer', fontFamily: 'var(--font-sans)', flexShrink: 0 },
-  editInput: { padding: '6px 10px', fontSize: '0.8rem', border: '1.5px solid var(--border)', borderRadius: 8, fontFamily: 'var(--font-sans)', boxSizing: 'border-box', width: '100%' },
-  editErr: { fontSize: '0.72rem', color: '#b91c1c', fontWeight: 500 },
-  scheduleInput: { padding: '10px 14px', border: '1.5px solid var(--border)', borderRadius: 10, background: 'var(--bg)', color: 'var(--ink)', fontFamily: 'var(--font-sans)', fontSize: '0.9rem', outline: 'none', colorScheme: 'light' },
-};
+const ALL_STUDENTS = '__all__';
 
-// datetime-local wants "YYYY-MM-DDTHH:mm" in LOCAL time (no timezone suffix).
-function toDatetimeLocalValue(date) {
-  const pad = (n) => String(n).padStart(2, '0');
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+function RecipientSkeleton() {
+  return (
+    <div aria-busy="true" aria-label="Loading students">
+      {Array.from({ length: 5 }, (_, i) => (
+        <div key={i} className="flex items-center gap-3 border-b px-4 py-3 last:border-b-0">
+          <Skeleton className="size-4 rounded-[4px]" />
+          <div className="grid flex-1 gap-1.5">
+            <Skeleton className="h-3.5 w-40" />
+            <Skeleton className="h-3 w-64" />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
 }
 
-export default function ComposeEmailPanel({
-  students,
-  allContacts,
-  emailConfigured,
-  startDate,
-  endDate,
-  dayOfWeek,
-  onContactsPersisted, // kept for parity; custom sends don't alter contacts
-}) {
+export default function ComposeEmailPanel({ startDate, endDate, onStartDate, onEndDate, dayOfWeek }) {
+  const { students, isPending: studentsLoading } = useStudents();
+  const byId = useStudentsById();
+  const directory = useDirectory();
+  const { programs } = usePrograms();
+  const { contacts: allContacts } = useContacts();
+  const noteContactsSaved = useNoteContactsSaved();
+  const emailConfigured = useEmailConfigured();
+  const groups = directory.data?.groups ?? [];
+
   const [selected, setSelected] = useState(() => new Set());
   const [search, setSearch] = useState('');
-  // Group/program filter — '' shows everyone, 'g:<id>' a ClassMarker group,
-  // 'p:<id>' a program. Mirrors the Students tab's single dropdown.
-  const [filterId, setFilterId] = useState('');
-  const [groups, setGroups] = useState([]);
-  const [programs, setPrograms] = useState([]);
+  // Group/program filter - all students, 'g:<id>' a ClassMarker group,
+  // 'p:<id>' a program. The same choice as the Students page.
+  const [filterId, setFilterId] = useState(ALL_STUDENTS);
   const [subject, setSubject] = useState('');
   const [message, setMessage] = useState('');
   const [includeReport, setIncludeReport] = useState(false);
@@ -79,58 +89,45 @@ export default function ComposeEmailPanel({
   const [summaryProgramId, setSummaryProgramId] = useState('auto');
   const [sending, setSending] = useState(false);
   const [error, setError] = useState(null);
-  const [results, setResults] = useState(null); // [{studentId, status, to, error}]
-  // Schedule-for-later: picker hidden until "Schedule" is clicked. sendAt is a
-  // datetime-local string; the batch fires server-side so the page can close.
+  const [results, setResults] = useState(null); // [{ studentId, status, to, error }]
+  // Schedule for later: the picker stays hidden until "Schedule" is pressed.
+  // sendAt is a local 'YYYY-MM-DDTHH:mm' string; the batch is sent by the
+  // server, so this page can be closed.
   const [showSchedule, setShowSchedule] = useState(false);
   const [sendAt, setSendAt] = useState('');
   const [scheduling, setScheduling] = useState(false);
-  const [scheduleMsg, setScheduleMsg] = useState(null); // { type: 'success'|'error', text }
-  // Inline contact editing — one row at a time.
+  const [scheduleMsg, setScheduleMsg] = useState(null); // { type: 'success' | 'error', text }
+  // Inline contact editing - one row at a time.
   const [editingId, setEditingId] = useState(null);
   const [editVals, setEditVals] = useState({ studentEmail: '', parentEmail: '' });
   const [editSaving, setEditSaving] = useState(false);
   const [editErr, setEditErr] = useState(null);
 
-  useEffect(() => {
-    let cancelled = false;
-    Promise.all([
-      fetchStudentGroups().catch(() => []),
-      fetchPrograms().catch(() => []),
-    ]).then(([g, p]) => {
-      if (cancelled) return;
-      setGroups(g);
-      setPrograms(p);
-    });
-    return () => { cancelled = true; };
-  }, []);
-
-  const contactsFor = (id) => allContacts?.[id] || {};
+  const contactsFor = (id) => allContacts[id] || {};
   const hasRecipient = (st) => {
     const c = contactsFor(st.id);
     return Boolean(c.studentEmail || c.parentEmail || st.email);
   };
 
-  // Ids allowed by the group/program filter — null means no filter.
+  // Ids allowed by the group/program filter - null means everyone.
   const filterIds = useMemo(() => {
-    if (!filterId) return null;
+    if (filterId === ALL_STUDENTS) return null;
     if (filterId.startsWith('g:')) {
-      const g = groups.find((x) => `g:${x.groupId}` === filterId);
-      return g ? new Set(g.students.map((st) => String(st.id))) : new Set();
+      const group = groups.find((g) => `g:${g.groupId}` === filterId);
+      return new Set((group?.studentIds || []).map(String));
     }
-    const p = programs.find((x) => `p:${x.programId}` === filterId);
-    return p ? new Set((p.studentIds || []).map(String)) : new Set();
+    const program = programs.find((p) => `p:${p.programId}` === filterId);
+    return new Set((program?.studentIds || []).map(String));
   }, [filterId, groups, programs]);
 
+  const query = search.trim().toLowerCase();
   const filtered = useMemo(
-    () => (students || []).filter((st) =>
+    () => students.filter((st) =>
       (!filterIds || filterIds.has(String(st.id))) &&
-      (!search || st.name.toLowerCase().includes(search.toLowerCase()))
+      (!query || st.name.toLowerCase().includes(query) || String(st.email || '').toLowerCase().includes(query))
     ),
-    [students, search, filterIds]
+    [students, query, filterIds]
   );
-
-  const byId = useMemo(() => new Map((students || []).map((st) => [String(st.id), st])), [students]);
 
   const toggle = (id) => {
     setResults(null);
@@ -147,7 +144,7 @@ export default function ComposeEmailPanel({
   const selectAllWithContacts = () => {
     setResults(null);
     setSelected(new Set(
-      (students || [])
+      students
         .filter((st) => (!filterIds || filterIds.has(String(st.id))) && hasRecipient(st))
         .map((st) => st.id)
     ));
@@ -156,10 +153,7 @@ export default function ComposeEmailPanel({
   function startEdit(st) {
     const c = contactsFor(st.id);
     setEditingId(String(st.id));
-    setEditVals({
-      studentEmail: c.studentEmail || st.email || '',
-      parentEmail: c.parentEmail || '',
-    });
+    setEditVals({ studentEmail: c.studentEmail || st.email || '', parentEmail: c.parentEmail || '' });
     setEditErr(null);
   }
 
@@ -168,29 +162,32 @@ export default function ComposeEmailPanel({
     setEditErr(null);
   }
 
-  // Persist the row's contacts, mirroring the Bulk Send tab: a malformed
-  // email never overwrites a good one.
+  // Save the row's contacts. A malformed email never overwrites a good one.
   async function saveEdit(id) {
     const studentEmail = editVals.studentEmail.trim();
     const parentEmail = editVals.parentEmail.trim();
-    if ((studentEmail && !isValidContactField(studentEmail)) || (parentEmail && !isValidContactField(parentEmail))) {      setEditErr('Invalid email — not saved.');
+    if (!isValidContactField(studentEmail) || !isValidContactField(parentEmail)) {
+      setEditErr('Check the email - not saved. Separate several addresses with commas.');
       return;
     }
     setEditSaving(true);
     setEditErr(null);
     try {
       await saveStudentContacts(String(id), { studentEmail, parentEmail });
-      onContactsPersisted?.(String(id), { studentEmail, parentEmail });
+      noteContactsSaved(String(id), { studentEmail, parentEmail });
       setEditingId(null);
     } catch (e) {
-      setEditErr(e.response?.data?.error || e.message || 'Save failed.');
+      setEditErr(e.message || 'Save failed.');
     } finally {
       setEditSaving(false);
     }
   }
 
-  const datesOk = !includeReport || (startDate && endDate && new Date(startDate) <= new Date(endDate));
-  const canSend = emailConfigured && selected.size > 0 && message.trim() && datesOk && !sending;
+  const datesOk = !includeReport || Boolean(startDate && endDate && new Date(startDate) <= new Date(endDate));
+  const canSend = emailConfigured && selected.size > 0 && Boolean(message.trim()) && datesOk && !sending;
+  const reportOptions = () => (includeReport
+    ? { startDate, endDate, dayOfWeek: dayOfWeek && dayOfWeek.length ? dayOfWeek : undefined, summaryProgramId }
+    : {});
 
   async function handleSend() {
     setError(null);
@@ -200,8 +197,8 @@ export default function ComposeEmailPanel({
       const items = Array.from(selected).map((id) => {
         const st = byId.get(String(id));
         const c = contactsFor(id);
-        // Fall back to the ClassMarker email when no contacts are saved, so a
-        // test send still has somewhere to go.
+        // With no saved contacts, fall back to the ClassMarker email so the
+        // message still has somewhere to go.
         if (!c.studentEmail && !c.parentEmail && st?.email) {
           return { studentId: id, studentName: st?.name || '', studentEmail: st.email, parentEmail: '' };
         }
@@ -213,12 +210,12 @@ export default function ComposeEmailPanel({
         subject: subject || undefined,
         message,
         includeReport,
-        ...(includeReport ? { startDate, endDate, dayOfWeek: dayOfWeek && dayOfWeek.length ? dayOfWeek : undefined, summaryProgramId } : {}),
+        ...reportOptions(),
       });
       const jobId = start?.jobId;
       if (!jobId) throw new Error('Server did not return a job id.');
 
-      // Attaching reports means a PDF render per student — budget generously.
+      // Attaching reports means a PDF render per student - budget generously.
       const maxAttempts = includeReport ? 300 : 120;
       let job = null;
       for (let i = 0; i < maxAttempts; i++) {
@@ -227,19 +224,19 @@ export default function ComposeEmailPanel({
         if (job?.status === 'done' || job?.status === 'failed') break;
       }
       if (!job || job.status === 'pending') {
-        throw new Error('Send is taking longer than expected — check inboxes before retrying.');
+        throw new Error('Sending is taking longer than expected - check inboxes before retrying.');
       }
       setResults(job.items || []);
     } catch (e) {
-      setError(e.response?.data?.error || e.message || 'Send failed.');
+      setError(e.message || 'Send failed.');
     } finally {
       setSending(false);
     }
   }
 
-  // Persist a server-side batch that fires at `sendAt`. Recipients (and the
-  // report date range, when attaching) are frozen now, so the browser need
-  // not stay open. Delivery is tracked in the Bulk Send tab's queue.
+  // Store a server-side batch that fires at `sendAt`. Recipients (and the
+  // report date range, when attaching) are frozen now, so this page need not
+  // stay open. Delivery shows in the queue on the Bulk send page.
   async function handleSchedule() {
     setError(null);
     setScheduleMsg(null);
@@ -249,51 +246,46 @@ export default function ComposeEmailPanel({
     }
     const when = new Date(sendAt);
     if (Number.isNaN(when.getTime()) || when.getTime() < Date.now()) {
-      setScheduleMsg({ type: 'error', text: 'Schedule time must be in the future.' });
+      setScheduleMsg({ type: 'error', text: 'The scheduled time must be in the future.' });
       return;
     }
 
-    // Unlike the immediate send (where the server can look contacts up at
-    // send time), a scheduled batch freezes its recipients — so resolve the
-    // saved contacts / ClassMarker fallback here.
+    // Unlike an immediate send (where the server looks contacts up when it
+    // sends), a scheduled batch freezes its recipients - so resolve the saved
+    // contacts / ClassMarker fallback here.
     const items = Array.from(selected)
       .map((id) => {
         const st = byId.get(String(id));
         const c = contactsFor(id);
         const studentEmail = c.studentEmail || (!c.parentEmail && st?.email) || '';
-        return {
-          studentId: id,
-          studentName: st?.name || '',
-          studentEmail,
-          parentEmail: c.parentEmail || '',
-        };
+        return { studentId: id, studentName: st?.name || '', studentEmail, parentEmail: c.parentEmail || '' };
       })
       .filter((it) => it.studentEmail || it.parentEmail);
 
     if (items.length === 0) {
-      setScheduleMsg({ type: 'error', text: 'No selected students have a recipient email.' });
+      setScheduleMsg({ type: 'error', text: 'None of the selected students has a recipient email.' });
       return;
     }
 
     setScheduling(true);
     try {
       const res = await scheduleCustomEmail({
-        label: `Email — ${subject || 'Prime Academy'}`,
+        label: `Email - ${subject || 'Prime Academy'}`,
         subject: subject || undefined,
         message,
         includeReport,
-        ...(includeReport ? { startDate, endDate, dayOfWeek: dayOfWeek && dayOfWeek.length ? dayOfWeek : undefined, summaryProgramId } : {}),
+        ...reportOptions(),
         sendAt: when.toISOString(),
         items,
       });
       setScheduleMsg({
         type: 'success',
-        text: `Scheduled for ${when.toLocaleString()} — ${res.scheduledCount} student${res.scheduledCount === 1 ? '' : 's'}. Track or cancel it in the Bulk Send tab's queue.`,
+        text: `Scheduled for ${formatSendTime(when)} - ${res.scheduledCount} student${res.scheduledCount === 1 ? '' : 's'}.`,
       });
       setSendAt('');
       setShowSchedule(false);
     } catch (e) {
-      setScheduleMsg({ type: 'error', text: e.response?.data?.error || e.message || 'Failed to schedule.' });
+      setScheduleMsg({ type: 'error', text: e.message || 'Could not schedule the email.' });
     } finally {
       setScheduling(false);
     }
@@ -301,297 +293,362 @@ export default function ComposeEmailPanel({
 
   const sentCount = results ? results.filter((r) => r.status === 'sent').length : 0;
   const failCount = results ? results.filter((r) => r.status === 'failed').length : 0;
+  const hint = !emailConfigured
+    ? 'Email isn’t set up on the server.'
+    : selected.size === 0
+      ? 'Select at least one student.'
+      : !message.trim()
+        ? 'Write a message first.'
+        : null;
 
   return (
-    <div style={s.card}>
-      <div style={s.cardHead}>
-        <div style={s.cardDot} />
-        <span style={s.cardTitle}>Compose Email</span>
-        <span style={{ ...s.hint, marginLeft: 'auto' }}>
-          Sends your message to each student's saved student + parent emails
-        </span>
-      </div>
-      <div style={s.cardBody}>
+    <div className="grid gap-6">
+      <Card>
+        <CardHeader>
+          <CardTitle>Recipients</CardTitle>
+          <CardDescription>Your message goes to each selected student’s saved student and parent emails.</CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-4">
+          <div className="grid gap-3 sm:grid-cols-[minmax(0,18rem)_minmax(0,1fr)]">
+            <Select
+              value={filterId}
+              onValueChange={(value) => { setFilterId(value); setResults(null); }}
+            >
+              <SelectTrigger className="w-full" aria-label="Show students from">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={ALL_STUDENTS}>All students</SelectItem>
+                {groups.length > 0 && (
+                  <>
+                    <SelectSeparator />
+                    <SelectGroup>
+                      <SelectLabel>ClassMarker groups</SelectLabel>
+                      {groups.map((g) => (
+                        <SelectItem key={g.groupId} value={`g:${g.groupId}`}>
+                          {g.groupName}
+                          <span className="text-muted-foreground">{g.studentIds.length}</span>
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  </>
+                )}
+                {programs.length > 0 && (
+                  <>
+                    <SelectSeparator />
+                    <SelectGroup>
+                      <SelectLabel>Programs</SelectLabel>
+                      {programs.map((p) => (
+                        <SelectItem key={p.programId} value={`p:${p.programId}`}>
+                          {p.name}
+                          <span className="text-muted-foreground">{(p.studentIds || []).length}</span>
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  </>
+                )}
+              </SelectContent>
+            </Select>
+            <InputGroup>
+              <InputGroupAddon>
+                <LuSearch aria-hidden="true" />
+              </InputGroupAddon>
+              <InputGroupInput
+                value={search}
+                placeholder="Search by name or email"
+                aria-label="Search students"
+                onChange={(e) => setSearch(e.target.value)}
+              />
+            </InputGroup>
+          </div>
 
-        <div>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
-            <label style={{ ...s.label, marginBottom: 0 }}>
-              Recipients — {selected.size} student{selected.size === 1 ? '' : 's'} selected
-            </label>
-            <div style={{ display: 'flex', gap: 6 }}>
-              <button type="button" style={s.btnGhost} onClick={selectAllWithContacts}>Select all with contacts</button>
-              <button type="button" style={s.btnGhost} onClick={() => { setSelected(new Set()); setResults(null); }}>Clear</button>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="text-sm text-muted-foreground tabular-nums">
+              {selected.size} student{selected.size === 1 ? '' : 's'} selected
+            </span>
+            <div className="flex flex-wrap gap-2">
+              <Button size="sm" variant="outline" onClick={selectAllWithContacts}>Select all with an email</Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={selected.size === 0}
+                onClick={() => { setSelected(new Set()); setResults(null); }}
+              >
+                Clear
+              </Button>
             </div>
           </div>
-          <select
-            style={{ ...s.input, marginBottom: 8 }}
-            value={filterId}
-            onChange={(e) => { setFilterId(e.target.value); setResults(null); }}
-          >
-            <option value="">All students</option>
-            {groups.length > 0 && (
-              <optgroup label="Groups">
-                {groups.map((g) => (
-                  <option key={g.groupId} value={`g:${g.groupId}`}>{g.groupName} ({g.students.length})</option>
-                ))}
-              </optgroup>
-            )}
-            {programs.length > 0 && (
-              <optgroup label="Programs">
-                {programs.map((p) => (
-                  <option key={p.programId} value={`p:${p.programId}`}>{p.name} ({(p.studentIds || []).length})</option>
-                ))}
-              </optgroup>
-            )}
-          </select>
-          <input
-            style={s.search}
-            value={search}
-            placeholder="Search students…"
-            onChange={(e) => setSearch(e.target.value)}
-          />
-          <div style={s.pickList}>
-            {filtered.length === 0 && (
-              <div style={{ padding: '12px 14px', ...s.hint }}>No students match.</div>
-            )}
-            {filtered.map((st, i) => {
-              const c = contactsFor(st.id);
-              const saved = Boolean(c.studentEmail || c.parentEmail);
-              const fallback = !saved && Boolean(st.email);
-              // Show exactly which addresses the send will go to.
-              const emailBits = saved
-                ? [
-                    c.studentEmail ? `Student: ${c.studentEmail}` : null,
-                    c.parentEmail ? `Parent: ${c.parentEmail}` : null,
-                  ].filter(Boolean)
-                : (fallback ? [`Student: ${st.email}`] : []);
-              const isEditing = editingId === String(st.id);
-              if (isEditing) {
+
+          <div className="max-h-[26rem] overflow-y-auto rounded-lg border bg-card">
+            {studentsLoading ? (
+              <RecipientSkeleton />
+            ) : filtered.length === 0 ? (
+              <Empty>
+                <EmptyHeader>
+                  <EmptyMedia variant="icon"><LuUsers /></EmptyMedia>
+                  <EmptyTitle>No students match</EmptyTitle>
+                  <EmptyDescription>Try another group, or clear the search.</EmptyDescription>
+                </EmptyHeader>
+              </Empty>
+            ) : (
+              filtered.map((st) => {
+                const c = contactsFor(st.id);
+                const saved = Boolean(c.studentEmail || c.parentEmail);
+                const fallback = !saved && Boolean(st.email);
+                // Exactly which addresses the send goes to. A no-break space
+                // keeps each label on the same line as its address.
+                const emailBits = saved
+                  ? [c.studentEmail ? `Student:\u00a0${c.studentEmail}` : null, c.parentEmail ? `Parent:\u00a0${c.parentEmail}` : null].filter(Boolean)
+                  : fallback ? [`Student:\u00a0${st.email}`] : [];
+                const checked = selected.has(st.id);
+                const isEditing = editingId === String(st.id);
+                const checkboxId = `compose-${st.id}`;
                 return (
-                  <div key={st.id} style={{ ...s.pickRow, ...(i === 0 ? { borderTop: 'none' } : {}), cursor: 'default', alignItems: 'flex-start' }}>
-                    <input
-                      type="checkbox"
-                      checked={selected.has(st.id)}
-                      onChange={() => toggle(st.id)}
-                      style={{ flexShrink: 0, marginTop: 4 }}
-                    />
-                    <span style={{ minWidth: 0, flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }}>
-                      <span style={{ fontWeight: 600 }}>{st.name}</span>
-                      <input
-                        style={s.editInput}
-                        type="email"
-                        value={editVals.studentEmail}
-                        placeholder="Student email"
-                        onChange={(e) => setEditVals((v) => ({ ...v, studentEmail: e.target.value }))}
-                      />
-                      <input
-                        style={s.editInput}
-                        type="email"
-                        value={editVals.parentEmail}
-                        placeholder="Parent email"
-                        onChange={(e) => setEditVals((v) => ({ ...v, parentEmail: e.target.value }))}
-                      />
-                      {editErr && <span style={s.editErr}>⚠ {editErr}</span>}
-                    </span>
-                    <span style={{ display: 'flex', gap: 6, marginLeft: 'auto', flexShrink: 0 }}>
-                      <button
-                        type="button"
-                        style={{ ...s.btnTiny, borderColor: 'var(--accent)', color: 'var(--accent)' }}
-                        disabled={editSaving}
-                        onClick={() => saveEdit(st.id)}
-                      >
-                        {editSaving ? 'Saving…' : 'Save'}
-                      </button>
-                      <button type="button" style={s.btnTiny} disabled={editSaving} onClick={cancelEdit}>
-                        Cancel
-                      </button>
-                    </span>
+                  <div
+                    key={st.id}
+                    className={cn('flex items-start gap-3 border-b px-4 py-3 last:border-b-0', checked && 'bg-muted/30')}
+                  >
+                    <Checkbox id={checkboxId} checked={checked} onCheckedChange={() => toggle(st.id)} className="mt-0.5" />
+                    {isEditing ? (
+                      <div className="grid min-w-0 flex-1 gap-2">
+                        <label htmlFor={checkboxId} className="text-sm font-medium">{st.name}</label>
+                        <div className="grid gap-2 sm:grid-cols-2">
+                          <Input
+                            type="email"
+                            className="h-8 bg-background"
+                            value={editVals.studentEmail}
+                            placeholder="Student email"
+                            aria-label={`${st.name}'s student email`}
+                            aria-invalid={(editErr && !isValidContactField(editVals.studentEmail)) || undefined}
+                            autoComplete="off"
+                            spellCheck={false}
+                            autoFocus
+                            onChange={(e) => setEditVals((v) => ({ ...v, studentEmail: e.target.value }))}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') saveEdit(st.id);
+                              if (e.key === 'Escape') cancelEdit();
+                            }}
+                          />
+                          <Input
+                            type="email"
+                            className="h-8 bg-background"
+                            value={editVals.parentEmail}
+                            placeholder="Parent email"
+                            aria-label={`${st.name}'s parent email`}
+                            aria-invalid={(editErr && !isValidContactField(editVals.parentEmail)) || undefined}
+                            autoComplete="off"
+                            spellCheck={false}
+                            onChange={(e) => setEditVals((v) => ({ ...v, parentEmail: e.target.value }))}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') saveEdit(st.id);
+                              if (e.key === 'Escape') cancelEdit();
+                            }}
+                          />
+                        </div>
+                        {editErr && <p className="text-xs text-destructive" role="alert">{editErr}</p>}
+                        <div className="flex gap-2">
+                          <Button size="sm" onClick={() => saveEdit(st.id)} disabled={editSaving}>
+                            {editSaving && <Spinner data-icon="inline-start" />}
+                            Save
+                          </Button>
+                          <Button size="sm" variant="ghost" onClick={cancelEdit} disabled={editSaving}>Cancel</Button>
+                        </div>
+                      </div>
+                    ) : (
+                      <>
+                        <label htmlFor={checkboxId} className="grid min-w-0 flex-1 cursor-pointer gap-0.5">
+                          <span className="text-sm font-medium break-words">{st.name}</span>
+                          <span className="flex flex-col text-xs text-muted-foreground sm:flex-row sm:flex-wrap sm:gap-x-3">
+                            {emailBits.length
+                              ? emailBits.map((bit) => <span key={bit} className="min-w-0 break-words">{bit}</span>)
+                              : 'No email on file'}
+                          </span>
+                        </label>
+                        <Badge
+                          variant={saved ? 'success' : fallback ? 'secondary' : 'warning'}
+                          className="hidden sm:inline-flex"
+                        >
+                          {saved ? 'Contacts saved' : fallback ? 'ClassMarker email' : 'No email'}
+                        </Badge>
+                        <Button
+                          size="icon-sm"
+                          variant="ghost"
+                          className="-my-1"
+                          aria-label={`Edit ${st.name}'s contacts`}
+                          title="Edit contacts"
+                          onClick={() => startEdit(st)}
+                        >
+                          <LuPencil />
+                        </Button>
+                      </>
+                    )}
                   </div>
                 );
-              }
-              return (
-                <label key={st.id} style={{ ...s.pickRow, ...(i === 0 ? { borderTop: 'none' } : {}) }}>
-                  <input
-                    type="checkbox"
-                    checked={selected.has(st.id)}
-                    onChange={() => toggle(st.id)}
-                    style={{ flexShrink: 0 }}
-                  />
-                  <span style={{ minWidth: 0 }}>
-                    <span style={{ fontWeight: 600 }}>{st.name}</span>
-                    <br />
-                    <span style={{ fontSize: '0.72rem', color: 'var(--muted)' }}>
-                      {emailBits.length ? emailBits.join(' · ') : 'No email on file'}
-                    </span>
-                  </span>
-                  <span style={{ display: 'flex', alignItems: 'center', gap: 6, marginLeft: 'auto', flexShrink: 0 }}>
-                    <button
-                      type="button"
-                      style={s.btnTiny}
-                      onClick={(e) => { e.preventDefault(); startEdit(st); }}
-                    >
-                      ✎ Edit
-                    </button>
-                    <span style={{ ...s.pill, marginLeft: 0, ...(saved ? s.pillOk : s.pillWarn) }}>
-                      {saved ? 'Contacts saved' : fallback ? 'ClassMarker email only' : 'No email on file'}
-                    </span>
-                  </span>
-                </label>
-              );
-            })}
+              })
+            )}
           </div>
-        </div>
+        </CardContent>
+      </Card>
 
-        <div>
-          <label style={s.label}>Subject</label>
-          <input
-            style={s.input}
-            value={subject}
-            placeholder="Prime Academy"
-            onChange={(e) => setSubject(e.target.value)}
-          />
-        </div>
-
-        <div>
-          <label style={s.label}>Message</label>
-          <textarea
-            style={s.textarea}
-            value={message}
-            placeholder="Write the message students and parents will see…"
-            onChange={(e) => { setMessage(e.target.value); setResults(null); }}
-          />
-        </div>
-
-        <label style={s.checkboxRow}>
-          <input
-            type="checkbox"
-            checked={includeReport}
-            onChange={(e) => setIncludeReport(e.target.checked)}
-            style={{ marginTop: 2 }}
-          />
-          <span>
-            <span style={{ fontWeight: 600, fontSize: '0.88rem' }}>Attach progress report PDF</span>
-            <br />
-            <span style={s.hint}>
-              Off by default — your message sends alone. When checked, each student's report
-              for {startDate || '…'} → {endDate || '…'} is generated and attached, along with
-              their program summary.
-            </span>
-          </span>
-        </label>
-
-        {includeReport && (
-          <div>
-            <label style={s.label}>Program summary attachment</label>
-            <select
-              style={s.input}
-              value={summaryProgramId}
-              onChange={(e) => setSummaryProgramId(e.target.value)}
-            >
-              <option value="auto">Each student's own program (default)</option>
-              <option value="none">No summary — report only</option>
-              {programs.map((p) => (
-                <option key={p.programId} value={p.programId}>{p.name}</option>
-              ))}
-            </select>
-            <div style={{ ...s.hint, marginTop: 6 }}>
-              The group summary PDF attached alongside each report. Pick a specific program to send that
-              program's summary to everyone selected.
+      <Card>
+        <CardHeader>
+          <CardTitle>Message</CardTitle>
+          <CardDescription>Students and parents see this text; attaching the report is optional.</CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-5">
+          <Field>
+            <FieldLabel htmlFor="compose-subject">Subject</FieldLabel>
+            <Input
+              id="compose-subject"
+              value={subject}
+              placeholder="Prime Academy"
+              onChange={(e) => setSubject(e.target.value)}
+              autoComplete="off"
+            />
+          </Field>
+          <Field>
+            <FieldLabel htmlFor="compose-message">Message</FieldLabel>
+            <Textarea
+              id="compose-message"
+              className="min-h-40"
+              value={message}
+              placeholder="Write the message students and parents will see…"
+              onChange={(e) => { setMessage(e.target.value); setResults(null); }}
+            />
+          </Field>
+          <Field orientation="horizontal">
+            <Checkbox
+              id="compose-attach"
+              checked={includeReport}
+              onCheckedChange={(value) => setIncludeReport(value === true)}
+            />
+            <FieldContent>
+              <FieldLabel htmlFor="compose-attach">Attach progress report PDF</FieldLabel>
+              <FieldDescription>
+                Off by default - your message is sent on its own. When on, each student’s progress report and program
+                summary are attached.
+              </FieldDescription>
+            </FieldContent>
+          </Field>
+          {includeReport && (
+            <div className="grid gap-5 rounded-lg border bg-muted/30 p-4 md:grid-cols-2">
+              <Field>
+                <FieldLabel htmlFor="compose-dates">Report dates</FieldLabel>
+                <DateRangePicker
+                  id="compose-dates"
+                  startDate={startDate}
+                  endDate={endDate}
+                  onStartChange={onStartDate}
+                  onEndChange={onEndDate}
+                />
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="compose-summary">Program summary</FieldLabel>
+                <Select value={summaryProgramId} onValueChange={setSummaryProgramId}>
+                  <SelectTrigger id="compose-summary" className="w-full bg-background"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="auto">Each student’s own program</SelectItem>
+                    <SelectItem value="none">No summary - report only</SelectItem>
+                    {programs.length > 0 && <SelectSeparator />}
+                    {programs.map((p) => (
+                      <SelectItem key={p.programId} value={p.programId}>{p.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <FieldDescription>Pick a program to send its summary to everyone selected.</FieldDescription>
+              </Field>
             </div>
-          </div>
-        )}
-
-        {includeReport && !datesOk && (
-          <div style={s.err}>⚠ Set a valid date range (on the Students or Single Student tab) before attaching reports.</div>
-        )}
-
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-          <button
-            type="button"
-            style={{ ...s.btn, opacity: canSend ? 1 : 0.55 }}
-            disabled={!canSend}
-            onClick={handleSend}
-          >
-            {sending
-              ? 'Sending…'
-              : `✉ Send${includeReport ? ' with report' : ' (no report)'} to ${selected.size} student${selected.size === 1 ? '' : 's'}`}
-          </button>
-          {!showSchedule && (
-            <button
-              type="button"
-              style={{ ...s.btnSecondary, opacity: canSend ? 1 : 0.55 }}
-              disabled={!canSend}
-              onClick={() => { setShowSchedule(true); setScheduleMsg(null); }}
-            >
-              🕑 Schedule
-            </button>
           )}
+          {includeReport && !datesOk && <Notice variant="destructive">Pick a valid date range to attach reports.</Notice>}
+        </CardContent>
+        <CardFooter className="flex-col items-stretch gap-4 border-t">
+          <div className="flex flex-wrap items-center gap-2">
+            <Button onClick={handleSend} disabled={!canSend}>
+              {sending ? <Spinner data-icon="inline-start" /> : <LuSend data-icon="inline-start" />}
+              {sending
+                ? 'Sending…'
+                : `Send${includeReport ? ' with report' : ''} to ${selected.size} student${selected.size === 1 ? '' : 's'}`}
+            </Button>
+            {!showSchedule && (
+              <Button
+                variant="outline"
+                disabled={!canSend}
+                onClick={() => { setShowSchedule(true); setScheduleMsg(null); }}
+              >
+                <LuCalendarClock data-icon="inline-start" />
+                Schedule
+              </Button>
+            )}
+            {hint && <span className="text-sm text-muted-foreground">{hint}</span>}
+          </div>
           {showSchedule && (
-            <>
-              <input
-                type="datetime-local"
-                value={sendAt}
-                min={toDatetimeLocalValue(new Date())}
-                onChange={(e) => { setSendAt(e.target.value); setScheduleMsg(null); }}
-                style={s.scheduleInput}
-                aria-label="Schedule send date and time"
-              />
-              <button
-                type="button"
-                style={{ ...s.btnSecondary, opacity: canSend && sendAt ? 1 : 0.55 }}
-                disabled={!canSend || !sendAt || scheduling}
-                onClick={handleSchedule}
-              >
-                {scheduling ? 'Scheduling…' : '🕑 Schedule send'}
-              </button>
-              <button
-                type="button"
-                style={s.btnGhost}
-                onClick={() => { setShowSchedule(false); setSendAt(''); setScheduleMsg(null); }}
-              >
-                Cancel
-              </button>
-            </>
+            <Field>
+              <FieldLabel htmlFor="compose-send-at">Send on</FieldLabel>
+              <div className="flex flex-wrap items-center gap-2">
+                <ScheduleTimePicker
+                  id="compose-send-at"
+                  value={sendAt}
+                  onChange={(value) => { setSendAt(value); setScheduleMsg(null); }}
+                  className="min-w-0 flex-1 sm:max-w-sm sm:flex-none"
+                />
+                <Button variant="outline" onClick={handleSchedule} disabled={!canSend || !sendAt || scheduling}>
+                  {scheduling ? <Spinner data-icon="inline-start" /> : <LuCalendarClock data-icon="inline-start" />}
+                  {scheduling ? 'Scheduling…' : 'Schedule send'}
+                </Button>
+                <Button
+                  variant="ghost"
+                  onClick={() => { setShowSchedule(false); setSendAt(''); setScheduleMsg(null); }}
+                >
+                  Cancel
+                </Button>
+              </div>
+              <FieldDescription>
+                Goes out automatically at that time, even with this page closed. Track or cancel it in the queue on{' '}
+                <a href="#bulk">Bulk send</a>.
+              </FieldDescription>
+            </Field>
           )}
-          {!emailConfigured && <span style={s.hint}>Email isn't configured on the server.</span>}
-          {emailConfigured && selected.size === 0 && <span style={s.hint}>Select at least one student.</span>}
-          {emailConfigured && selected.size > 0 && !message.trim() && <span style={s.hint}>Write a message first.</span>}
-        </div>
+          {scheduleMsg && (
+            <Notice variant={scheduleMsg.type === 'error' ? 'destructive' : 'success'}>
+              {scheduleMsg.text}
+              {scheduleMsg.type === 'success' && <> Track or cancel it in the queue on <a href="#bulk">Bulk send</a>.</>}
+            </Notice>
+          )}
+          {error && <Notice variant="destructive">{error}</Notice>}
+        </CardFooter>
+      </Card>
 
-        {scheduleMsg && (
-          <div style={scheduleMsg.type === 'error' ? s.err : s.ok}>
-            {scheduleMsg.type === 'error' ? '⚠ ' : '✓ '}{scheduleMsg.text}
-          </div>
-        )}
-
-        {error && <div style={s.err}>⚠ {error}</div>}
-
-        {results && (
-          <div>
-            <div style={sentCount > 0 && failCount === 0 ? s.ok : (sentCount === 0 ? s.err : { ...s.ok, background: '#fffbeb', borderColor: '#fde68a', color: '#b45309' })}>
+      {results && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Results</CardTitle>
+          </CardHeader>
+          <CardContent className="grid gap-4">
+            <Notice variant={failCount === 0 && sentCount > 0 ? 'success' : sentCount === 0 ? 'destructive' : 'warning'}>
               {failCount === 0
-                ? `✓ Sent to ${sentCount} student${sentCount === 1 ? '' : 's'}.`
+                ? `Sent to ${sentCount} student${sentCount === 1 ? '' : 's'}.`
                 : `${sentCount} sent, ${failCount} failed.`}
-            </div>
-            <div style={{ border: '1.5px solid var(--border)', borderRadius: 10, marginTop: 8, overflow: 'hidden' }}>
-              {results.map((r, i) => {
+            </Notice>
+            <div className="max-h-96 overflow-y-auto rounded-lg border">
+              {results.map((r) => {
                 const st = byId.get(String(r.studentId));
+                const sent = r.status === 'sent';
                 return (
-                  <div key={r.studentId} style={{ ...s.resultRow, ...(i === 0 ? { borderTop: 'none' } : {}) }}>
-                    <span style={{ fontWeight: 600 }}>{st?.name || r.studentId}</span>
-                    <span style={{ color: r.status === 'sent' ? '#15803d' : '#b91c1c' }}>
-                      {r.status === 'sent'
-                        ? `Sent → ${(r.to || []).join(', ')}`
-                        : (r.error || 'Failed')}
-                    </span>
+                  <div key={r.studentId} className="grid gap-0.5 border-b px-4 py-2.5 last:border-b-0">
+                    <div className="flex items-center gap-3">
+                      <span className="min-w-0 flex-1 truncate text-sm font-medium">{st?.name || r.studentId}</span>
+                      <Badge variant={sent ? 'success' : 'destructive'}>{sent ? 'Sent' : 'Failed'}</Badge>
+                    </div>
+                    <p className={cn('text-xs break-words', sent ? 'text-muted-foreground' : 'text-destructive')}>
+                      {sent ? `To ${(r.to || []).join(', ')}` : (r.error || 'Failed')}
+                    </p>
                   </div>
                 );
               })}
             </div>
-          </div>
-        )}
-
-      </div>
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }

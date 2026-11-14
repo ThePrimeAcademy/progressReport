@@ -6,11 +6,47 @@ export async function fetchStudents() {
   return response.data.data;
 }
 
-// ClassMarker groups with their distinct students — powers the main-page
-// student directory. Returns [{ groupId, groupName, students: [{id,name,email}] }].
+// ClassMarker groups with their distinct students.
+// Returns [{ groupId, groupName, students: [{id,name,email}] }].
 export async function fetchStudentGroups() {
   const response = await apiClient.get('/students/groups');
   return response.data.data || [];
+}
+
+// Everything the student pickers need, in one request:
+//   { students: [{ id, name, email }],
+//     groups: [{ groupId, groupName, studentIds }],
+//     sync: { live, syncedAt, requestsLastHour, hourlyLimit } | null }
+// It is served from the server's cache and never costs a ClassMarker request.
+// A backend older than this endpoint (for a few minutes during a release:
+// GitHub Pages goes live before Railway finishes) answers 404 - build the
+// same shape from the two endpoints it does have.
+export async function fetchDirectory() {
+  try {
+    const response = await apiClient.get('/students/directory');
+    return response.data.data;
+  } catch (err) {
+    if (err.status !== 404) throw err;
+    const [students, groups] = await Promise.all([fetchStudents(), fetchStudentGroups()]);
+    return {
+      students,
+      groups: groups.map((g) => ({
+        groupId: g.groupId,
+        groupName: g.groupName,
+        studentIds: g.students.map((st) => String(st.id)),
+      })),
+      sync: null,
+    };
+  }
+}
+
+// Ask the server to check ClassMarker for new results now. The server skips
+// the check (and says why) when it synced in the last few minutes, so this
+// never burns more than a couple of the 30 hourly requests.
+//   → { refreshed, reason?, message, directory? }
+export async function refreshDirectory() {
+  const response = await apiClient.post('/students/refresh');
+  return response.data;
 }
 
 // previewReport now returns { jobId, status } immediately. Caller is expected
@@ -27,7 +63,7 @@ export async function fetchPreviewJobStatus(jobId) {
 
 // PDF generation is job-based (the render takes longer than Railway's edge
 // allows a single request to live): POST enqueues, we poll until ready, then
-// hand back the file URL — the caller points a browser tab at it and the
+// hand back the file URL - the caller points a browser tab at it and the
 // server streams the PDF inline. Every step is a short request, so transient
 // network errors get absorbed by the apiClient retry. The render is usually
 // pre-warmed by the preview, so polling often succeeds on the first check.
@@ -43,7 +79,7 @@ export async function requestReportPdf(payload) {
     const job = res.data.data;
     if (job.status === 'ready') break;
     if (job.status === 'failed') throw new Error(job.error || 'PDF generation failed');
-    if (attempt === PDF_POLL_MAX_ATTEMPTS - 1) throw new Error('PDF generation timed out — please try again');
+    if (attempt === PDF_POLL_MAX_ATTEMPTS - 1) throw new Error('PDF generation timed out - please try again');
     await new Promise((resolve) => setTimeout(resolve, attempt === 0 ? 250 : PDF_POLL_INTERVAL_MS));
   }
 
@@ -165,7 +201,7 @@ export async function reorderExams(programId, orderedIds) {
   return response.data.data;
 }
 
-// { all: true } skips the enrolled-only filter — used by the program roster's
+// { all: true } skips the enrolled-only filter - used by the program roster's
 // bulk-enroll, which needs takers who aren't enrolled yet. { group } keeps only
 // attempts made under that ClassMarker group (a test can be linked to several).
 export async function fetchExamTakers(examId, { all = false, group = '' } = {}) {
@@ -183,7 +219,7 @@ export async function fetchExamScoreboard(examId) {
 }
 
 // ── Manual raw-score edits ─────────────────────────────────────
-// Raw scores only — scaled 1600 values always regenerate from the curve.
+// Raw scores only - scaled 1600 values always regenerate from the curve.
 
 export async function updateRawScore(recordId, { score, reason }) {
   const response = await apiClient.patch(`/exams/results/${encodeURIComponent(recordId)}`, { score, reason });
@@ -227,17 +263,10 @@ export async function deleteProgram(programId) {
   return response.data;
 }
 
-// Absolute URL of a program's cohort summary PDF — open in a new tab to view
+// Absolute URL of a program's cohort summary PDF - open in a new tab to view
 // or download the "how the cohort did" report.
 export function programSummaryUrl(programId) {
   return `${apiClient.defaults.baseURL}/programs/${encodeURIComponent(programId)}/summary.pdf`;
-}
-
-export async function fetchStudentContacts(studentId) {
-  const response = await apiClient.get(
-    `/students/${encodeURIComponent(studentId)}/contacts`
-  );
-  return response.data.data;
 }
 
 export async function saveStudentContacts(studentId, contacts) {
@@ -253,18 +282,6 @@ export async function fetchAllContacts() {
   return response.data.data || {};
 }
 
-export async function fetchActiveStudents({ startDate, endDate, dayOfWeek }) {
-  const params = new URLSearchParams();
-  if (startDate) params.set('startDate', startDate);
-  if (endDate) params.set('endDate', endDate);
-  if (dayOfWeek && dayOfWeek.length) {
-    params.set('dayOfWeek', Array.isArray(dayOfWeek) ? dayOfWeek.join(',') : dayOfWeek);
-  }
-  const qs = params.toString();
-  const response = await apiClient.get(`/students/active${qs ? `?${qs}` : ''}`);
-  return response.data.data || [];
-}
-
 export async function fetchEmailStatus() {
   const response = await apiClient.get('/report/email/status');
   return response.data.data;
@@ -272,7 +289,7 @@ export async function fetchEmailStatus() {
 
 export async function emailReport(payload) {
   // POST returns immediately with a jobId (work runs in background on the
-  // server). Use a short timeout — anything slower than this means the proxy
+  // server). Use a short timeout - anything slower than this means the proxy
   // ate the request, not the email send itself.
   const response = await apiClient.post('/report/email', payload, { timeout: 30000 });
   return response.data.data;
