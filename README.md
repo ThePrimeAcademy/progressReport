@@ -2,28 +2,44 @@
 
 Prime Academy's SAT progress reports. It reads test results from ClassMarker, turns raw scores into scaled SAT scores with scoring sheets, and produces a report for each student that can be viewed, downloaded as a PDF, or emailed to the student and their parents.
 
-- **Frontend:** React 18 + Vite, deployed to GitHub Pages on every push to `main` that touches `frontend/`.
+- **Frontend:** React 19 + Vite, styled with [shadcn/ui](https://ui.shadcn.com/) (Radix, "Vega" style, Neutral color theme) on Tailwind CSS v4, icons from [react-icons](https://react-icons.github.io/react-icons/) (the Lucide set, `react-icons/lu`). Deployed to GitHub Pages on every push to `main` that touches `frontend/`.
 - **Backend:** Node + Express, deployed to Railway on every push to `main`. PDFs are rendered with Puppeteer. Data lives on a Railway volume (`DATA_DIR=/data`).
 
 ---
 
 ## What it does
 
-| Tab | Purpose |
-|---|---|
-| **Students** | Pick a ClassMarker group or a program, list its students, then view or email any student's report. |
-| **Single Student** | Choose a student and a date range, preview the report, download the PDF, or email it. |
-| **Programs** | Group exams into programs, enroll students, map each exam's four DSAT sections to ClassMarker tests, and choose the scoring sheet each exam uses. Scoreboard, hidden students and manual raw-score edits live here too. |
-| **Scoring Sheets** | The shared Easy / Medium / Hard scoring sheets for English and for Math. |
-| **Bulk Send** | Email reports to many students at once, now or at a scheduled time. |
-| **Email** | Write a message to selected students and parents, with or without the report attached. |
-| **Sent Log** | Every email the system has sent. |
+The header has three sections; each one shows its pages as tabs underneath.
+
+| Section | Page | Purpose |
+|---|---|---|
+| **Reports** | **Students** | Pick a ClassMarker group or a program, list its students, then view or email any student's report. |
+| | **Single student** | Choose a student and a date range, preview the report, download the PDF, or email it. |
+| **Programs** | **Programs & exams** | Group exams into programs, enroll students, map each exam's four DSAT sections to ClassMarker tests, and choose the scoring sheet each exam uses. Scoreboard, hidden students and manual raw-score edits live here too. |
+| | **Scoring sheets** | The shared Easy / Medium / Hard scoring sheets for English and for Math. |
+| **Email** | **Bulk send** | Email reports to many students at once, now or at a scheduled time. |
+| | **Compose** | Write a message to selected students and parents, with or without the report attached. |
+| | **Sent log** | Every email the system has sent. |
+
+Each page has its own URL hash (`#directory`, `#single`, `#programs`, `#sheets`, `#bulk`, `#email`, `#log`), so pages can be bookmarked.
+
+## ClassMarker requests
+
+ClassMarker allows **30 API requests per hour**, so the app is built to spend almost none of them:
+
+- **New results arrive by webhook** within seconds of a test finishing - no API request at all.
+- **Loading a page never waits for ClassMarker and never adds requests.** Student lists, groups, scoreboards and reports are served from the server's cache. When the cache is due for its hourly refresh, the cached results are served immediately and that one refresh runs in the background.
+- **About once an hour** the server double-checks ClassMarker for anything a webhook missed: normally 2 requests (groups and links), plus at most 1 for category names.
+- **The header shows how current the results are** (the dot next to "Synced … ago"). Its popover shows how many of the 30 hourly requests were used and has a *Check for new results* button. A check within 5 minutes of the last sync, or while ClassMarker is backing the server off, is answered from the cache instead of spending requests.
+- Concurrent callers share one request, and a failed fetch backs off for 10 minutes instead of retrying on every page load.
+
+The student list and the Programs page read only the columns they need from the database (`getRecordSummaries`), and the result is cached until a new result arrives, so they load in milliseconds even with tens of thousands of stored results.
 
 ## Scoring sheets
 
 A scoring sheet converts a raw score (number of correct answers) into a scaled section score from 200 to 800.
 
-There are **three shared sheets per subject**: Easy, Medium and Hard, for English (Reading & Writing) and for Math. They are added once on the **Scoring Sheets** tab. On the **Programs** tab every exam then gets one English choice and one Math choice:
+There are **three shared sheets per subject**: Easy, Medium and Hard, for English (Reading & Writing) and for Math. They are added once on the **Scoring sheets** page. On the **Programs & exams** page every exam then gets one English choice and one Math choice:
 
 | Choice | The exam is graded with |
 |---|---|
@@ -68,9 +84,26 @@ backend/
   scripts/seed-demo.js   made-up data for local development
   test/                  node:test suites
 frontend/
-  src/pages/ReportPage.jsx        tabs and page shell
-  src/features/report/            components, API calls, hooks
+  src/app/                        navigation (sections and pages) and the header
+  src/pages/ReportPage.jsx        page shell: header, page heading, the current page
+  src/components/ui/              shadcn/ui components (generated, see below)
+  src/components/common/          app-wide pieces: date pickers, student picker, confirm dialog, notices
+  src/features/report/api/        API calls (reportApi.js) and shared cached data (queries.js)
+  src/features/report/components/ the pages and their parts
 ```
+
+### UI components
+
+The components in `frontend/src/components/ui/` come from shadcn/ui (`frontend/components.json`: Radix base, `radix-vega` style, `neutral` base color). To add one:
+
+```bash
+cd frontend
+npx shadcn@latest add <component>
+```
+
+Then replace its `lucide-react` icon import with the same icon from `react-icons/lu`, aliased to the original name, e.g. `import { LuCheck as CheckIcon } from "react-icons/lu"` - the app uses react-icons only. Colors come from the CSS variables in `frontend/src/index.css` (the shadcn Neutral theme plus `success` and `warning` for status colors).
+
+Data that several pages share (the student directory, saved contacts, programs, exams) is fetched once and cached with React Query (`features/report/api/queries.js`); after changing something on the server, invalidate its query key so every page updates.
 
 ---
 
@@ -107,7 +140,7 @@ On macOS port 5000 is often taken by AirPlay Receiver; set `PORT=5055` for the b
 npm test --prefix backend
 ```
 
-The suite covers reading scoring sheets in every supported layout, storing and applying them, and the full path from an exam's Easy / Medium / Hard choice to the scores on the scoreboard and the student report. Each test file uses its own temporary data directory and never touches the network. CI runs the tests and the frontend build on every pull request and every push to `main`.
+The suite covers reading scoring sheets in every supported layout, storing and applying them, the full path from an exam's Easy / Medium / Hard choice to the scores on the scoreboard and the student report, the student directory and record lookups, and the ClassMarker request budget (a stand-in ClassMarker counts every request: page loads must send none). Each test file uses its own temporary data directory and never touches the network. CI runs the tests and the frontend build on every pull request and every push to `main`.
 
 ---
 
@@ -141,4 +174,4 @@ A previous Chrome download was interrupted. Delete `~/.cache/puppeteer/chrome-he
 Install the shared libraries listed in `backend/Dockerfile`.
 
 **Scaled scores are missing for an exam**
-Open the exam's scoreboard on the Programs tab: its title says whether no scoring sheet has been chosen or the chosen level has no sheet yet.
+Open the exam's scoreboard on the Programs & exams page: it says whether no scoring sheet has been chosen or the chosen level has no sheet yet.
