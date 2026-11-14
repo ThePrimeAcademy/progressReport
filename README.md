@@ -2,7 +2,7 @@
 
 Prime Academy's SAT progress reports. It reads test results from ClassMarker, turns raw scores into scaled SAT scores with scoring sheets, and produces a report for each student that can be viewed, downloaded as a PDF, or emailed to the student and their parents.
 
-- **Frontend:** React 19 + Vite, styled with [shadcn/ui](https://ui.shadcn.com/) (Radix, "Vega" style, Neutral color theme) on Tailwind CSS v4, icons from [react-icons](https://react-icons.github.io/react-icons/) (the Lucide set, `react-icons/lu`). Deployed to GitHub Pages on every push to `main` that touches `frontend/`.
+- **Frontend:** React 19 + Vite, styled with [shadcn/ui](https://ui.shadcn.com/) components (Radix, "Vega" style) in ProgressReport's own blue color scheme on Tailwind CSS v4, icons from [react-icons](https://react-icons.github.io/react-icons/) (the Lucide set, `react-icons/lu`). Deployed to GitHub Pages on every push to `main` that touches `frontend/`.
 - **Backend:** Node + Express, deployed to Railway on every push to `main`. PDFs are rendered with Puppeteer. Data lives on a Railway volume (`DATA_DIR=/data`).
 
 ---
@@ -94,14 +94,14 @@ frontend/
 
 ### UI components
 
-The components in `frontend/src/components/ui/` come from shadcn/ui (`frontend/components.json`: Radix base, `radix-vega` style, `neutral` base color). To add one:
+The components in `frontend/src/components/ui/` come from shadcn/ui (`frontend/components.json`: Radix base, `radix-vega` style; its `neutral` base color is only the CLI's starting point - the app's colors live in `index.css`). To add one:
 
 ```bash
 cd frontend
 npx shadcn@latest add <component>
 ```
 
-Then replace its `lucide-react` icon import with the same icon from `react-icons/lu`, aliased to the original name, e.g. `import { LuCheck as CheckIcon } from "react-icons/lu"` - the app uses react-icons only. Colors come from the CSS variables in `frontend/src/index.css` (the shadcn Neutral theme plus `success` and `warning` for status colors).
+Then replace its `lucide-react` icon import with the same icon from `react-icons/lu`, aliased to the original name, e.g. `import { LuCheck as CheckIcon } from "react-icons/lu"` - the app uses react-icons only. Colors come from the CSS variables in `frontend/src/index.css`: the shadcn tokens set to ProgressReport's original palette (brand blue `#1a56db`, light-blue highlights, blue-grey borders), plus `success` and `warning` for status colors. Change a color there and every component follows.
 
 Data that several pages share (the student directory, saved contacts, programs, exams) is fetched once and cached with React Query (`features/report/api/queries.js`); after changing something on the server, invalidate its query key so every page updates.
 

@@ -43,7 +43,7 @@ export default function AppHeader({ page, sectionTargets }) {
                     'inline-flex h-8 items-center gap-2 rounded-md px-3 text-sm font-medium whitespace-nowrap transition-all',
                     focusRing,
                     active
-                      ? 'bg-background text-foreground shadow-sm'
+                      ? 'bg-primary text-primary-foreground shadow-sm'
                       : 'text-foreground/60 hover:text-foreground'
                   )}
                 >
@@ -74,7 +74,7 @@ export default function AppHeader({ page, sectionTargets }) {
                   'after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:rounded-full after:transition-colors',
                   focusRing,
                   active
-                    ? 'text-foreground after:bg-foreground'
+                    ? 'text-primary after:bg-primary'
                     : 'text-muted-foreground after:bg-transparent hover:text-foreground'
                 )}
               >
