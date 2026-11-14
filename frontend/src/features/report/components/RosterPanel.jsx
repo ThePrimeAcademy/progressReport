@@ -1,20 +1,26 @@
 // features/report/components/RosterPanel.jsx
-// Per-exam roster editor for UNGROUPED exams — pick the students taking this
-// exam from the full student list. Exams that belong to a program inherit the
-// program's roster instead (see ProgramRosterPanel), so this only shows for
-// loose exams. Opens from the "N students" chip on the exam row.
+// Who takes an UNGROUPED exam - chosen from the full student list. Exams in a
+// program use the program's roster instead (see ProgramRosterPanel), so this
+// dialog only opens from the "N students" chip of a loose exam.
 import React, { useState } from 'react';
+import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Spinner } from '@/components/ui/spinner';
+import { Notice } from '@/components/common/Notice';
 import { updateExam } from '../api/reportApi.js';
-import s from './examManagerStyles.js';
+import StudentChecklist from './StudentChecklist.jsx';
 
-export default function RosterPanel({ exam, roster, onSaved, onError }) {
+export default function RosterPanel({ exam, roster, onClose, onSaved }) {
   const [selected, setSelected] = useState(() => new Set(exam.studentIds || []));
-  const [search, setSearch] = useState('');
   const [saving, setSaving] = useState(false);
-
-  const filtered = roster.filter(
-    (st) => !search || st.name.toLowerCase().includes(search.toLowerCase())
-  );
+  const [error, setError] = useState(null);
 
   const toggle = (id) => {
     setSelected((prev) => {
@@ -27,39 +33,45 @@ export default function RosterPanel({ exam, roster, onSaved, onError }) {
 
   async function handleSave() {
     setSaving(true);
+    setError(null);
     try {
       await updateExam(exam.examId, { studentIds: Array.from(selected) });
-      onSaved?.();
+      await onSaved?.();
     } catch (err) {
-      onError?.(err.message || 'Failed to save students');
-    } finally {
+      setError(err.message || 'Could not save the students.');
       setSaving(false);
     }
   }
 
+  const blockWhileSaving = (e) => { if (saving) e.preventDefault(); };
+
   return (
-    <div style={s.hiddenPanel}>
-      <div style={s.hiddenTitle}>Students taking this exam — {selected.size} selected</div>
-      <input
-        style={s.searchInput}
-        value={search}
-        placeholder="Search students…"
-        onChange={(e) => setSearch(e.target.value)}
-      />
-      <div style={s.hiddenList}>
-        {filtered.map((st) => (
-          <label key={st.id} style={s.hiddenRow}>
-            <input type="checkbox" checked={selected.has(st.id)} onChange={() => toggle(st.id)} />
-            {st.name}
-          </label>
-        ))}
-        {filtered.length === 0 && <span style={{ ...s.hint, gridColumn: '1 / -1' }}>No students match.</span>}
-      </div>
-      <div style={s.formActions}>
-        <button type="button" style={s.btn} disabled={saving} onClick={handleSave}>
-          {saving ? 'Saving…' : 'Save Students'}
-        </button>
-      </div>
-    </div>
+    <Dialog open onOpenChange={(open) => { if (!open && !saving) onClose(); }}>
+      <DialogContent
+        className="sm:max-w-2xl"
+        showCloseButton={!saving}
+        onInteractOutside={blockWhileSaving}
+        onEscapeKeyDown={blockWhileSaving}
+      >
+        <DialogHeader className="pr-8">
+          <DialogTitle>Students taking {exam.name}</DialogTitle>
+          <DialogDescription>This exam isn’t in a program, so it has its own list of students.</DialogDescription>
+        </DialogHeader>
+        <div className="grid min-w-0 gap-4">
+          <StudentChecklist students={roster} selected={selected} onToggle={toggle} />
+          {error && <Notice variant="destructive">{error}</Notice>}
+        </div>
+        <DialogFooter className="sm:items-center sm:justify-between">
+          <div className="flex flex-col-reverse gap-2 sm:flex-row">
+            <Button variant="outline" onClick={onClose} disabled={saving}>Cancel</Button>
+            <Button onClick={handleSave} disabled={saving}>
+              {saving && <Spinner data-icon="inline-start" />}
+              Save students
+            </Button>
+          </div>
+          <span className="text-sm text-muted-foreground tabular-nums sm:order-first">{selected.size} selected</span>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

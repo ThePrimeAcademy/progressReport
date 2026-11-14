@@ -8,10 +8,12 @@ export const LEVEL_LABEL = { easy: 'Easy', medium: 'Medium', hard: 'Hard' };
 
 // One hue per level so a column of exams can be scanned at a glance. None of
 // them is red or amber: those already mean "delete" and "warning" here.
-export const LEVEL_COLOR = {
-  easy: { fg: '#15803d', bg: '#f0fdf4', border: '#86efac' },
-  medium: { fg: '#1a56db', bg: '#e8f0fe', border: '#a4c0f4' },
-  hard: { fg: '#7e22ce', bg: '#faf5ff', border: '#d8b4fe' },
+// Tailwind classes: `badge` for a level chip (with Badge variant="outline"),
+// `on` for the selected button of a level picker.
+export const LEVEL_STYLE = {
+  easy: { badge: 'border-emerald-200 bg-emerald-50 text-emerald-700', on: 'data-[state=on]:bg-emerald-50 data-[state=on]:text-emerald-700' },
+  medium: { badge: 'border-sky-200 bg-sky-50 text-sky-700', on: 'data-[state=on]:bg-sky-50 data-[state=on]:text-sky-700' },
+  hard: { badge: 'border-violet-200 bg-violet-50 text-violet-700', on: 'data-[state=on]:bg-violet-50 data-[state=on]:text-violet-700' },
 };
 
 // `key` is the section name the API uses.

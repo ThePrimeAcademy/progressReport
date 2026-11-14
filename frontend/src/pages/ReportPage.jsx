@@ -1,152 +1,100 @@
 // pages/ReportPage.jsx
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+// The app shell: header navigation, the current page's heading, and the page
+// itself. Which page shows is the URL hash (see app/sections.js).
+import React, { Suspense, lazy, useState, useEffect, useCallback, useRef } from 'react';
+import AppHeader from '@/app/AppHeader';
+import { pageById } from '@/app/sections';
+import ErrorBoundary from '@/components/ui/ErrorBoundary';
+import { Skeleton } from '@/components/ui/skeleton';
+import { preloadCalendar } from '@/components/common/LazyCalendar';
 import { useGenerateReport } from '../features/report/hooks/useGenerateReport.js';
-import StudentSelector from '../features/report/components/StudentSelector.jsx';
-import DateRangePicker from '../features/report/components/DateRangePicker.jsx';
-import DayPicker from '../features/report/components/DayPicker.jsx';
-import ReportViewer from '../features/report/components/ReportViewer.jsx';
-import BulkSendPanel from '../features/report/components/BulkSendPanel.jsx';
-import ScheduledQueuePanel from '../features/report/components/ScheduledQueuePanel.jsx';
-import ExamManager from '../features/report/components/ExamManager.jsx';
-import ScoringSheetLibrary from '../features/report/components/ScoringSheetLibrary.jsx';
 import StudentDirectory from '../features/report/components/StudentDirectory.jsx';
-import ComposeEmailPanel from '../features/report/components/ComposeEmailPanel.jsx';
-import SentLogPanel from '../features/report/components/SentLogPanel.jsx';
-import Button from '../components/ui/Button.jsx';
-import ErrorBoundary from '../components/ui/ErrorBoundary.jsx';
 
-const s = {
-  page: {
-    minHeight: '100vh',
-    background: 'linear-gradient(145deg, #f0f4ff 0%, #f7f9ff 60%, #eef2fb 100%)',
-    padding: '40px 20px 80px',
-  },
-  inner: { maxWidth: 1000, margin: '0 auto' },
-  nav: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px 20px', marginBottom: 36 },
-  brand: { fontFamily: 'var(--font-serif)', fontSize: '1.5rem', color: 'var(--accent)', letterSpacing: '-0.3px' },
-  badge: { fontSize: '0.7rem', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 20, padding: '4px 12px' },
-  modeGroup: {
-    display: 'inline-flex',
-    alignItems: 'center',
-    flexWrap: 'wrap',
-    background: 'var(--bg)',
-    border: '1px solid var(--border)',
-    borderRadius: 22,
-    padding: 3,
-    gap: 2,
-  },
-  // Thin rule between the three groups of tabs (reports · setup · email).
-  modeDivider: { width: 1, height: 16, background: 'var(--border)', margin: '0 5px' },
-  modePill: {
-    fontSize: '0.72rem',
-    fontWeight: 600,
-    letterSpacing: '0.04em',
-    border: 'none',
-    background: 'transparent',
-    color: 'var(--muted)',
-    padding: '6px 13px',
-    borderRadius: 999,
-    cursor: 'pointer',
-    transition: 'all 0.18s var(--ease)',
-    fontFamily: 'var(--font-sans)',
-    whiteSpace: 'nowrap',
-  },
-  modePillActive: {
-    background: 'var(--accent)',
-    color: '#fff',
-  },
-  hero: { textAlign: 'center', marginBottom: 32 },
-  title: { fontFamily: 'var(--font-serif)', fontSize: 'clamp(1.6rem, 4vw, 2.3rem)', lineHeight: 1.2, color: 'var(--ink)', marginBottom: 10 },
-  sub: { fontSize: '0.92rem', color: 'var(--muted)', maxWidth: 560, margin: '0 auto', lineHeight: 1.65 },
-  card: { background: 'var(--bg)', borderRadius: 16, boxShadow: 'var(--shadow-lg)', border: '1.5px solid var(--border)', overflow: 'hidden' },
-  cardHead: { padding: '18px 24px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 10 },
-  cardDot: { width: 8, height: 8, borderRadius: '50%', background: 'var(--accent)' },
-  cardTitle: { fontSize: '0.85rem', fontWeight: 600, color: 'var(--ink)' },
-  cardBody: { padding: '24px', display: 'flex', flexDirection: 'column', gap: 20 },
-  divider: { height: '1px', background: 'var(--border)' },
-  error: { padding: '12px 16px', background: '#fff1f2', border: '1.5px solid #fca5a5', borderRadius: 8, color: '#b91c1c', fontSize: '0.85rem' },
+// Every page but the first one people see is its own bundle, fetched in the
+// background once the app is idle - so the first load is smaller and later
+// page switches are still instant.
+const loaders = {
+  single: () => import('../features/report/components/SingleStudentPage.jsx'),
+  bulk: () => import('../features/report/components/BulkSendPanel.jsx'),
+  queue: () => import('../features/report/components/ScheduledQueuePanel.jsx'),
+  programs: () => import('../features/report/components/ExamManager.jsx'),
+  sheets: () => import('../features/report/components/ScoringSheetLibrary.jsx'),
+  email: () => import('../features/report/components/ComposeEmailPanel.jsx'),
+  log: () => import('../features/report/components/SentLogPanel.jsx'),
+  calendar: preloadCalendar,
 };
+const SingleStudentPage = lazy(loaders.single);
+const BulkSendPanel = lazy(loaders.bulk);
+const ScheduledQueuePanel = lazy(loaders.queue);
+const ExamManager = lazy(loaders.programs);
+const ScoringSheetLibrary = lazy(loaders.sheets);
+const ComposeEmailPanel = lazy(loaders.email);
+const SentLogPanel = lazy(loaders.log);
 
-// The tabs, in three groups: looking at reports, setting up what feeds them,
-// and emailing them out. `id` doubles as the URL hash, so a refresh or a
-// bookmark lands on the same tab.
-const TAB_GROUPS = [
-  [
-    { id: 'directory', label: 'Students', title: 'Student Performance', sub: 'Pick a group to list its students, then view or email any student’s report.' },
-    { id: 'single', label: 'Single Student', title: 'Student Report', sub: 'Select a student, date range, and optionally filter by day to generate a detailed report.' },
-  ],
-  [
-    { id: 'programs', label: 'Programs', title: 'Programs & Exams', sub: 'Group exams into programs, enroll students, and choose the scoring sheet each exam uses.' },
-    { id: 'sheets', label: 'Scoring Sheets', title: 'Scoring Sheets', sub: 'Three sheets per subject: Easy, Medium and Hard. Each exam uses one English sheet and one Math sheet.' },
-  ],
-  [
-    { id: 'bulk', label: 'Bulk Send', title: 'Send Reports', sub: 'Email progress reports to many students at once, now or on a schedule.' },
-    { id: 'email', label: 'Email', title: 'Email Families', sub: 'Write a message to selected students and parents, with or without their report attached.' },
-    { id: 'log', label: 'Sent Log', title: 'Sent Emails', sub: 'Every email this system has sent, newest first.' },
-  ],
-];
-const TABS = TAB_GROUPS.flat();
-
-function tabFromHash() {
-  const id = window.location.hash.replace(/^#/, '');
-  return TABS.some((t) => t.id === id) ? id : 'directory';
+function usePrefetchPages() {
+  useEffect(() => {
+    const prefetch = () => Object.values(loaders).forEach((load) => load().catch(() => {}));
+    if ('requestIdleCallback' in window) {
+      const id = window.requestIdleCallback(prefetch, { timeout: 3000 });
+      return () => window.cancelIdleCallback(id);
+    }
+    const timer = setTimeout(prefetch, 1500);
+    return () => clearTimeout(timer);
+  }, []);
 }
 
+function PageFallback() {
+  return (
+    <div className="grid gap-4" aria-busy="true" aria-label="Loading">
+      <Skeleton className="h-40 w-full rounded-xl" />
+      <Skeleton className="h-64 w-full rounded-xl" />
+    </div>
+  );
+}
+
+const pageFromHash = () => pageById(window.location.hash.replace(/^#/, ''));
+
 export default function ReportPage() {
+  const report = useGenerateReport();
   const {
-    students, studentsLoading, studentsError, setStudents,
-    filteredStudents,
-    selectedStudentId, setSelectedStudentId,
     startDate, setStartDate,
     endDate, setEndDate,
     dayOfWeek, setDayOfWeek,
-    previewData, previewLoading, previewError,
-    downloadLoading, downloadError, downloadSuccess,
-    homework, setHomework,
-    handlePreview, handleDownload,
-    contacts, updateContacts, saveContacts,
-    allContacts, allContactsLoading, noteContactsSaved,
-    emailConfigured, emailLoading, emailError, emailSuccess,
-    emailSubject, setEmailSubject,
-    handleEmail,
-    isValid,
-  } = useGenerateReport();
+    setSelectedStudentId,
+    previewData, isValid, handlePreview,
+  } = report;
 
-  // Which tab is showing - one of the TABS ids.
-  const [mode, setModeState] = useState(tabFromHash);
-  const setMode = useCallback((next) => {
-    setModeState(next);
-    if (window.location.hash.replace(/^#/, '') !== next) window.location.hash = next;
-  }, []);
+  usePrefetchPages();
+  const [page, setPage] = useState(pageFromHash);
+  // The page last open in each section, so switching sections returns there.
+  const [sectionTargets, setSectionTargets] = useState({});
   useEffect(() => {
-    const onHashChange = () => setModeState(tabFromHash());
+    const onHashChange = () => setPage(pageFromHash());
     window.addEventListener('hashchange', onHashChange);
     return () => window.removeEventListener('hashchange', onHashChange);
   }, []);
+  useEffect(() => {
+    setSectionTargets((prev) => (prev[page.section.id] === page.id ? prev : { ...prev, [page.section.id]: page.id }));
+    document.title = `${page.label} · ProgressReport`;
+    window.scrollTo({ top: 0 });
+  }, [page]);
 
-  // Set when programs, exams or scoring sheets change on their own tabs. The
-  // report shown on the Single Student tab is then out of date, so it is
-  // re-run the next time that tab is opened.
+  const goTo = useCallback((id) => {
+    if (window.location.hash.replace(/^#/, '') === id) setPage(pageById(id));
+    else window.location.hash = id;
+  }, []);
+
+  // Set when programs, exams or scoring sheets change on their own pages. The
+  // report on the Single Student page is then out of date, so it is re-run the
+  // next time that page is opened.
   const scoringChanged = useRef(false);
   const noteScoringChanged = useCallback(() => { scoringChanged.current = true; }, []);
-  const openSheets = useCallback(() => setMode('sheets'), [setMode]);
+  const openSheets = useCallback(() => goTo('sheets'), [goTo]);
   // Bumped after a successful schedule so the queue panel refetches immediately.
   const [queueRefresh, setQueueRefresh] = useState(0);
-  // Set when the directory's "View Report" is clicked — triggers an automatic
-  // preview once the selected student/date state has propagated.
+  // Set by the Students page's "View report": preview automatically once the
+  // chosen student has reached the Single Student page.
   const [autoPreview, setAutoPreview] = useState(false);
-
-  // Default the date range to the program start → today so the main page's
-  // View Report / Email actions work without any setup.
-  const DEFAULT_START_DATE = '2026-06-22';
-  useEffect(() => {
-    if (!startDate && !endDate) {
-      const today = new Date();
-      setEndDate(today.toISOString().slice(0, 10));
-      setStartDate(DEFAULT_START_DATE);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   useEffect(() => {
     if (autoPreview && isValid) {
@@ -156,176 +104,68 @@ export default function ReportPage() {
   }, [autoPreview, isValid, handlePreview]);
 
   useEffect(() => {
-    if (mode === 'single' && scoringChanged.current) {
+    if (page.id === 'single' && scoringChanged.current) {
       scoringChanged.current = false;
       if (previewData && isValid) handlePreview();
     }
-    // Only a tab switch should trigger this, not every preview update.
+    // Only opening the page should trigger this, not every preview update.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode]);
+  }, [page.id]);
 
-  const bulkMode = mode === 'bulk';
-  const tab = TABS.find((t) => t.id === mode) || TABS[0];
+  const dateProps = { startDate, endDate, onStartDate: setStartDate, onEndDate: setEndDate };
 
   return (
-    <div style={s.page}>
-      <div style={s.inner}>
+    <div className="flex min-h-svh flex-col">
+      <AppHeader page={page} sectionTargets={sectionTargets} />
 
-        <nav style={s.nav}>
-          <span style={s.brand}>ProgressReport</span>
-          <div role="tablist" aria-label="Sections" style={s.modeGroup}>
-            {TAB_GROUPS.map((group, i) => (
-              <React.Fragment key={group[0].id}>
-                {i > 0 && <span style={s.modeDivider} aria-hidden="true" />}
-                {group.map((t) => (
-                  <button
-                    key={t.id}
-                    type="button"
-                    role="tab"
-                    aria-selected={mode === t.id}
-                    onClick={() => setMode(t.id)}
-                    style={{ ...s.modePill, ...(mode === t.id ? s.modePillActive : {}) }}
-                  >
-                    {t.label}
-                  </button>
-                ))}
-              </React.Fragment>
-            ))}
-          </div>
-        </nav>
-
-        <header style={s.hero}>
-          <h1 style={s.title}>{tab.title}</h1>
-          <p style={s.sub}>{tab.sub}</p>
-        </header>
-
-        <ErrorBoundary resetKey={mode}>
-
-        {mode === 'programs' && (
-          <ExamManager onExamsChanged={noteScoringChanged} onOpenSheets={openSheets} />
-        )}
-
-        {mode === 'sheets' && <ScoringSheetLibrary onChanged={noteScoringChanged} />}
-
-        {mode === 'directory' && (
-          <StudentDirectory
-            students={students}
-            allContacts={allContacts}
-            onContactsPersisted={noteContactsSaved}
-            emailConfigured={emailConfigured}
-            startDate={startDate}
-            endDate={endDate}
-            onStartDate={setStartDate}
-            onEndDate={setEndDate}
-            dayOfWeek={dayOfWeek}
-            onViewReport={(studentId) => {
-              setSelectedStudentId(studentId);
-              setMode('single');
-              setAutoPreview(true);
-            }}
-          />
-        )}
-
-        {bulkMode && (
-          <>
-            <BulkSendPanel
-              students={filteredStudents}
-              startDate={startDate}
-              endDate={endDate}
-              dayOfWeek={dayOfWeek}
-              onStartDate={setStartDate}
-              onEndDate={setEndDate}
-              onDayOfWeek={setDayOfWeek}
-              allContacts={allContacts}
-              allContactsLoading={allContactsLoading}
-              onContactsPersisted={noteContactsSaved}
-              onScheduled={() => setQueueRefresh((n) => n + 1)}
-            />
-            <ScheduledQueuePanel refreshSignal={queueRefresh} />
-          </>
-        )}
-
-        {mode === 'log' && <SentLogPanel />}
-
-        {mode === 'email' && (
-          <ComposeEmailPanel
-            students={students}
-            allContacts={allContacts}
-            emailConfigured={emailConfigured}
-            startDate={startDate}
-            endDate={endDate}
-            dayOfWeek={dayOfWeek}
-            onContactsPersisted={noteContactsSaved}
-          />
-        )}
-
-        {mode === 'single' && (<>
-        <div style={s.card}>
-          <div style={s.cardHead}>
-            <div style={s.cardDot} />
-            <span style={s.cardTitle}>Configure Report</span>
-          </div>
-          <div style={s.cardBody}>
-
-            <StudentSelector
-              students={filteredStudents}
-              loading={studentsLoading}
-              error={studentsError}
-              value={selectedStudentId}
-              onChange={setSelectedStudentId}
-              onStudentsRefreshed={setStudents}
-            />
-
-            <div style={s.divider} />
-
-            <DateRangePicker
-              startDate={startDate}
-              endDate={endDate}
-              onStartChange={setStartDate}
-              onEndChange={setEndDate}
-            />
-
-            <div style={s.divider} />
-
-            <DayPicker value={dayOfWeek} onChange={setDayOfWeek} />
-
-            <div style={s.divider} />
-
-            <Button onClick={handlePreview} disabled={!isValid} loading={previewLoading} size="lg" fullWidth>
-              {previewLoading ? 'Loading Results…' : 'View Report'}
-            </Button>
-
-            {previewError && <div style={s.error}>⚠ {previewError}</div>}
-
-          </div>
+      <main className="mx-auto w-full max-w-6xl flex-1 px-4 pt-8 pb-16 sm:px-6">
+        <div className="mb-6 space-y-1">
+          <h1 className="text-2xl font-semibold tracking-tight">{page.title}</h1>
+          <p className="text-sm text-muted-foreground">{page.description}</p>
         </div>
 
-        {previewData && (
-          <ReportViewer
-            data={previewData}
-            onDownload={handleDownload}
-            downloadLoading={downloadLoading}
-            downloadError={downloadError}
-            downloadSuccess={downloadSuccess}
-            homework={homework}
-            onHomeworkChange={setHomework}
-            contacts={contacts}
-            onContactsChange={updateContacts}
-            onSaveContacts={saveContacts}
-            onSendEmail={handleEmail}
-            emailConfigured={emailConfigured}
-            emailLoading={emailLoading}
-            emailError={emailError}
-            emailSuccess={emailSuccess}
-            emailSubject={emailSubject}
-            onEmailSubjectChange={setEmailSubject}
-          />
-        )}
-        </>)}
+        <ErrorBoundary resetKey={page.id}>
+          <Suspense fallback={<PageFallback />}>
+          {page.id === 'directory' && (
+            <StudentDirectory
+              {...dateProps}
+              dayOfWeek={dayOfWeek}
+              onViewReport={(studentId) => {
+                setSelectedStudentId(studentId);
+                goTo('single');
+                setAutoPreview(true);
+              }}
+            />
+          )}
 
+          {page.id === 'single' && <SingleStudentPage report={report} />}
+
+          {page.id === 'programs' && (
+            <ExamManager onExamsChanged={noteScoringChanged} onOpenSheets={openSheets} />
+          )}
+
+          {page.id === 'sheets' && <ScoringSheetLibrary onChanged={noteScoringChanged} />}
+
+          {page.id === 'bulk' && (
+            <div className="space-y-6">
+              <BulkSendPanel
+                {...dateProps}
+                dayOfWeek={dayOfWeek}
+                onDayOfWeek={setDayOfWeek}
+                onScheduled={() => setQueueRefresh((n) => n + 1)}
+              />
+              <ScheduledQueuePanel refreshSignal={queueRefresh} />
+            </div>
+          )}
+
+          {page.id === 'email' && (
+            <ComposeEmailPanel {...dateProps} dayOfWeek={dayOfWeek} />
+          )}
+
+          {page.id === 'log' && <SentLogPanel />}
+          </Suspense>
         </ErrorBoundary>
-
-      </div>
+      </main>
     </div>
   );
 }

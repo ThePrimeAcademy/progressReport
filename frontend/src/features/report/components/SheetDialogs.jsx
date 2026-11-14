@@ -3,73 +3,98 @@
 //   SheetImportDialog - add or replace a sheet from a file or pasted cells,
 //                       with a preview of what was read before anything saves
 //   SheetTableDialog  - look at a stored sheet's full raw → score table
+// Both are shown by mounting them and closed through onClose.
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import Modal from '../../../components/ui/Modal.jsx';
+import { LuArrowLeft, LuCheck, LuClipboardPaste, LuFileSpreadsheet, LuSave, LuUpload } from 'react-icons/lu';
+import { cn } from '@/lib/utils';
+import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Field, FieldDescription, FieldLabel, FieldLegend, FieldSet } from '@/components/ui/field';
+import { Separator } from '@/components/ui/separator';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Spinner } from '@/components/ui/spinner';
+import { Textarea } from '@/components/ui/textarea';
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
+import { Notice } from '@/components/common/Notice';
 import { parseScoringSheet, saveScoringSheet, fetchScoringSheet } from '../api/reportApi.js';
 import { buildCurve, defaultColumnIndex, defaultTableIndex, formatDate, sourceDetail } from '../scoring.js';
-import s from './examManagerStyles.js';
-
-const d = {
-  dropZone: {
-    border: '1.5px dashed var(--border)', borderRadius: 12, padding: '22px 16px', textAlign: 'center',
-    background: 'var(--surface)', transition: 'border-color 150ms ease, background 150ms ease',
-  },
-  dropZoneActive: { borderColor: 'var(--accent)', background: 'var(--accent-dim)' },
-  dropTitle: { fontSize: '0.86rem', fontWeight: 600, color: 'var(--ink)' },
-  dropHint: { fontSize: '0.74rem', color: 'var(--muted)', marginTop: 4, marginBottom: 12 },
-  or: { display: 'flex', alignItems: 'center', gap: 10, fontSize: '0.68rem', fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)' },
-  orLine: { flex: 1, height: 1, background: 'var(--border)' },
-  textarea: {
-    width: '100%', boxSizing: 'border-box', minHeight: 96, padding: '8px 10px', borderRadius: 8,
-    border: '1.5px solid var(--border)', fontSize: '0.78rem', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
-    resize: 'vertical', lineHeight: 1.5,
-  },
-  choiceRow: { display: 'flex', flexWrap: 'wrap', gap: 6 },
-  // Longhand border so the selected state can change the colour alone.
-  choice: {
-    appearance: 'none', borderWidth: 1.5, borderStyle: 'solid', borderColor: 'var(--border)', background: '#fff', color: 'var(--ink)',
-    padding: '5px 12px', borderRadius: 999, cursor: 'pointer', fontSize: '0.76rem', fontWeight: 600, fontFamily: 'inherit',
-  },
-  choiceOn: { borderColor: 'var(--accent)', background: 'var(--accent)', color: '#fff' },
-  summary: { fontSize: '0.8rem', color: 'var(--ink-light)' },
-  warning: { padding: '8px 12px', background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: 8, color: '#92400e', fontSize: '0.76rem', lineHeight: 1.45 },
-  tableWrap: { border: '1px solid var(--border)', borderRadius: 10, padding: '10px 12px', maxHeight: 280, overflowY: 'auto', background: 'var(--surface)' },
-  tableColumns: { columnWidth: 118, columnGap: 18, columnRule: '1px solid var(--border)' },
-  pair: { display: 'flex', alignItems: 'baseline', gap: 6, fontSize: '0.78rem', padding: '2px 0', breakInside: 'avoid', fontVariantNumeric: 'tabular-nums' },
-  pairRaw: { width: 22, textAlign: 'right', color: 'var(--muted)' },
-  pairArrow: { color: 'var(--border)' },
-  pairScore: { fontWeight: 600, color: 'var(--ink)' },
-  pairDim: { color: 'var(--muted)', fontWeight: 400 },
-  source: { fontSize: '0.74rem', color: 'var(--muted)' },
-};
 
 // Raw → score pairs flowing down newspaper-style columns. `rows` are
 // { raw, lower, upper }; when a row is a range, both ends show and the end
 // named by `bound` is emphasised.
 export function ScoreTable({ rows, bound = 'upper' }) {
   return (
-    <div style={d.tableWrap}>
-      <div style={d.tableColumns}>
+    <div className="max-h-80 overflow-y-auto rounded-lg border bg-muted/30 px-3 py-2.5">
+      <div className="columns-[7.5rem] gap-x-5 [column-rule:1px_solid_var(--border)]">
         {rows.map((row) => {
           const ranged = row.lower !== row.upper;
           return (
-            <div key={row.raw} style={d.pair}>
-              <span style={d.pairRaw}>{row.raw}</span>
-              <span style={d.pairArrow}>→</span>
+            <div key={row.raw} className="flex break-inside-avoid items-baseline gap-1.5 py-0.5 text-xs tabular-nums">
+              <span className="w-6 shrink-0 text-right text-muted-foreground">{row.raw}</span>
+              <span className="text-muted-foreground/60" aria-hidden="true">→</span>
               {ranged ? (
                 <span>
-                  <span style={bound === 'lower' ? d.pairScore : d.pairDim}>{row.lower}</span>
-                  <span style={d.pairDim}> - </span>
-                  <span style={bound === 'upper' ? d.pairScore : d.pairDim}>{row.upper}</span>
+                  <span className={bound === 'lower' ? 'font-medium text-foreground' : 'text-muted-foreground'}>{row.lower}</span>
+                  <span className="text-muted-foreground"> - </span>
+                  <span className={bound === 'upper' ? 'font-medium text-foreground' : 'text-muted-foreground'}>{row.upper}</span>
                 </span>
               ) : (
-                <span style={d.pairScore}>{row.upper}</span>
+                <span className="font-medium text-foreground">{row.upper}</span>
               )}
             </div>
           );
         })}
       </div>
     </div>
+  );
+}
+
+// A dialog that stays open while `busy`, so a save in flight can't be
+// abandoned by a stray click or Escape.
+function SheetDialog({ busy = false, onClose, className, children }) {
+  const holdWhileBusy = (event) => { if (busy) event.preventDefault(); };
+  return (
+    <Dialog open onOpenChange={(open) => { if (!open && !busy) onClose?.(); }}>
+      <DialogContent
+        className={cn('max-h-[calc(100svh-2rem)] overflow-y-auto', className)}
+        onEscapeKeyDown={holdWhileBusy}
+        onInteractOutside={holdWhileBusy}
+      >
+        {children}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// One choice out of a few (a worksheet, a score column), always keeping one picked.
+function Choice({ legend, value, options, onChange, description }) {
+  return (
+    <FieldSet className="gap-0">
+      <FieldLegend variant="label">{legend}</FieldLegend>
+      <ToggleGroup
+        type="single"
+        variant="outline"
+        size="sm"
+        className="flex-wrap"
+        value={String(value)}
+        onValueChange={(next) => { if (next !== '') onChange(Number(next)); }}
+      >
+        {options.map((label, i) => (
+          <ToggleGroupItem key={`${label}-${i}`} value={String(i)} className="data-[state=on]:border-foreground/25">
+            <LuCheck className="hidden size-3.5 group-data-[state=on]/toggle:block" aria-hidden="true" />
+            {label}
+          </ToggleGroupItem>
+        ))}
+      </ToggleGroup>
+      {description && <FieldDescription className="mt-2">{description}</FieldDescription>}
+    </FieldSet>
   );
 }
 
@@ -83,6 +108,7 @@ export function SheetImportDialog({ target, level = null, label, replacing = fal
   const [filename, setFilename] = useState(null);
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
+  const [readingFrom, setReadingFrom] = useState(null); // 'file' | 'text' while parsing
   const [error, setError] = useState(null);
   const [dragOver, setDragOver] = useState(false);
 
@@ -91,6 +117,7 @@ export function SheetImportDialog({ target, level = null, label, replacing = fal
 
   async function read(source, name) {
     setBusy(true);
+    setReadingFrom(source.file ? 'file' : 'text');
     setError(null);
     try {
       const { tables: found } = await parseScoringSheet(source);
@@ -103,6 +130,7 @@ export function SheetImportDialog({ target, level = null, label, replacing = fal
       setError(err.message || 'Could not read that sheet');
     } finally {
       setBusy(false);
+      setReadingFrom(null);
     }
   }
 
@@ -134,132 +162,136 @@ export function SheetImportDialog({ target, level = null, label, replacing = fal
 
   if (!table) {
     return (
-      <Modal title={title} subtitle={label} busy={busy} onClose={onClose}>
-        <div
-          style={{ ...d.dropZone, ...(dragOver ? d.dropZoneActive : null) }}
-          onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-          onDragLeave={() => setDragOver(false)}
-          onDrop={(e) => {
-            e.preventDefault();
-            setDragOver(false);
-            const file = e.dataTransfer.files?.[0];
-            if (file) read({ file }, file.name);
-          }}
-        >
-          <div style={d.dropTitle}>Drop the scoring sheet here</div>
-          <div style={d.dropHint}>Excel (.xlsx) or .csv. Any layout works as long as it has a raw-score column and a score column.</div>
-          <button type="button" style={s.btn} disabled={busy} onClick={() => fileInput.current?.click()}>
-            {busy ? 'Reading…' : 'Choose file'}
-          </button>
-          <input
-            ref={fileInput}
-            type="file"
-            accept=".xlsx,.csv,.tsv,.txt,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv"
-            style={{ display: 'none' }}
-            onChange={(e) => {
-              const file = e.target.files?.[0];
-              e.target.value = '';
-              if (file) read({ file }, file.name);
+      <SheetDialog busy={busy} onClose={onClose} className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>{title}</DialogTitle>
+          <DialogDescription>{label}</DialogDescription>
+        </DialogHeader>
+
+        <div className="grid gap-5">
+          <div
+            className={cn(
+              'flex flex-col items-center gap-1 rounded-lg border border-dashed px-6 py-8 text-center transition-colors',
+              dragOver ? 'border-foreground/40 bg-muted' : 'bg-muted/30'
+            )}
+            onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+            onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setDragOver(false); }}
+            onDrop={(e) => {
+              e.preventDefault();
+              setDragOver(false);
+              const file = e.dataTransfer.files?.[0];
+              if (file && !busy) read({ file }, file.name);
             }}
-          />
-        </div>
-
-        <div style={d.or}><span style={d.orLine} />or<span style={d.orLine} /></div>
-
-        <div>
-          <span style={s.label}>Paste the cells</span>
-          <textarea
-            style={d.textarea}
-            value={text}
-            disabled={busy}
-            placeholder={'Copy the raw and score columns in Excel or Google Sheets and paste them here.\n0\t200\n1\t210\n2\t220'}
-            onChange={(e) => setText(e.target.value)}
-          />
-          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 8 }}>
-            <button type="button" style={s.btnGhost} disabled={busy || !text.trim()} onClick={() => read({ text }, null)}>
-              Read pasted cells
-            </button>
+          >
+            <span className="mb-2 flex size-10 items-center justify-center rounded-full bg-background ring-1 ring-foreground/10">
+              <LuFileSpreadsheet className="size-5 text-muted-foreground" aria-hidden="true" />
+            </span>
+            <div className="text-sm font-medium">Drop the scoring sheet here</div>
+            <p className="max-w-xs text-xs text-muted-foreground">
+              Excel (.xlsx) or .csv. Any layout works as long as it has a raw-score column and a score column.
+            </p>
+            <Button size="sm" className="mt-3" disabled={busy} onClick={() => fileInput.current?.click()}>
+              {readingFrom === 'file' ? <Spinner data-icon="inline-start" /> : <LuUpload data-icon="inline-start" />}
+              {readingFrom === 'file' ? 'Reading…' : 'Choose file'}
+            </Button>
+            <input
+              ref={fileInput}
+              type="file"
+              accept=".xlsx,.csv,.tsv,.txt,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                e.target.value = '';
+                if (file) read({ file }, file.name);
+              }}
+            />
           </div>
-        </div>
 
-        {error && <div style={s.error}>⚠ {error}</div>}
-      </Modal>
+          <div className="flex items-center gap-3 text-xs text-muted-foreground" aria-hidden="true">
+            <Separator className="flex-1" />
+            or
+            <Separator className="flex-1" />
+          </div>
+
+          <Field>
+            <FieldLabel htmlFor="sheet-paste">Paste the cells</FieldLabel>
+            <Textarea
+              id="sheet-paste"
+              className="max-h-48 min-h-28 overflow-y-auto font-mono text-xs md:text-xs"
+              value={text}
+              disabled={busy}
+              placeholder={'0\t200\n1\t210\n2\t220'}
+              onChange={(e) => setText(e.target.value)}
+            />
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+              <FieldDescription className="min-w-0 sm:flex-1">Copy the raw-score and score columns in Excel or Google Sheets and paste them here.</FieldDescription>
+              <Button variant="outline" size="sm" className="self-end sm:self-auto" disabled={busy || !text.trim()} onClick={() => read({ text }, null)}>
+                {readingFrom === 'text' ? <Spinner data-icon="inline-start" /> : <LuClipboardPaste data-icon="inline-start" />}
+                {readingFrom === 'text' ? 'Reading…' : 'Read pasted cells'}
+              </Button>
+            </div>
+          </Field>
+
+          {error && <Notice variant="destructive">{error}</Notice>}
+        </div>
+      </SheetDialog>
     );
   }
 
   const scores = picked.curve.map((p) => (picked.bound === 'lower' ? p.lower : p.upper));
   return (
-    <Modal
-      title={title}
-      subtitle={label}
-      width={640}
-      busy={busy}
-      onClose={onClose}
-      footer={(
-        <>
-          <button type="button" style={s.btnGhost} disabled={busy} onClick={() => { setTables(null); setError(null); }}>
-            Choose a different sheet
-          </button>
-          <button type="button" style={{ ...s.btn, opacity: busy ? 0.6 : 1 }} disabled={busy || picked.curve.length < 2} onClick={save}>
-            {busy ? 'Saving…' : 'Save sheet'}
-          </button>
-        </>
-      )}
-    >
-      <div style={d.source}>
-        {filename ? <>Read from <strong>{filename}</strong></> : 'Read from pasted cells'}
+    <SheetDialog busy={busy} onClose={onClose} className="sm:max-w-2xl">
+      <DialogHeader>
+        <DialogTitle>{title}</DialogTitle>
+        <DialogDescription>
+          {label} · {filename ? <>read from <span className="font-medium text-foreground">{filename}</span></> : 'read from pasted cells'}
+        </DialogDescription>
+      </DialogHeader>
+
+      <div className="grid gap-5">
+        {tables.length > 1 && (
+          <Choice
+            legend="Worksheet"
+            value={tableIndex}
+            options={tables.map((t, i) => t.sheetName || `Sheet ${i + 1}`)}
+            onChange={chooseTable}
+          />
+        )}
+
+        {table.columns.length > 1 && (
+          <Choice
+            legend="Score column to use"
+            value={columnIndex}
+            options={table.columns.map((c) => c.label)}
+            onChange={setColumnIndex}
+            description={`This sheet lists ${table.columns.length} scores for each raw score. Pick the one this sheet should use.`}
+          />
+        )}
+
+        <p className="text-sm text-muted-foreground">
+          <span className="font-medium text-foreground">{picked.curve.length} raw scores</span> ({table.rawMin} to {table.rawMax}) convert to scores from{' '}
+          <span className="font-medium text-foreground tabular-nums">{Math.min(...scores)}</span> to{' '}
+          <span className="font-medium text-foreground tabular-nums">{Math.max(...scores)}</span>.
+        </p>
+
+        {table.warnings.map((w) => <Notice key={w} variant="warning">{w}</Notice>)}
+
+        <ScoreTable rows={picked.curve} bound={picked.bound} />
+
+        {error && <Notice variant="destructive">{error}</Notice>}
       </div>
 
-      {tables.length > 1 && (
-        <div>
-          <span style={s.label}>Worksheet</span>
-          <div style={d.choiceRow}>
-            {tables.map((t, i) => (
-              <button
-                key={`${t.sheetName}-${i}`}
-                type="button"
-                aria-pressed={i === tableIndex}
-                style={{ ...d.choice, ...(i === tableIndex ? d.choiceOn : null) }}
-                onClick={() => chooseTable(i)}
-              >
-                {t.sheetName || `Sheet ${i + 1}`}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {table.columns.length > 1 && (
-        <div>
-          <span style={s.label}>Score column to use</span>
-          <div style={d.choiceRow}>
-            {table.columns.map((c, i) => (
-              <button
-                key={`${c.label}-${i}`}
-                type="button"
-                aria-pressed={i === columnIndex}
-                style={{ ...d.choice, ...(i === columnIndex ? d.choiceOn : null) }}
-                onClick={() => setColumnIndex(i)}
-              >
-                {c.label}
-              </button>
-            ))}
-          </div>
-          <div style={s.hint}>This sheet lists {table.columns.length} scores for each raw score. Pick the one this sheet should use.</div>
-        </div>
-      )}
-
-      <div style={d.summary}>
-        <strong>{picked.curve.length} raw scores</strong> ({table.rawMin} to {table.rawMax}) convert to scores from{' '}
-        <strong>{Math.min(...scores)}</strong> to <strong>{Math.max(...scores)}</strong>.
-      </div>
-
-      {table.warnings.map((w) => <div key={w} style={d.warning}>⚠ {w}</div>)}
-
-      <ScoreTable rows={picked.curve} bound={picked.bound} />
-
-      {error && <div style={s.error}>⚠ {error}</div>}
-    </Modal>
+      <DialogFooter>
+        <Button variant="outline" disabled={busy} onClick={() => { setTables(null); setError(null); }}>
+          <LuArrowLeft data-icon="inline-start" />
+          Choose a different sheet
+        </Button>
+        <Button disabled={busy || picked.curve.length < 2} onClick={save}>
+          {busy ? <Spinner data-icon="inline-start" /> : <LuSave data-icon="inline-start" />}
+          {busy ? 'Saving…' : 'Save sheet'}
+        </Button>
+      </DialogFooter>
+    </SheetDialog>
   );
 }
 
@@ -285,24 +317,33 @@ export function SheetTableDialog({ target, label, onClose }) {
   ].filter(Boolean).join(' · ');
 
   return (
-    <Modal
-      title={label}
-      subtitle={meta || undefined}
-      width={640}
-      onClose={onClose}
-      footer={<button type="button" style={s.btnGhost} onClick={onClose}>Close</button>}
-    >
-      {error && <div style={s.error}>⚠ {error}</div>}
-      {!sheet && !error && <div style={s.empty}>Loading…</div>}
-      {sheet && (
-        <>
-          <div style={d.summary}>
-            <strong>{summary.points} raw scores</strong> ({summary.rawMin} to {summary.rawMax}) convert to scores from{' '}
-            <strong>{summary.scoreMin}</strong> to <strong>{summary.scoreMax}</strong>.
-          </div>
-          <ScoreTable rows={sheet.curve} bound={summary.bound} />
-        </>
+    <SheetDialog onClose={onClose} className="sm:max-w-2xl">
+      <DialogHeader>
+        <DialogTitle>{label}</DialogTitle>
+        <DialogDescription>{meta || (error ? 'The sheet could not be loaded.' : 'Loading…')}</DialogDescription>
+      </DialogHeader>
+
+      {error && <Notice variant="destructive">{error}</Notice>}
+      {!sheet && !error && (
+        <div className="grid gap-3" aria-busy="true">
+          <Skeleton className="h-4 w-80 max-w-full" />
+          <Skeleton className="h-56 w-full rounded-lg" />
+        </div>
       )}
-    </Modal>
+      {sheet && (
+        <div className="grid gap-4">
+          <p className="text-sm text-muted-foreground">
+            <span className="font-medium text-foreground">{summary.points} raw scores</span> ({summary.rawMin} to {summary.rawMax}) convert to scores from{' '}
+            <span className="font-medium text-foreground tabular-nums">{summary.scoreMin}</span> to{' '}
+            <span className="font-medium text-foreground tabular-nums">{summary.scoreMax}</span>.
+          </p>
+          <ScoreTable rows={sheet.curve} bound={summary.bound} />
+        </div>
+      )}
+
+      <DialogFooter>
+        <Button variant="outline" onClick={onClose}>Close</Button>
+      </DialogFooter>
+    </SheetDialog>
   );
 }

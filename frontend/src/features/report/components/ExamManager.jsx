@@ -1,38 +1,60 @@
 // features/report/components/ExamManager.jsx
 //
-// The Programs tab: SAT exams grouped by program. A program (e.g. a summer
+// The Programs page: SAT exams grouped by program. A program (e.g. a summer
 // program "GA SAT 2026") owns the student roster for every exam inside it -
 // enrolling a student makes all of that program's exams appear in their SAT
 // report; students not in the program never see them. Exams can also stay
 // ungrouped (visible to anyone who took them, rostered individually).
 //
-// This component is the orchestrator: it loads exams, tests, students and
-// programs, then renders each program with its exams nested underneath, the
-// loose ungrouped exams below, and the create-exam / create-program forms.
-// Each exam row carries its English and Math scoring-sheet pickers, so a whole
-// program can be categorised from this one list.
+// This component is the orchestrator: it reads exams, tests, students and
+// programs from the shared query cache, then renders each program with its
+// exams nested underneath, the loose ungrouped exams below, and the create
+// dialogs. Each exam row carries its English and Math scoring-sheet pickers,
+// so a whole program can be categorised from this one list.
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import {
-  fetchExams,
-  fetchAvailableTests,
-  fetchStudents,
-  fetchPrograms,
-  createExam,
+  LuArchive,
+  LuArchiveRestore,
+  LuChevronRight,
+  LuEllipsis,
+  LuFileText,
+  LuLayers,
+  LuPencil,
+  LuPlus,
+  LuTrash2,
+  LuUsers,
+} from 'react-icons/lu';
+import { cn } from '@/lib/utils';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty';
+import { Input } from '@/components/ui/input';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Notice } from '@/components/common/Notice';
+import { useConfirm } from '@/components/common/confirm';
+import {
   reorderExams,
-  createProgram,
   updateProgram,
   deleteProgram,
   programSummaryUrl,
 } from '../api/reportApi.js';
-import ExamRow, { SECTION_DEFS } from './ExamRow.jsx';
+import { queryKeys, useAvailableTests, useExams, usePrograms, useStudents } from '../api/queries.js';
+import { LEVEL_LABEL, SUBJECTS } from '../scoring.js';
+import ExamRow, { EXAM_GRID } from './ExamRow.jsx';
 import ProgramRosterPanel from './ProgramRosterPanel.jsx';
-import { LEVELS, LEVEL_LABEL, SUBJECTS } from '../scoring.js';
-import s from './examManagerStyles.js';
+import { NewExamDialog, NewProgramDialog } from './ProgramDialogs.jsx';
 
-const EMPTY_FORM = { name: '', date: '', programId: '', sections: { 1: '', 2: '', 3: '', 4: '' }, studentIds: [], difficulty: { rw: '', math: '' } };
-
-// Which programs are expanded survives switching tabs (and a page refresh),
-// so stepping over to Scoring Sheets and back does not lose your place.
+// Which programs are expanded survives switching pages (and a page refresh),
+// so stepping over to Scoring sheets and back does not lose your place.
 const OPEN_PROGRAMS_KEY = 'progressreport.openPrograms';
 function loadOpenPrograms() {
   try {
@@ -72,36 +94,56 @@ function scoringGaps(exams, programs) {
   return { missing: [...missing], waiting: waiting.size, uncategorised: uncategorised.size };
 }
 
+const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+const stop = (e) => e.stopPropagation();
+
+function LoadingPrograms() {
+  return (
+    <div className="grid gap-3" aria-busy="true" aria-label="Loading programs">
+      {Array.from({ length: 3 }, (_, i) => (
+        <div key={i} className="flex items-center gap-3 rounded-lg border px-3 py-3">
+          <Skeleton className="size-6 rounded-md" />
+          <Skeleton className="h-4 w-48" />
+          <Skeleton className="h-5 w-16 rounded-full" />
+          <Skeleton className="ml-auto h-8 w-28" />
+          <Skeleton className="h-8 w-24" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export default function ExamManager({ onExamsChanged, onOpenSheets }) {
-  const [exams, setExams] = useState([]);
-  const [tests, setTests] = useState([]);
-  const [roster, setRoster] = useState([]); // full student list for the pickers
-  const [programs, setPrograms] = useState([]);
-  const [loading, setLoading] = useState(false);
+  const queryClient = useQueryClient();
+  const confirm = useConfirm();
+  const { exams, isPending: examsPending, error: examsError } = useExams();
+  const { programs, isPending: programsPending, error: programsError } = usePrograms();
+  const { tests } = useAvailableTests();
+  const { students: roster } = useStudents();
+
   const [error, setError] = useState(null);
-
-  // Exam create form: null = closed, 'new' = creating.
-  const [formMode, setFormMode] = useState(null);
-  const [form, setForm] = useState(EMPTY_FORM);
-  const [groupFilter, setGroupFilter] = useState('');
-  const [saving, setSaving] = useState(false);
-
-  // Program create form + which program's roster panel is open.
-  const [programFormName, setProgramFormName] = useState(null); // null = closed
-  const [programSaving, setProgramSaving] = useState(false);
-  const [rosterOpenFor, setRosterOpenFor] = useState(null); // programId
-  const [dragExamId, setDragExamId] = useState(null); // exam being dragged (for styling)
-  // The dragged id mirrored in a ref so dragover/drop guards read it
-  // synchronously — state hasn't committed yet within a fast drag gesture.
-  const dragIdRef = useRef(null);
-  const dragMovedRef = useRef(false); // did the live preview actually reorder?
-  const dragOrderRef = useRef(null); // { programId, ids } settled by the preview
+  const errorRef = useRef(null);
+  const [newProgramOpen, setNewProgramOpen] = useState(false);
+  const [newExamFor, setNewExamFor] = useState(null); // programId the create-exam dialog is for
+  const [rosterOpenFor, setRosterOpenFor] = useState(null); // programId whose enrollment is open
   // Inline program rename: which program's name is being edited, and its draft.
   const [editingProgramId, setEditingProgramId] = useState(null);
   const [programNameDraft, setProgramNameDraft] = useState('');
   // Which programs are expanded to show their exams. Collapsed by default so
   // the list stays compact - click a program to reveal its exams.
   const [openPrograms, setOpenPrograms] = useState(loadOpenPrograms);
+  const [dragExamId, setDragExamId] = useState(null); // exam being dragged (for styling)
+  // The dragged id mirrored in a ref so dragover/drop guards read it
+  // synchronously - state hasn't committed yet within a fast drag gesture.
+  const dragIdRef = useRef(null);
+  const dragMovedRef = useRef(false); // did the live preview actually reorder?
+  const dragOrderRef = useRef(null); // { programId, ids } settled by the preview
+
+  // Most errors come from an action far down the list; bring the message
+  // into view instead of leaving it at the top of the card.
+  useEffect(() => {
+    if (error) errorRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }, [error]);
 
   useEffect(() => {
     try {
@@ -117,134 +159,39 @@ export default function ExamManager({ onExamsChanged, onOpenSheets }) {
       return next;
     });
   };
+  const expandProgram = (id) => setOpenPrograms((prev) => (prev.has(id) ? prev : new Set(prev).add(id)));
 
-  const refresh = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const [examList, testList, students, programList] = await Promise.all([
-        fetchExams(),
-        fetchAvailableTests(),
-        fetchStudents().catch(() => []),
-        fetchPrograms().catch(() => []),
-      ]);
-      setExams(examList);
-      setTests(testList);
-      setRoster(students || []);
-      setPrograms(programList || []);
-    } catch (err) {
-      setError(err.response?.data?.error || err.message || 'Failed to load exams');
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => { refresh(); }, [refresh]);
-
-  const refreshAndNotify = useCallback(async () => {
-    await refresh();
+  // After a change: re-read the exams (and programs, whose exam counts and
+  // rosters it may have changed) and the sheet library, whose usage lists
+  // name exams. Inactive queries are only marked stale, so this costs one or
+  // two requests here. Students and tests never change from this page.
+  const refreshAll = useCallback(async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: queryKeys.exams }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.programs }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.sheetLibrary }),
+    ]);
     onExamsChanged?.();
-  }, [refresh, onExamsChanged]);
+  }, [queryClient, onExamsChanged]);
 
-  // After a scoring-sheet change only the exam list is stale - skip re-reading
-  // tests, students and programs so the pickers stay quick.
+  // After a scoring-sheet change only the exams (and the library's usage
+  // counts) are stale - skip programs so clicking through pickers stays quick.
   const refreshExams = useCallback(async () => {
-    try {
-      setExams(await fetchExams());
-      onExamsChanged?.();
-    } catch (err) {
-      setError(err.response?.data?.error || err.message || 'Failed to load exams');
-    }
-  }, [onExamsChanged]);
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: queryKeys.exams }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.sheetLibrary }),
+    ]);
+    onExamsChanged?.();
+  }, [queryClient, onExamsChanged]);
 
-  // Distinct group names across all tests, for the create-form group filter.
-  const groups = useMemo(() => {
-    const seen = new Set();
-    for (const t of tests) {
-      for (const g of t.groups || []) if (g.groupName) seen.add(g.groupName);
-      if (t.groupName) seen.add(t.groupName);
-    }
-    return Array.from(seen).sort();
-  }, [tests]);
-
-  const inGroup = useCallback((t, groupName) => {
-    if (!groupName) return true;
-    if ((t.groups || []).some((g) => g.groupName === groupName)) return true;
-    return t.groupName === groupName;
-  }, []);
-
-  // Tests available for a section slot of the CREATE form: not already chosen
-  // in a different slot of this exam. A test may be reused across exams.
-  const optionsForSection = useCallback((sectionKey) => {
-    const chosenElsewhere = new Set(
-      Object.entries(form.sections)
-        .filter(([k, v]) => k !== sectionKey && v)
-        .map(([, v]) => v)
-    );
-    return tests.filter((t) => {
-      if (!inGroup(t, groupFilter)) return false;
-      if (chosenElsewhere.has(t.testId)) return false;
-      return true;
-    });
-  }, [tests, form.sections, groupFilter, inGroup]);
-
-  function openCreate(programId = '') {
-    setForm({ ...EMPTY_FORM, programId });
-    setGroupFilter('');
-    setFormMode('new');
-    // Expand the target program so the new exam is visible once created.
-    if (programId) setOpenPrograms((prev) => new Set(prev).add(programId));
-  }
-
-  async function handleSave() {
-    setSaving(true);
-    setError(null);
-    try {
-      const sections = {};
-      for (const { key } of SECTION_DEFS) {
-        const testId = form.sections[key];
-        const test = tests.find((t) => t.testId === testId);
-        sections[key] = testId ? { testId, testName: test?.testName || null } : null;
-      }
-      await createExam({
-        name: form.name,
-        date: form.date,
-        programId: form.programId || '',
-        sections,
-        // The program owns the roster - exams never carry their own.
-        studentIds: [],
-        difficulty: { rw: form.difficulty.rw || null, math: form.difficulty.math || null },
-      });
-      setFormMode(null);
-      await refreshAndNotify();
-    } catch (err) {
-      setError(err.response?.data?.error || err.message || 'Failed to save exam');
-    } finally {
-      setSaving(false);
-    }
-  }
+  const examsOf = (programId) => exams.filter((e) => e.programId === programId);
+  const ungroupedExams = exams.filter(
+    (e) => !e.programId || !programs.some((p) => p.programId === e.programId)
+  );
 
   // ── Program actions ──────────────────────────────────────────
-  async function handleCreateProgram() {
-    if (!programFormName?.trim()) return;
-    setProgramSaving(true);
-    setError(null);
-    try {
-      const created = await createProgram({ name: programFormName.trim() });
-      setProgramFormName(null);
-      await refreshAndNotify();
-      // Program-first flow: jump straight to enrolling students into the
-      // program you just made.
-      if (created?.programId) setRosterOpenFor(created.programId);
-    } catch (err) {
-      setError(err.response?.data?.error || err.message || 'Failed to create program');
-    } finally {
-      setProgramSaving(false);
-    }
-  }
-
-  // Inline rename — click the name to edit in place (no prompt). Enter/blur
-  // saves, Esc cancels.
+  // Inline rename - click the name to edit in place. Enter/blur saves,
+  // Escape cancels.
   function startRenameProgram(program) {
     setEditingProgramId(program.programId);
     setProgramNameDraft(program.name);
@@ -257,55 +204,60 @@ export default function ExamManager({ onExamsChanged, onOpenSheets }) {
     setError(null);
     try {
       await updateProgram(program.programId, { name });
-      await refreshAndNotify();
+      await refreshAll();
     } catch (err) {
-      setError(err.response?.data?.error || err.message || 'Failed to rename program');
+      setError(err.message || 'Failed to rename program');
     }
   }
 
   // Archive ("it's over") / unarchive a program. Archiving keeps all data but
-  // pulls the program's exams out of every student's SAT report until restored.
+  // takes the program's exams out of every student's SAT report until restored.
   async function handleArchiveProgram(program) {
     setError(null);
     try {
       await updateProgram(program.programId, { archived: !program.archived });
-      await refreshAndNotify();
+      await refreshAll();
     } catch (err) {
-      setError(err.response?.data?.error || err.message || 'Failed to update program');
+      setError(err.message || 'Failed to update program');
     }
   }
 
   async function handleDeleteProgram(program) {
-    // Exams must belong to a program, so a non-empty program can't be deleted —
+    // Exams must belong to a program, so a non-empty program can't be deleted -
     // move or delete its exams first.
-    if (program.examCount > 0) {
-      setError(`Move or delete ${program.name}'s ${program.examCount} exam${program.examCount === 1 ? '' : 's'} before deleting the program.`);
+    const examCount = Math.max(program.examCount || 0, examsOf(program.programId).length);
+    if (examCount > 0) {
+      setError(`Move or delete ${program.name}’s ${plural(examCount, 'exam')} before deleting the program.`);
       return;
     }
-    // eslint-disable-next-line no-alert
-    if (!window.confirm(`Delete program "${program.name}"?`)) return;
+    const ok = await confirm({
+      title: `Delete “${program.name}”?`,
+      description: 'The program and its enrollment list are deleted. Students’ test results are not affected.',
+      confirmLabel: 'Delete program',
+      destructive: true,
+    });
+    if (!ok) return;
     setError(null);
     try {
       await deleteProgram(program.programId);
       if (rosterOpenFor === program.programId) setRosterOpenFor(null);
-      await refreshAndNotify();
+      await refreshAll();
     } catch (err) {
-      setError(err.response?.data?.error || err.message || 'Failed to delete program');
+      setError(err.message || 'Failed to delete program');
     }
   }
 
-  // An exam must have a name and belong to a program.
-  const formValid = Boolean(form.name.trim()) && Boolean(form.programId);
+  function openCreateExam(programId) {
+    // Expand the target program so the new exam is visible once created.
+    if (programId) expandProgram(programId);
+    setNewExamFor(programId || '');
+  }
 
-  const ungroupedExams = exams.filter(
-    (e) => !e.programId || !programs.some((p) => p.programId === e.programId)
-  );
-  const examsOf = (programId) => exams.filter((e) => e.programId === programId);
-
-  // Drag-to-reorder with a LIVE preview. The authoritative order lives in
-  // dragOrderRef and is updated synchronously on every dragover — independent of
-  // React's batched state, so persistOrder always reads the settled order even
-  // when drop fires in the same tick. setExams only mirrors it for the visuals.
+  // ── Drag-to-reorder with a live preview ──────────────────────
+  // The authoritative order lives in dragOrderRef and is updated synchronously
+  // on every dragover - independent of React's batched state, so persistOrder
+  // always reads the settled order even when drop fires in the same tick. The
+  // cached exam list only mirrors it for the visuals.
   function startDrag(programId, examId, e) {
     dragIdRef.current = examId;
     dragMovedRef.current = false;
@@ -331,11 +283,12 @@ export default function ExamManager({ onExamsChanged, onOpenSheets }) {
     applyOrder(order.programId, ids);
   }
 
-  // Reorder a program's exams in local state to match the given id order, leaving
-  // every other program untouched.
+  // Reorder a program's exams in the cached list to match the given id order,
+  // leaving every other program untouched.
   function applyOrder(programId, ids) {
     const pos = new Map(ids.map((id, i) => [id, i]));
-    setExams((prev) => {
+    queryClient.setQueryData(queryKeys.exams, (prev) => {
+      if (!prev) return prev;
       const inProgram = prev
         .filter((e) => e.programId === programId)
         .sort((a, b) => pos.get(a.examId) - pos.get(b.examId));
@@ -345,7 +298,7 @@ export default function ExamManager({ onExamsChanged, onOpenSheets }) {
   }
 
   // Fires on both drop and dragend (whichever the browser delivers); guarded by
-  // the ref so it persists exactly once and skips clicks / no-op drags.
+  // the refs so it persists exactly once and skips clicks / no-op drags.
   async function persistOrder() {
     const moved = dragMovedRef.current;
     const order = dragOrderRef.current;
@@ -357,10 +310,11 @@ export default function ExamManager({ onExamsChanged, onOpenSheets }) {
     setError(null);
     try {
       await reorderExams(order.programId, order.ids);
-      await refreshAndNotify();
     } catch (err) {
-      setError(err.response?.data?.error || err.message || 'Failed to reorder exams');
+      setError(err.message || 'Failed to reorder exams');
     }
+    // Either way, show the order the server now has.
+    await refreshAll();
   }
 
   const rowProps = (exam) => ({
@@ -368,324 +322,280 @@ export default function ExamManager({ onExamsChanged, onOpenSheets }) {
     tests,
     roster,
     programs,
-    onChanged: refreshAndNotify,
+    onChanged: refreshAll,
     onExamsChanged: refreshExams,
     onOpenSheets,
     onError: setError,
   });
 
   const gaps = useMemo(() => scoringGaps(exams, programs), [exams, programs]);
-
-  // The create-exam form. Rendered inside the targeted program (when one is
-  // chosen) so it appears right where the exam will live, or at the bottom for
-  // a general "+ New Exam" before a program is picked.
-  function renderCreateForm() {
-    return (
-      <div style={s.form}>
-        <div style={s.grid2}>
-          <div>
-            <span style={s.label}>Exam name</span>
-            <input
-              style={s.input}
-              value={form.name}
-              placeholder="e.g. Diagnostic, Test 1"
-              onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-            />
-          </div>
-          <div>
-            <span style={s.label}>Exam date <span style={{ fontWeight: 400 }}>· optional</span></span>
-            <input
-              type="date"
-              style={s.input}
-              value={form.date}
-              onChange={(e) => setForm((f) => ({ ...f, date: e.target.value }))}
-            />
-            <div style={s.hint}>Create the exam ahead of time - sections below can stay empty until the tests exist.</div>
-          </div>
-        </div>
-
-        <div>
-          <span style={s.label}>Program <span style={{ fontWeight: 400 }}>· required</span></span>
-          <select
-            style={s.select}
-            value={form.programId}
-            onChange={(e) => {
-              const pid = e.target.value;
-              setForm((f) => ({ ...f, programId: pid }));
-              // The form lives inside its program — expand it so picking one
-              // here keeps the form visible (instead of it vanishing).
-              if (pid) setOpenPrograms((prev) => new Set(prev).add(pid));
-            }}
-          >
-            <option value="">{programs.length ? 'Select a program…' : 'No programs yet - create one first'}</option>
-            {programs.map((p) => <option key={p.programId} value={p.programId}>{p.name}</option>)}
-          </select>
-          <div style={s.hint}>
-            Every exam belongs to a program - only its enrolled students are part of the exam, and they see it automatically.
-          </div>
-        </div>
-
-        <div>
-          <span style={s.label}>Filter tests by group</span>
-          <select style={s.select} value={groupFilter} onChange={(e) => setGroupFilter(e.target.value)}>
-            <option value="">All groups</option>
-            {groups.map((g) => <option key={g} value={g}>{g}</option>)}
-          </select>
-          <div style={s.hint}>Narrows the section dropdowns below to the chosen group.</div>
-        </div>
-
-        <div style={s.grid2}>
-          {SECTION_DEFS.map(({ key, label, hint }) => (
-            <div key={key}>
-              <span style={s.label}>{label} <span style={{ fontWeight: 400 }}>· {hint}</span></span>
-              <select
-                style={s.select}
-                value={form.sections[key]}
-                onChange={(e) => setForm((f) => ({ ...f, sections: { ...f.sections, [key]: e.target.value } }))}
-              >
-                <option value="">- none -</option>
-                {optionsForSection(key).map((t) => (
-                  <option key={t.testId} value={t.testId}>
-                    {t.testName} ({t.attempts} attempt{t.attempts === 1 ? '' : 's'})
-                  </option>
-                ))}
-              </select>
-            </div>
-          ))}
-        </div>
-
-        <div style={s.grid2}>
-          {SUBJECTS.map((subject) => (
-            <div key={subject.key}>
-              <span style={s.label}>{subject.label} scoring sheet <span style={{ fontWeight: 400 }}>· optional</span></span>
-              <select
-                style={s.select}
-                value={form.difficulty[subject.key]}
-                onChange={(e) => setForm((f) => ({ ...f, difficulty: { ...f.difficulty, [subject.key]: e.target.value } }))}
-              >
-                <option value="">Choose later</option>
-                {LEVELS.map((level) => <option key={level} value={level}>{LEVEL_LABEL[level]}</option>)}
-              </select>
-            </div>
-          ))}
-        </div>
-
-        <div style={s.formActions}>
-          <button type="button" style={s.btnGhost} disabled={saving} onClick={() => setFormMode(null)}>Cancel</button>
-          <button type="button" style={s.btn} disabled={saving || !formValid} onClick={handleSave}>
-            {saving ? 'Saving…' : 'Create Exam'}
-          </button>
-        </div>
-      </div>
-    );
-  }
+  const loading = examsPending || programsPending;
+  const loadError = examsError || programsError;
+  const rosterProgram = programs.find((p) => p.programId === rosterOpenFor) || null;
 
   return (
-    <div style={s.card}>
-      <div style={s.head}>
-        <div style={s.dot} />
-        <span style={s.title}>Programs</span>
-        {programs.length > 0 && <span style={s.count}>{programs.length} program{programs.length === 1 ? '' : 's'}</span>}
-        {exams.length > 0 && <span style={s.count}>· {exams.length} exam{exams.length === 1 ? '' : 's'}</span>}
-        <button
-          type="button"
-          style={{ ...s.btn, marginLeft: 6 }}
-          disabled={programFormName !== null}
-          onClick={() => setProgramFormName('')}
-        >
-          + New Program
-        </button>
-      </div>
+    <Card>
+      <CardHeader>
+        <CardTitle>Programs</CardTitle>
+        <CardDescription>
+          {loading ? 'Loading…' : `${plural(programs.length, 'program')} · ${plural(exams.length, 'exam')}`}
+        </CardDescription>
+        <CardAction>
+          <Button onClick={() => setNewProgramOpen(true)}>
+            <LuPlus data-icon="inline-start" />
+            New program
+          </Button>
+        </CardAction>
+      </CardHeader>
 
-      <div style={s.body}>
-        {error && <div style={s.error}>⚠ {error}</div>}
-
-        {gaps.waiting > 0 && (
-          <div style={s.notice} role="status">
-            <span>
-              ⚠ {gaps.waiting} exam{gaps.waiting === 1 ? ' is' : 's are'} set to a scoring sheet that has not been added yet
-              ({gaps.missing.join(', ')}). Students see raw scores only for {gaps.waiting === 1 ? 'it' : 'those'}.
-            </span>
-            <button type="button" style={s.noticeAction} onClick={onOpenSheets}>Open Scoring Sheets</button>
-          </div>
-        )}
-        {gaps.uncategorised > 0 && (
-          <div style={s.notice} role="status">
-            {gaps.uncategorised === 1
-              ? '1 exam with tests assigned has no scoring sheet chosen yet, so its scores show as raw.'
-              : `${gaps.uncategorised} exams with tests assigned have no scoring sheet chosen yet, so their scores show as raw.`}
-            {' '}Pick Easy, Medium or Hard for English and Math on each one.
+      <CardContent className="grid gap-6">
+        {loadError && <Notice variant="destructive">Could not load the programs: {loadError.message}</Notice>}
+        {error && (
+          <div ref={errorRef} className="scroll-mt-32">
+            <Notice variant="destructive">{error}</Notice>
           </div>
         )}
 
-        {/* ── Create-program form ── */}
-        {programFormName !== null && (
-          <div style={s.form}>
-            <div>
-              <span style={s.label}>Program name</span>
-              <input
-                style={s.input}
-                autoFocus
-                value={programFormName}
-                placeholder="e.g. GA SAT 2026"
-                onChange={(e) => setProgramFormName(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter') handleCreateProgram(); }}
-              />
-              <div style={s.hint}>Group your diagnostics and tests under one cohort, then enroll students into it.</div>
-            </div>
-            <div style={s.formActions}>
-              <button type="button" style={s.btnGhost} disabled={programSaving} onClick={() => setProgramFormName(null)}>Cancel</button>
-              <button type="button" style={s.btn} disabled={programSaving || !programFormName.trim()} onClick={handleCreateProgram}>
-                {programSaving ? 'Creating…' : 'Create Program'}
-              </button>
-            </div>
-          </div>
-        )}
-
-        {loading && exams.length === 0 && programs.length === 0 ? (
-          <div style={s.empty}>Loading…</div>
-        ) : exams.length === 0 && programs.length === 0 && formMode === null && programFormName === null ? (
-          <div style={s.empty}>
-            No programs yet. Create a program (e.g. “GA SAT 2026”), enroll students, then add its exams.
-          </div>
-        ) : null}
-
-        {/* ── Programs, each with its exams nested underneath ── */}
-        {programs.map((program) => {
-          const members = examsOf(program.programId);
-          const count = (program.studentIds || []).length;
-          const expanded = openPrograms.has(program.programId);
-          const stop = (e) => e.stopPropagation();
-          return (
-            <div key={program.programId} style={{ ...s.programCard, ...(program.archived ? { opacity: 0.6, borderColor: '#fcd34d' } : {}) }}>
-              {/* Click the header to expand/collapse the program's exams. The
-                  name, enroll chip, +Exam and Delete keep their own actions. */}
-              <div
-                style={{ ...s.programHead, cursor: 'pointer' }}
-                onClick={() => toggleProgram(program.programId)}
-                role="button"
-                aria-expanded={expanded}
-                title={expanded ? 'Click to collapse' : 'Click to show this program’s exams'}
+        {(gaps.waiting > 0 || gaps.uncategorised > 0) && (
+          <div className="grid gap-3">
+            {gaps.waiting > 0 && (
+              <Notice
+                variant="warning"
+                title={`${plural(gaps.waiting, 'exam')} ${gaps.waiting === 1 ? 'is' : 'are'} waiting for a scoring sheet`}
               >
-                <span style={s.chevron}>{expanded ? '▾' : '▸'}</span>
-                <span style={s.programBadge}>Program</span>
-                {editingProgramId === program.programId ? (
-                  <input
-                    autoFocus
-                    value={programNameDraft}
-                    onClick={stop}
-                    onChange={(e) => setProgramNameDraft(e.target.value)}
-                    onBlur={() => commitRenameProgram(program)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') commitRenameProgram(program);
-                      if (e.key === 'Escape') setEditingProgramId(null);
-                    }}
-                    style={{ ...s.input, flex: 1, padding: '4px 8px', fontSize: '0.9rem', fontWeight: 700 }}
-                  />
-                ) : (
-                  <span
-                    style={{ ...s.programName, cursor: 'text' }}
-                    onClick={(e) => { stop(e); startRenameProgram(program); }}
-                    title="Click to rename this program"
+                <p>
+                  {gaps.missing.join(', ')} {gaps.missing.length === 1 ? 'hasn’t' : 'haven’t'} been added yet, so students
+                  see raw scores only for {gaps.waiting === 1 ? 'that exam' : 'those exams'}.
+                </p>
+                <Button variant="outline" size="sm" className="mt-2 text-foreground" onClick={onOpenSheets}>
+                  Open scoring sheets
+                </Button>
+              </Notice>
+            )}
+            {gaps.uncategorised > 0 && (
+              <Notice
+                variant="warning"
+                title={`${plural(gaps.uncategorised, 'exam')} with tests ${gaps.uncategorised === 1 ? 'has' : 'have'} no scoring sheet yet`}
+              >
+                {gaps.uncategorised === 1 ? 'Its scores show as raw.' : 'Their scores show as raw.'} Pick Easy, Medium or Hard
+                for English and Math on each one.
+              </Notice>
+            )}
+          </div>
+        )}
+
+        {loading ? (
+          <LoadingPrograms />
+        ) : programs.length === 0 && exams.length === 0 ? (
+          <Empty className="border">
+            <EmptyHeader>
+              <EmptyMedia variant="icon"><LuLayers /></EmptyMedia>
+              <EmptyTitle>No programs yet</EmptyTitle>
+              <EmptyDescription>
+                Create a program (e.g. “GA SAT 2026”), enroll its students, then add its exams.
+              </EmptyDescription>
+            </EmptyHeader>
+            <EmptyContent>
+              <Button onClick={() => setNewProgramOpen(true)}>
+                <LuPlus data-icon="inline-start" />
+                New program
+              </Button>
+            </EmptyContent>
+          </Empty>
+        ) : (
+          <div className="grid gap-3">
+            {programs.map((program) => {
+              const members = examsOf(program.programId);
+              const enrolled = (program.studentIds || []).length;
+              const expanded = openPrograms.has(program.programId);
+              return (
+                <section
+                  key={program.programId}
+                  aria-label={program.name}
+                  className={cn(
+                    'overflow-hidden rounded-lg border bg-card transition-opacity',
+                    program.archived && 'opacity-60 focus-within:opacity-100 hover:opacity-100'
+                  )}
+                >
+                  {/* Click the header to show or hide the program's exams. The
+                      name, enrollment, Add exam and the menu keep their own actions. */}
+                  <div
+                    className="flex cursor-pointer flex-wrap items-center gap-x-3 gap-y-2 bg-muted/40 px-3 py-2.5"
+                    onClick={() => toggleProgram(program.programId)}
                   >
-                    {program.name}
-                  </span>
-                )}
-                <span style={s.count}>{members.length} exam{members.length === 1 ? '' : 's'}</span>
-                {program.archived && <span style={s.archivedBadge} title="This program's exams are hidden from student SAT reports">Archived</span>}
-                <span
-                  style={{ ...s.rosterChip, cursor: 'pointer' }}
-                  onClick={(e) => { stop(e); setRosterOpenFor((cur) => (cur === program.programId ? null : program.programId)); }}
-                  title="Click to enroll students - they'll see every exam in this program"
-                >
-                  {count} enrolled
-                </span>
-                <button type="button" style={s.btnGhost} onClick={(e) => { stop(e); openCreate(program.programId); }}>+ Exam</button>
-                <button
-                  type="button"
-                  style={s.btnGhost}
-                  onClick={(e) => { stop(e); window.open(programSummaryUrl(program.programId), '_blank', 'noopener'); }}
-                  title="Open the cohort summary report - overall improvement and per-student performance"
-                >
-                  Summary
-                </button>
-                <button
-                  type="button"
-                  style={s.btnGhost}
-                  onClick={(e) => { stop(e); handleArchiveProgram(program); }}
-                  title={program.archived
-                    ? 'Bring this program’s exams back into student SAT reports'
-                    : 'Hide this finished program’s exams from student SAT reports (keeps all data)'}
-                >
-                  {program.archived ? 'Unarchive' : 'Archive'}
-                </button>
-                <button type="button" style={s.btnDanger} onClick={(e) => { stop(e); handleDeleteProgram(program); }}>Delete</button>
-              </div>
-              {/* Enrollment opens independently of expand so you can roster a
-                  collapsed program. */}
-              {rosterOpenFor === program.programId && (
-                <ProgramRosterPanel
-                  program={program}
-                  roster={roster}
-                  exams={exams}
-                  tests={tests}
-                  onError={setError}
-                  onSaved={async () => { setRosterOpenFor(null); await refreshAndNotify(); }}
-                />
-              )}
-              {expanded && (
-                <div style={s.programBody}>
-                  {members.length > 0 && (
-                    <div className="exam-grid exam-grid-header" style={s.examColumns} aria-hidden="true">
-                      <span />
-                      <span />
-                      <span>Exam</span>
-                      <span>Date</span>
-                      <span>English sheet</span>
-                      <span>Math sheet</span>
-                      <span />
+                    <div className="flex min-w-0 flex-1 basis-56 items-center gap-2">
+                      <button
+                        type="button"
+                        aria-expanded={expanded}
+                        aria-label={expanded ? `Hide ${program.name}’s exams` : `Show ${program.name}’s exams`}
+                        className="flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                        onClick={(e) => { stop(e); toggleProgram(program.programId); }}
+                      >
+                        <LuChevronRight className={cn('size-4 transition-transform', expanded && 'rotate-90')} />
+                      </button>
+                      {editingProgramId === program.programId ? (
+                        <Input
+                          autoFocus
+                          value={programNameDraft}
+                          aria-label="Program name"
+                          className="h-8 max-w-sm font-medium"
+                          onClick={stop}
+                          onChange={(e) => setProgramNameDraft(e.target.value)}
+                          onBlur={() => commitRenameProgram(program)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') commitRenameProgram(program);
+                            if (e.key === 'Escape') setEditingProgramId(null);
+                          }}
+                        />
+                      ) : (
+                        <button
+                          type="button"
+                          className="group/name flex min-w-0 cursor-text items-center gap-1.5 rounded-sm text-left font-medium outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                          title="Click to rename this program"
+                          onClick={(e) => { stop(e); startRenameProgram(program); }}
+                        >
+                          <span className="truncate">{program.name}</span>
+                          <LuPencil className="size-3.5 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover/name:opacity-100 group-focus-visible/name:opacity-100" />
+                        </button>
+                      )}
+                      <Badge variant="secondary" className="shrink-0 tabular-nums">{plural(members.length, 'exam')}</Badge>
+                      {program.archived && (
+                        <Badge variant="warning" className="shrink-0" title="This program’s exams are left out of student SAT reports">
+                          Archived
+                        </Badge>
+                      )}
+                    </div>
+                    <div className="ml-auto flex items-center gap-2" onClick={stop}>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setRosterOpenFor(program.programId)}
+                        title="Enroll students - they see every exam in this program"
+                      >
+                        <LuUsers data-icon="inline-start" />
+                        <span className="tabular-nums">{enrolled}</span>
+                        <span className="hidden sm:inline">enrolled</span>
+                      </Button>
+                      <Button variant="outline" size="sm" onClick={() => openCreateExam(program.programId)}>
+                        <LuPlus data-icon="inline-start" />
+                        Add exam
+                      </Button>
+                      {/* Not modal: a confirm dialog opened from an item must
+                          not fight the menu for focus and pointer events. */}
+                      <DropdownMenu modal={false}>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="icon-sm" aria-label={`${program.name} actions`}>
+                            <LuEllipsis />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="w-56">
+                          <DropdownMenuItem onSelect={() => window.open(programSummaryUrl(program.programId), '_blank', 'noopener')}>
+                            <LuFileText />
+                            Summary PDF
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onSelect={() => handleArchiveProgram(program)}>
+                            {program.archived ? <LuArchiveRestore /> : <LuArchive />}
+                            {program.archived ? 'Unarchive' : 'Archive'}
+                          </DropdownMenuItem>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem variant="destructive" onSelect={() => handleDeleteProgram(program)}>
+                            <LuTrash2 />
+                            Delete program
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </div>
+                  </div>
+
+                  {expanded && (
+                    <div className="grid gap-2 border-t p-3">
+                      {members.length === 0 ? (
+                        <p className="px-1 py-1 text-sm text-muted-foreground">
+                          No exams in this program yet - use Add exam to create one.
+                        </p>
+                      ) : (
+                        <>
+                          <div
+                            className={cn(EXAM_GRID, 'hidden px-[13px] text-xs font-medium text-muted-foreground lg:grid')}
+                            aria-hidden="true"
+                          >
+                            <span />
+                            <span />
+                            <span>Exam</span>
+                            <span>Date</span>
+                            <span>English sheet</span>
+                            <span>Math sheet</span>
+                            <span />
+                          </div>
+                          {members.map((exam) => (
+                            <ExamRow
+                              key={exam.examId}
+                              {...rowProps(exam)}
+                              dragging={dragExamId === exam.examId}
+                              onDragStart={(e) => startDrag(program.programId, exam.examId, e)}
+                              onDragEnd={persistOrder}
+                              onDragOver={(e) => {
+                                if (!dragIdRef.current || dragIdRef.current === exam.examId) return;
+                                e.preventDefault();
+                                previewMove(exam.examId);
+                              }}
+                              onDrop={(e) => { e.preventDefault(); persistOrder(); }}
+                            />
+                          ))}
+                        </>
+                      )}
                     </div>
                   )}
-                  {members.length === 0 ? (
-                    <div style={s.programEmpty}>No exams in this program yet - use “+ Exam” to add one.</div>
-                  ) : (
-                    members.map((exam) => (
-                      <ExamRow
-                        key={exam.examId}
-                        {...rowProps(exam)}
-                        dragging={dragExamId === exam.examId}
-                        onDragStart={(e) => startDrag(program.programId, exam.examId, e)}
-                        onDragEnd={persistOrder}
-                        onDragOver={(e) => {
-                          if (!dragIdRef.current || dragIdRef.current === exam.examId) return;
-                          e.preventDefault();
-                          previewMove(exam.examId);
-                        }}
-                        onDrop={(e) => { e.preventDefault(); persistOrder(); }}
-                      />
-                    ))
-                  )}
-                  {/* Creating an exam for this program shows the form right
-                      here, inside the program it'll belong to. */}
-                  {formMode === 'new' && form.programId === program.programId && renderCreateForm()}
-                </div>
-              )}
-            </div>
-          );
-        })}
+                </section>
+              );
+            })}
 
-        {/* ── Ungrouped exams ── */}
-        {ungroupedExams.length > 0 && (
-          <>
-            {programs.length > 0 && <div style={s.ungroupedLabel}>Ungrouped exams</div>}
-            {ungroupedExams.map((exam) => <ExamRow key={exam.examId} {...rowProps(exam)} />)}
-          </>
+            {ungroupedExams.length > 0 && (
+              <section aria-label="Ungrouped exams" className="grid gap-2">
+                {programs.length > 0 && (
+                  <h3 className="mt-2 text-xs font-medium text-muted-foreground">Ungrouped exams</h3>
+                )}
+                {ungroupedExams.map((exam) => <ExamRow key={exam.examId} {...rowProps(exam)} />)}
+              </section>
+            )}
+          </div>
         )}
+      </CardContent>
 
-        {/* ── Create-exam form with no program picked (its Program field was
-            cleared) - once a program is selected it moves into that program. ── */}
-        {formMode === 'new' && !form.programId && renderCreateForm()}
-      </div>
-    </div>
+      {newProgramOpen && (
+        <NewProgramDialog
+          onClose={() => setNewProgramOpen(false)}
+          onCreated={async (created) => {
+            setNewProgramOpen(false);
+            await refreshAll();
+            // Program-first flow: go straight to enrolling its students.
+            if (created?.programId) setRosterOpenFor(created.programId);
+          }}
+        />
+      )}
+      {newExamFor !== null && (
+        <NewExamDialog
+          programs={programs}
+          tests={tests}
+          programId={newExamFor}
+          onClose={() => setNewExamFor(null)}
+          onCreated={async (programId) => {
+            setNewExamFor(null);
+            if (programId) expandProgram(programId);
+            await refreshAll();
+          }}
+        />
+      )}
+      {rosterProgram && (
+        <ProgramRosterPanel
+          program={rosterProgram}
+          roster={roster}
+          exams={exams}
+          tests={tests}
+          onClose={() => setRosterOpenFor(null)}
+          onSaved={async () => { setRosterOpenFor(null); await refreshAll(); }}
+        />
+      )}
+    </Card>
   );
 }

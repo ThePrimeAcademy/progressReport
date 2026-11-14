@@ -1,32 +1,22 @@
 // features/report/components/ExamScoring.jsx
-// Shown inside an expanded exam: which scoring sheet grades each subject, and
-// the controls for a custom sheet when the subject is set to Custom.
+// Inside an expanded exam: which scoring sheet grades each subject, and the
+// controls for a custom sheet when the subject is set to Custom.
 //
 // The choice itself (Easy / Medium / Hard / Custom) is made with the pickers
 // on the exam row; this panel explains the result and manages the custom file.
 import React, { useState } from 'react';
+import { LuEye, LuTrash2, LuTriangleAlert, LuUpload } from 'react-icons/lu';
+import { cn } from '@/lib/utils';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
+import { useConfirm } from '@/components/common/confirm';
 import { deleteScoringSheet, setScoringSheetBound } from '../api/reportApi.js';
-import { LEVEL_LABEL, LEVEL_COLOR, SUBJECTS } from '../scoring.js';
+import { LEVEL_LABEL, LEVEL_STYLE, SUBJECTS } from '../scoring.js';
 import { SheetImportDialog, SheetTableDialog } from './SheetDialogs.jsx';
-import s from './examManagerStyles.js';
-
-const x = {
-  wrapper: { padding: '10px 16px 12px', borderTop: '1px dashed var(--border)', background: '#fafbff', display: 'flex', flexDirection: 'column', gap: 8 },
-  row: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, fontSize: '0.78rem', minHeight: 28 },
-  subject: { ...s.sectionLabel, display: 'inline-block', marginBottom: 0, width: 56 },
-  chip: { fontSize: '0.68rem', fontWeight: 700, borderRadius: 999, padding: '2px 9px', borderWidth: 1, borderStyle: 'solid', whiteSpace: 'nowrap' },
-  chipCustom: { color: 'var(--ink-light)', background: '#eef1f7', borderColor: 'var(--border)' },
-  chipMissing: { color: '#b45309', background: '#fffbeb', borderColor: '#fcd34d' },
-  detail: { color: 'var(--ink-light)', overflowWrap: 'anywhere' },
-  muted: { color: 'var(--muted)' },
-  actions: { display: 'inline-flex', flexWrap: 'wrap', gap: 6, marginLeft: 'auto', alignItems: 'center' },
-  boundToggle: { display: 'inline-flex', borderRadius: 6, overflow: 'hidden', border: '1px solid var(--border)' },
-  boundBtn: { appearance: 'none', border: 'none', background: '#fff', color: 'var(--muted)', padding: '4px 8px', cursor: 'pointer', fontSize: '0.66rem', fontWeight: 600, letterSpacing: '0.04em', textTransform: 'uppercase', fontFamily: 'inherit' },
-  boundBtnOn: { background: 'var(--accent)', color: '#fff' },
-  link: { appearance: 'none', border: 'none', background: 'none', color: 'var(--accent)', cursor: 'pointer', fontSize: '0.76rem', fontWeight: 600, padding: 0, textDecoration: 'underline', fontFamily: 'inherit' },
-};
 
 function SubjectRow({ exam, subject, onChanged, onOpenSheets, onError }) {
+  const confirm = useConfirm();
   const [busy, setBusy] = useState(false);
   const [importing, setImporting] = useState(false);
   const [viewing, setViewing] = useState(null); // { groupId, section }
@@ -48,78 +38,108 @@ function SubjectRow({ exam, subject, onChanged, onOpenSheets, onError }) {
     }
   }
 
-  function removeCustom() {
-    // eslint-disable-next-line no-alert
-    if (!window.confirm(`Remove the custom ${subject.label} sheet from "${exam.name}"? Its ${subject.label} scores will show as raw scores until a sheet is chosen.`)) return;
-    run(() => deleteScoringSheet(customTarget), 'Could not remove the sheet');
+  async function removeCustom() {
+    const ok = await confirm({
+      title: `Remove the custom ${subject.label} sheet?`,
+      description: `“${exam.name}” will show raw ${subject.label} scores until a sheet is chosen.`,
+      confirmLabel: 'Remove sheet',
+      destructive: true,
+    });
+    if (ok) run(() => deleteScoringSheet(customTarget), 'Could not remove the sheet');
   }
+
+  const filename = (
+    <span className="min-w-0 truncate text-muted-foreground" title={sheet?.originalFilename || 'Pasted cells'}>
+      {sheet?.originalFilename || 'Pasted cells'}
+    </span>
+  );
 
   let body;
   if (level) {
-    const color = LEVEL_COLOR[level];
     body = scoring.ready ? (
       <>
-        <span style={{ ...x.chip, color: color.fg, background: color.bg, borderColor: color.border }}>{LEVEL_LABEL[level]} sheet</span>
-        <span style={x.detail}>{sheet.originalFilename || 'Pasted cells'}</span>
-        <span style={x.actions}>
-          <button type="button" style={s.btnGhost} onClick={() => setViewing({ groupId: sheet.groupId, section: subject.key })}>View</button>
-        </span>
+        <Badge variant="outline" className={LEVEL_STYLE[level].badge}>{LEVEL_LABEL[level]} sheet</Badge>
+        {filename}
+        <div className="ml-auto flex min-w-0 flex-wrap items-center gap-2">
+          <Button variant="outline" size="sm" onClick={() => setViewing({ groupId: sheet.groupId, section: subject.key })}>
+            <LuEye data-icon="inline-start" />
+            View
+          </Button>
+        </div>
       </>
     ) : (
       <>
-        <span style={{ ...x.chip, ...x.chipMissing }}>⚠ {LEVEL_LABEL[level]} sheet not added yet</span>
-        <span style={x.muted}>Students see raw scores only.</span>
-        <span style={x.actions}>
-          <button type="button" style={x.link} onClick={onOpenSheets}>Add it on the Scoring Sheets tab</button>
-        </span>
+        <Badge variant="warning">
+          <LuTriangleAlert data-icon="inline-start" />
+          {LEVEL_LABEL[level]} sheet not added yet
+        </Badge>
+        <span className="text-muted-foreground">Students see raw scores only.</span>
+        <div className="ml-auto flex min-w-0 flex-wrap items-center gap-2">
+          <Button variant="link" size="sm" className="h-auto px-0" onClick={onOpenSheets}>
+            Add it on the Scoring sheets page
+          </Button>
+        </div>
       </>
     );
   } else if (sheet) {
     body = (
       <>
-        <span style={{ ...x.chip, ...x.chipCustom }}>Custom sheet</span>
-        <span style={x.detail}>{sheet.originalFilename || 'Pasted cells'}</span>
-        <span style={x.actions}>
+        <Badge variant="secondary">Custom sheet</Badge>
+        {filename}
+        <div className="ml-auto flex min-w-0 flex-wrap items-center gap-2">
           {sheet.hasRange && (
-            <span style={x.boundToggle} role="group" aria-label="Which end of the score range to use">
+            <ToggleGroup
+              type="single"
+              variant="outline"
+              size="sm"
+              spacing={0}
+              value={sheet.bound}
+              disabled={busy}
+              aria-label="Which end of the score range to use"
+              onValueChange={(bound) => {
+                if (bound && bound !== sheet.bound) run(() => setScoringSheetBound({ ...customTarget, bound }), 'Could not update the sheet');
+              }}
+            >
               {['lower', 'upper'].map((bound) => (
-                <button
-                  key={bound}
-                  type="button"
-                  aria-pressed={sheet.bound === bound}
-                  disabled={busy}
-                  style={{ ...x.boundBtn, ...(sheet.bound === bound ? x.boundBtnOn : null) }}
-                  title={`Use the ${bound} end of the score range`}
-                  onClick={() => {
-                    if (sheet.bound !== bound) run(() => setScoringSheetBound({ ...customTarget, bound }), 'Could not update the sheet');
-                  }}
-                >
+                <ToggleGroupItem key={bound} value={bound} className="h-8 px-2.5 text-xs capitalize" title={`Use the ${bound} end of the score range`}>
                   {bound}
-                </button>
+                </ToggleGroupItem>
               ))}
-            </span>
+            </ToggleGroup>
           )}
-          <button type="button" style={s.btnGhost} disabled={busy} onClick={() => setViewing(customTarget)}>View</button>
-          <button type="button" style={s.btnGhost} disabled={busy} onClick={() => setImporting(true)}>Replace</button>
-          <button type="button" style={s.btnDanger} disabled={busy} onClick={removeCustom}>Remove</button>
-        </span>
+          <Button variant="outline" size="sm" disabled={busy} onClick={() => setViewing(customTarget)}>
+            <LuEye data-icon="inline-start" />
+            View
+          </Button>
+          <Button variant="outline" size="sm" disabled={busy} onClick={() => setImporting(true)}>
+            <LuUpload data-icon="inline-start" />
+            Replace
+          </Button>
+          <Button variant="ghost" size="sm" disabled={busy} className="text-destructive hover:bg-destructive/10 hover:text-destructive" onClick={removeCustom}>
+            <LuTrash2 data-icon="inline-start" />
+            Remove
+          </Button>
+        </div>
       </>
     );
   } else {
     body = (
       <>
-        <span style={{ ...x.chip, ...x.chipMissing }}>No sheet chosen</span>
-        <span style={x.muted}>Pick Easy, Medium or Hard above, or upload a sheet just for this exam.</span>
-        <span style={x.actions}>
-          <button type="button" style={s.btnGhost} disabled={busy} onClick={() => setImporting(true)}>Upload custom sheet</button>
-        </span>
+        <Badge variant="warning">No sheet chosen</Badge>
+        <span className="text-muted-foreground">Pick Easy, Medium or Hard above, or upload a sheet just for this exam.</span>
+        <div className="ml-auto flex min-w-0 flex-wrap items-center gap-2">
+          <Button variant="outline" size="sm" disabled={busy} onClick={() => setImporting(true)}>
+            <LuUpload data-icon="inline-start" />
+            Upload custom sheet
+          </Button>
+        </div>
       </>
     );
   }
 
   return (
-    <div style={x.row}>
-      <span style={x.subject}>{subject.label}</span>
+    <div className={cn('flex min-h-8 flex-wrap items-center gap-x-3 gap-y-2 text-sm', busy && 'opacity-80')}>
+      <span className="w-14 shrink-0 text-xs font-medium text-muted-foreground">{subject.label}</span>
       {body}
       {importing && (
         <SheetImportDialog
@@ -143,7 +163,7 @@ function SubjectRow({ exam, subject, onChanged, onOpenSheets, onError }) {
 
 export default function ExamScoring({ exam, onChanged, onOpenSheets, onError }) {
   return (
-    <div style={x.wrapper} onClick={(e) => e.stopPropagation()}>
+    <div className="grid gap-3 border-t px-3 py-3">
       {SUBJECTS.map((subject) => (
         <SubjectRow
           key={subject.key}

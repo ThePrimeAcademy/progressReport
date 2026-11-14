@@ -1,54 +1,58 @@
 // features/report/components/StudentDirectory.jsx
-// Main-page student directory. Toggle between ClassMarker groups and
-// Programs, pick one, and every student under it lists out. Clicking a
-// student expands two actions:
-//   • View Report — jumps to Single Student mode with them preselected and
-//     auto-previews (using the date range picked here).
-//   • Email Report — sends the PDF to their saved student + parent emails,
-//     through the exact same /report/email pipeline as Single Student mode.
-import React, { useState, useEffect, useMemo } from 'react';
+// The Students page: pick a ClassMarker group or a program and every student
+// in it lists out. Opening a student offers two actions:
+//   • View report - jumps to the Single Student page with them selected and
+//     previews the report for the date range picked here.
+//   • Email report - sends the PDF to their student and parent emails,
+//     through the same /report/email pipeline as the Single Student page.
+import React, { useEffect, useMemo, useState } from 'react';
+import { LuChevronDown, LuFileText, LuSearch, LuSend, LuUsers } from 'react-icons/lu';
+import { cn } from '@/lib/utils';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent } from '@/components/ui/card';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty';
+import { Field, FieldDescription, FieldLabel } from '@/components/ui/field';
+import { Input } from '@/components/ui/input';
+import { InputGroup, InputGroupAddon, InputGroupInput } from '@/components/ui/input-group';
 import {
-  fetchStudentGroups,
-  fetchPrograms,
-  emailReport,
-  fetchEmailJobStatus,
-} from '../api/reportApi.js';
-import DateRangePicker from './DateRangePicker.jsx';
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectSeparator,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Spinner } from '@/components/ui/spinner';
+import { Notice } from '@/components/common/Notice';
+import DateRangePicker from '@/components/common/DateRangePicker';
+import { emailReport, fetchEmailJobStatus } from '../api/reportApi.js';
+import {
+  useContacts,
+  useDirectory,
+  useEmailConfigured,
+  useNoteContactsSaved,
+  usePrograms,
+  useStudentsById,
+} from '../api/queries.js';
+import { DEFAULT_REPORT_SUBJECT, isValidContactField } from '../constants.js';
 
-const s = {
-  card: { background: 'var(--bg)', borderRadius: 16, boxShadow: 'var(--shadow-lg)', border: '1.5px solid var(--border)', overflow: 'hidden' },
-  cardHead: { padding: '18px 24px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' },
-  cardDot: { width: 8, height: 8, borderRadius: '50%', background: 'var(--accent)' },
-  cardTitle: { fontSize: '0.85rem', fontWeight: 600, color: 'var(--ink)' },
-  cardBody: { padding: '24px', display: 'flex', flexDirection: 'column', gap: 18 },
-  sourceGroup: { display: 'inline-flex', background: '#f4f6fb', border: '1px solid var(--border)', borderRadius: 999, padding: 3, gap: 2, marginLeft: 'auto' },
-  sourcePill: { fontSize: '0.72rem', fontWeight: 600, letterSpacing: '0.03em', border: 'none', background: 'transparent', color: 'var(--muted)', padding: '5px 13px', borderRadius: 999, cursor: 'pointer', fontFamily: 'var(--font-sans)' },
-  sourcePillActive: { background: 'var(--accent)', color: '#fff' },
-  select: { width: '100%', padding: '10px 14px', fontSize: '0.9rem', border: '1.5px solid var(--border)', borderRadius: 10, background: '#fff', color: 'var(--ink)', fontFamily: 'var(--font-sans)' },
-  search: { width: '100%', padding: '9px 14px', fontSize: '0.88rem', border: '1.5px solid var(--border)', borderRadius: 10, fontFamily: 'var(--font-sans)', boxSizing: 'border-box' },
-  list: { border: '1.5px solid var(--border)', borderRadius: 12, overflow: 'hidden' },
-  row: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: '11px 16px', cursor: 'pointer', userSelect: 'none', borderTop: '1px solid var(--border)', background: '#fff' },
-  rowName: { fontWeight: 600, fontSize: '0.9rem', color: 'var(--ink)' },
-  rowMeta: { fontSize: '0.74rem', color: 'var(--muted)' },
-  pill: { fontSize: '0.68rem', fontWeight: 600, borderRadius: 20, padding: '2px 9px', whiteSpace: 'nowrap' },
-  pillOk: { background: '#f0fdf4', color: '#15803d', border: '1px solid #bbf7d0' },
-  pillWarn: { background: '#fffbeb', color: '#b45309', border: '1px solid #fde68a' },
-  actions: { padding: '14px 16px', background: '#fafbff', borderTop: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 12 },
-  actionBtns: { display: 'flex', gap: 8, flexWrap: 'wrap' },
-  btn: { fontSize: '0.8rem', fontWeight: 600, padding: '8px 16px', borderRadius: 8, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer', fontFamily: 'var(--font-sans)' },
-  btnGhost: { fontSize: '0.8rem', fontWeight: 600, padding: '8px 16px', borderRadius: 8, border: '1.5px solid var(--border)', background: '#fff', color: 'var(--ink)', cursor: 'pointer', fontFamily: 'var(--font-sans)' },
-  emailGrid: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 },
-  label: { fontSize: '0.7rem', fontWeight: 600, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 4, display: 'block' },
-  input: { width: '100%', padding: '8px 12px', fontSize: '0.85rem', border: '1.5px solid var(--border)', borderRadius: 8, fontFamily: 'var(--font-sans)', boxSizing: 'border-box' },
-  ok: { padding: '9px 13px', background: '#f0fdf4', border: '1.5px solid #86efac', borderRadius: 8, color: '#15803d', fontSize: '0.82rem', fontWeight: 500 },
-  err: { padding: '9px 13px', background: '#fff1f2', border: '1.5px solid #fca5a5', borderRadius: 8, color: '#b91c1c', fontSize: '0.82rem' },
-  hint: { fontSize: '0.78rem', color: 'var(--muted)' },
-};
+export function initials(name) {
+  return String(name || '?')
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((word) => word[0])
+    .join('')
+    .toUpperCase();
+}
 
-const emailRx = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
-// Send one report email and poll to completion — same job pattern as the
-// single-student hook.
+// Send one report email and poll to completion - the same job pattern as the
+// Single Student page.
 async function sendAndPoll(payload) {
   const start = await emailReport(payload);
   const jobId = start?.jobId;
@@ -67,24 +71,31 @@ async function sendAndPoll(payload) {
 }
 
 function EmailAction({ student, saved, startDate, endDate, dayOfWeek, configured, onSent }) {
-  const [studentEmail, setStudentEmail] = useState(saved?.studentEmail || student.email || '');
+  const [studentEmail, setStudentEmail] = useState(saved ? saved.studentEmail || '' : student.email || '');
   const [parentEmail, setParentEmail] = useState(saved?.parentEmail || '');
   const [subject, setSubject] = useState('');
-  const [loading, setLoading] = useState(false);
+  const [sending, setSending] = useState(false);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
 
-  const datesOk = startDate && endDate && new Date(startDate) <= new Date(endDate);
-  const anyRecipient = studentEmail.trim() || parentEmail.trim();
-  const recipientsOk =
-    (!studentEmail.trim() || emailRx.test(studentEmail.trim())) &&
-    (!parentEmail.trim() || emailRx.test(parentEmail.trim())) &&
-    anyRecipient;
+  const datesOk = Boolean(startDate && endDate && new Date(startDate) <= new Date(endDate));
+  const anyRecipient = Boolean(studentEmail.trim() || parentEmail.trim());
+  const studentInvalid = !isValidContactField(studentEmail);
+  const parentInvalid = !isValidContactField(parentEmail);
+  const canSend = configured && datesOk && anyRecipient && !studentInvalid && !parentInvalid && !sending;
+
+  const hint = !configured
+    ? 'Email isn’t set up on the server.'
+    : !datesOk
+      ? 'Pick a valid date range above first.'
+      : !anyRecipient
+        ? 'Enter at least one email.'
+        : null;
 
   async function handleSend() {
     setError(null);
     setSuccess(null);
-    setLoading(true);
+    setSending(true);
     try {
       const result = await sendAndPoll({
         studentId: student.id,
@@ -95,221 +106,287 @@ function EmailAction({ student, saved, startDate, endDate, dayOfWeek, configured
         parentEmail: parentEmail.trim(),
         subject: subject || undefined,
       });
-      const to = result.to.length ? result.to.join(', ') : '';
+      const to = result.to.join(', ');
       setSuccess(result.deduplicated
-        ? (to ? `Already sent to ${to} recently — no duplicate sent.` : 'Already sent recently — no duplicate sent.')
-        : (to ? `Sent to ${to}` : 'Email sent.'));
+        ? (to ? `Already sent to ${to} recently, so no duplicate was sent.` : 'Already sent recently, so no duplicate was sent.')
+        : (to ? `Sent to ${to}.` : 'Email sent.'));
       onSent?.(student.id, { studentEmail: studentEmail.trim(), parentEmail: parentEmail.trim() });
     } catch (e) {
-      setError(e.response?.data?.error || e.message || 'Send failed.');
+      setError(e.message || 'Send failed.');
     } finally {
-      setLoading(false);
+      setSending(false);
     }
   }
 
+  const id = (name) => `dir-${student.id}-${name}`;
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-      <div style={s.emailGrid}>
-        <div>
-          <label style={s.label}>Student Email</label>
-          <input style={s.input} value={studentEmail} placeholder="student@email.com" onChange={(e) => { setStudentEmail(e.target.value); setSuccess(null); }} />
-        </div>
-        <div>
-          <label style={s.label}>Parent Email</label>
-          <input style={s.input} value={parentEmail} placeholder="parent@email.com" onChange={(e) => { setParentEmail(e.target.value); setSuccess(null); }} />
-        </div>
+    <div className="grid gap-4">
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Field data-invalid={studentInvalid || undefined}>
+          <FieldLabel htmlFor={id('student-email')}>Student email</FieldLabel>
+          <Input
+            id={id('student-email')}
+            type="email"
+            value={studentEmail}
+            placeholder="student@email.com"
+            aria-invalid={studentInvalid || undefined}
+            autoComplete="off"
+            spellCheck={false}
+            onChange={(e) => { setStudentEmail(e.target.value); setSuccess(null); }}
+          />
+        </Field>
+        <Field data-invalid={parentInvalid || undefined}>
+          <FieldLabel htmlFor={id('parent-email')}>Parent email</FieldLabel>
+          <Input
+            id={id('parent-email')}
+            type="email"
+            value={parentEmail}
+            placeholder="parent@email.com"
+            aria-invalid={parentInvalid || undefined}
+            autoComplete="off"
+            spellCheck={false}
+            onChange={(e) => { setParentEmail(e.target.value); setSuccess(null); }}
+          />
+        </Field>
       </div>
-      <div>
-        <label style={s.label}>Subject (optional)</label>
-        <input style={s.input} value={subject} placeholder={`${student.name} — Progress Report`} onChange={(e) => setSubject(e.target.value)} />
+      <Field>
+        <FieldLabel htmlFor={id('subject')}>Subject</FieldLabel>
+        <Input
+          id={id('subject')}
+          value={subject}
+          placeholder={DEFAULT_REPORT_SUBJECT}
+          onChange={(e) => setSubject(e.target.value)}
+        />
+      </Field>
+      <div className="flex flex-wrap items-center gap-3">
+        <Button onClick={handleSend} disabled={!canSend}>
+          {sending ? <Spinner data-icon="inline-start" /> : <LuSend data-icon="inline-start" />}
+          {sending ? 'Sending…' : 'Email report'}
+        </Button>
+        {hint && <span className="text-sm text-muted-foreground">{hint}</span>}
       </div>
-      <div style={s.actionBtns}>
+      {success && <Notice variant="success">{success}</Notice>}
+      {error && <Notice variant="destructive">{error}</Notice>}
+    </div>
+  );
+}
+
+function StudentRow({ student, saved, open, onOpenChange, onViewReport, emailProps }) {
+  const hasContacts = Boolean(saved?.studentEmail || saved?.parentEmail);
+  return (
+    <Collapsible open={open} onOpenChange={onOpenChange} className="border-b last:border-b-0">
+      <CollapsibleTrigger asChild>
         <button
           type="button"
-          style={{ ...s.btn, opacity: (!configured || !datesOk || !recipientsOk || loading) ? 0.55 : 1 }}
-          disabled={!configured || !datesOk || !recipientsOk || loading}
-          onClick={handleSend}
+          className={cn(
+            'flex w-full items-center gap-3 px-4 py-3 text-left transition-colors outline-none hover:bg-muted/50 focus-visible:bg-muted/50 focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:ring-inset',
+            open && 'bg-muted/50'
+          )}
         >
-          {loading ? 'Sending…' : '✉ Send to Student & Parent'}
+          <span
+            aria-hidden="true"
+            className="flex size-9 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-medium text-muted-foreground"
+          >
+            {initials(student.name)}
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block truncate text-sm font-medium">{student.name}</span>
+            {student.email && <span className="block truncate text-xs text-muted-foreground">{student.email}</span>}
+          </span>
+          <Badge variant={hasContacts ? 'success' : 'warning'} className="hidden sm:inline-flex">
+            {hasContacts ? 'Contacts saved' : 'No contacts'}
+          </Badge>
+          <LuChevronDown
+            aria-hidden="true"
+            className={cn('size-4 shrink-0 text-muted-foreground transition-transform', open && 'rotate-180')}
+          />
         </button>
-        {!configured && <span style={s.hint}>Email isn't configured on the server.</span>}
-        {configured && !datesOk && <span style={s.hint}>Pick a date range above first.</span>}
-        {configured && datesOk && !anyRecipient && <span style={s.hint}>Enter at least one email.</span>}
-      </div>
-      {success && <div style={s.ok}>✓ {success}</div>}
-      {error && <div style={s.err}>⚠ {error}</div>}
+      </CollapsibleTrigger>
+      <CollapsibleContent>
+        <div className="grid gap-5 border-t bg-muted/30 px-4 py-4 sm:pl-16">
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="outline" onClick={() => onViewReport?.(student.id)}>
+              <LuFileText data-icon="inline-start" />
+              View report
+            </Button>
+            <Badge variant={hasContacts ? 'success' : 'warning'} className="sm:hidden">
+              {hasContacts ? 'Contacts saved' : 'No contacts'}
+            </Badge>
+          </div>
+          <EmailAction student={student} saved={saved} {...emailProps} />
+        </div>
+      </CollapsibleContent>
+    </Collapsible>
+  );
+}
+
+function ListSkeleton() {
+  return (
+    <div className="divide-y rounded-lg border" aria-busy="true" aria-label="Loading students">
+      {Array.from({ length: 6 }, (_, i) => (
+        <div key={i} className="flex items-center gap-3 px-4 py-3">
+          <Skeleton className="size-9 rounded-full" />
+          <div className="grid flex-1 gap-1.5">
+            <Skeleton className="h-3.5 w-40" />
+            <Skeleton className="h-3 w-56" />
+          </div>
+          <Skeleton className="h-5 w-24 rounded-full" />
+        </div>
+      ))}
     </div>
   );
 }
 
 export default function StudentDirectory({
-  students,
-  allContacts,
-  onContactsPersisted,
-  emailConfigured,
   startDate, endDate, onStartDate, onEndDate,
   dayOfWeek,
   onViewReport,
 }) {
-  const [groups, setGroups] = useState([]);
-  const [programs, setPrograms] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+  const directory = useDirectory();
+  const { programs, isPending: programsLoading } = usePrograms();
+  const { contacts } = useContacts();
+  const byId = useStudentsById();
+  const emailConfigured = useEmailConfigured();
+  const noteContactsSaved = useNoteContactsSaved();
+
+  const groups = directory.data?.groups ?? [];
+  const loading = directory.isPending || programsLoading;
   const [selectedId, setSelectedId] = useState('');
   const [search, setSearch] = useState('');
   const [expandedId, setExpandedId] = useState(null);
 
+  // Start on the first group (or program) so students show right away.
   useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    Promise.all([
-      fetchStudentGroups().catch(() => []),
-      fetchPrograms().catch(() => []),
-    ])
-      .then(([g, p]) => {
-        if (cancelled) return;
-        setGroups(g);
-        setPrograms(p);
-        // Preselect the first group so the main page shows students right away.
-        if (g.length > 0) setSelectedId(`g:${g[0].groupId}`);
-        else if (p.length > 0) setSelectedId(`p:${p[0].programId}`);
-      })
-      .catch((e) => { if (!cancelled) setError(e.message || 'Failed to load groups'); })
-      .finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
-  }, []);
-
-  const byId = useMemo(() => new Map((students || []).map((st) => [String(st.id), st])), [students]);
-
-  // Groups and programs live in ONE dropdown — programs listed under groups.
-  const groupOptions = groups.map((g) => ({ value: `g:${g.groupId}`, label: `${g.groupName} (${g.students.length})` }));
-  const programOptions = programs.map((p) => ({ value: `p:${p.programId}`, label: `${p.name} (${(p.studentIds || []).length})` }));
+    if (selectedId || loading) return;
+    if (groups.length > 0) setSelectedId(`g:${groups[0].groupId}`);
+    else if (programs.length > 0) setSelectedId(`p:${programs[0].programId}`);
+  }, [selectedId, loading, groups, programs]);
 
   const roster = useMemo(() => {
-    if (!selectedId) return [];
     if (selectedId.startsWith('g:')) {
-      const g = groups.find((x) => `g:${x.groupId}` === selectedId);
-      return g ? g.students : [];
+      const group = groups.find((g) => `g:${g.groupId}` === selectedId);
+      return (group?.studentIds || []).map((id) => byId.get(id) || { id, name: `User ${id}`, email: null });
     }
-    const p = programs.find((x) => `p:${x.programId}` === selectedId);
-    if (!p) return [];
-    return (p.studentIds || [])
+    const program = programs.find((p) => `p:${p.programId}` === selectedId);
+    return (program?.studentIds || [])
       .map((id) => byId.get(String(id)) || { id: String(id), name: `User ${id}`, email: null })
       .sort((a, b) => a.name.localeCompare(b.name));
   }, [selectedId, groups, programs, byId]);
 
-  const filtered = roster.filter(
-    (st) => !search || st.name.toLowerCase().includes(search.toLowerCase())
-  );
+  const query = search.trim().toLowerCase();
+  const filtered = query
+    ? roster.filter((st) => st.name.toLowerCase().includes(query) || String(st.email || '').toLowerCase().includes(query))
+    : roster;
+
+  const emailProps = { startDate, endDate, dayOfWeek, configured: emailConfigured, onSent: noteContactsSaved };
 
   return (
-    <div style={s.card}>
-      <div style={s.cardHead}>
-        <div style={s.cardDot} />
-        <span style={s.cardTitle}>Students</span>
-      </div>
-
-      <div style={s.cardBody}>
-        <div>
-          <label style={s.label}>Group</label>
-          <select
-            style={s.select}
-            value={selectedId}
-            onChange={(e) => { setSelectedId(e.target.value); setExpandedId(null); }}
-            disabled={loading}
-          >
-            {groupOptions.length === 0 && programOptions.length === 0 && (
-              <option value="">{loading ? 'Loading…' : 'None found'}</option>
-            )}
-            {groupOptions.length > 0 && (
-              <optgroup label="Groups">
-                {groupOptions.map((o) => (
-                  <option key={o.value} value={o.value}>{o.label}</option>
-                ))}
-              </optgroup>
-            )}
-            {programOptions.length > 0 && (
-              <optgroup label="Programs">
-                {programOptions.map((o) => (
-                  <option key={o.value} value={o.value}>{o.label}</option>
-                ))}
-              </optgroup>
-            )}
-          </select>
+    <Card>
+      <CardContent className="grid gap-6">
+        <div className="grid gap-4 md:grid-cols-2">
+          <Field>
+            <FieldLabel htmlFor="directory-group">Group or program</FieldLabel>
+            <Select
+              value={selectedId}
+              onValueChange={(value) => { setSelectedId(value); setExpandedId(null); setSearch(''); }}
+              disabled={loading}
+            >
+              <SelectTrigger id="directory-group" className="w-full">
+                <SelectValue placeholder={loading ? 'Loading…' : 'Nothing to show yet'} />
+              </SelectTrigger>
+              <SelectContent>
+                {groups.length > 0 && (
+                  <SelectGroup>
+                    <SelectLabel>ClassMarker groups</SelectLabel>
+                    {groups.map((g) => (
+                      <SelectItem key={g.groupId} value={`g:${g.groupId}`}>
+                        {g.groupName}
+                        <span className="text-muted-foreground">{g.studentIds.length}</span>
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                )}
+                {groups.length > 0 && programs.length > 0 && <SelectSeparator />}
+                {programs.length > 0 && (
+                  <SelectGroup>
+                    <SelectLabel>Programs</SelectLabel>
+                    {programs.map((p) => (
+                      <SelectItem key={p.programId} value={`p:${p.programId}`}>
+                        {p.name}
+                        <span className="text-muted-foreground">{(p.studentIds || []).length}</span>
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                )}
+              </SelectContent>
+            </Select>
+          </Field>
+          <Field>
+            <FieldLabel htmlFor="directory-dates">Report dates</FieldLabel>
+            <DateRangePicker
+              id="directory-dates"
+              startDate={startDate}
+              endDate={endDate}
+              onStartChange={onStartDate}
+              onEndChange={onEndDate}
+            />
+            <FieldDescription>Used by View report and emailed reports.</FieldDescription>
+          </Field>
         </div>
 
-        <DateRangePicker
-          startDate={startDate}
-          endDate={endDate}
-          onStartChange={onStartDate}
-          onEndChange={onEndDate}
-        />
-        <span style={{ ...s.hint, marginTop: -10 }}>
-          The date range is used for View Report and emailed reports.
-        </span>
+        <div className="grid gap-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <InputGroup className="sm:max-w-xs">
+              <InputGroupAddon>
+                <LuSearch aria-hidden="true" />
+              </InputGroupAddon>
+              <InputGroupInput
+                value={search}
+                placeholder="Search by name or email"
+                aria-label="Search students"
+                onChange={(e) => setSearch(e.target.value)}
+              />
+            </InputGroup>
+            {!loading && (
+              <span className="text-sm text-muted-foreground tabular-nums">
+                {query ? `${filtered.length} of ${roster.length}` : roster.length} student{roster.length === 1 ? '' : 's'}
+              </span>
+            )}
+          </div>
 
-        {roster.length > 8 && (
-          <input
-            style={s.search}
-            value={search}
-            placeholder="Search students…"
-            onChange={(e) => setSearch(e.target.value)}
-          />
-        )}
+          {directory.error && <Notice variant="destructive">Could not load students: {directory.error.message}</Notice>}
 
-        {error && <div style={s.err}>⚠ {error}</div>}
-
-        <div style={s.list}>
-          {loading && <div style={{ padding: '14px 16px', ...s.hint }}>Loading students…</div>}
-          {!loading && filtered.length === 0 && (
-            <div style={{ padding: '14px 16px', ...s.hint }}>
-              {roster.length === 0 ? 'No students in this selection.' : 'No students match your search.'}
+          {loading ? (
+            <ListSkeleton />
+          ) : filtered.length === 0 ? (
+            <Empty className="border">
+              <EmptyHeader>
+                <EmptyMedia variant="icon"><LuUsers /></EmptyMedia>
+                <EmptyTitle>{roster.length === 0 ? 'No students here yet' : 'No matches'}</EmptyTitle>
+                <EmptyDescription>
+                  {roster.length === 0
+                    ? 'Students appear once they take a test in this group, or are enrolled in this program.'
+                    : 'No student’s name or email matches your search.'}
+                </EmptyDescription>
+              </EmptyHeader>
+            </Empty>
+          ) : (
+            <div className="overflow-hidden rounded-lg border bg-card">
+              {filtered.map((st) => (
+                <StudentRow
+                  key={st.id}
+                  student={st}
+                  saved={contacts[st.id]}
+                  open={expandedId === st.id}
+                  onOpenChange={(open) => setExpandedId(open ? st.id : null)}
+                  onViewReport={onViewReport}
+                  emailProps={emailProps}
+                />
+              ))}
             </div>
           )}
-          {filtered.map((st, i) => {
-            const saved = allContacts?.[st.id];
-            const hasContacts = Boolean(saved?.studentEmail || saved?.parentEmail);
-            const expanded = expandedId === st.id;
-            return (
-              <div key={st.id}>
-                <div
-                  style={{ ...s.row, ...(i === 0 ? { borderTop: 'none' } : {}), ...(expanded ? { background: 'var(--accent-dim)' } : {}) }}
-                  onClick={() => setExpandedId(expanded ? null : st.id)}
-                >
-                  <div>
-                    <div style={s.rowName}>{st.name}</div>
-                    {st.email && <div style={s.rowMeta}>{st.email}</div>}
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <span style={{ ...s.pill, ...(hasContacts ? s.pillOk : s.pillWarn) }}>
-                      {hasContacts ? 'Contacts saved' : 'No contacts'}
-                    </span>
-                    <span style={{ color: 'var(--muted)', fontSize: '0.75rem' }}>{expanded ? '▲' : '▼'}</span>
-                  </div>
-                </div>
-                {expanded && (
-                  <div style={s.actions}>
-                    <div style={s.actionBtns}>
-                      <button type="button" style={s.btnGhost} onClick={() => onViewReport?.(st.id)}>
-                        📄 View Report
-                      </button>
-                    </div>
-                    <EmailAction
-                      student={st}
-                      saved={saved}
-                      startDate={startDate}
-                      endDate={endDate}
-                      dayOfWeek={dayOfWeek}
-                      configured={emailConfigured}
-                      onSent={onContactsPersisted}
-                    />
-                  </div>
-                )}
-              </div>
-            );
-          })}
         </div>
-      </div>
-    </div>
+      </CardContent>
+    </Card>
   );
 }

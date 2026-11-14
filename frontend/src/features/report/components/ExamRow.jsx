@@ -3,12 +3,28 @@
 //
 // The collapsed row is a single aligned line: drag handle, name, date, the
 // English and Math scoring-sheet pickers (Easy / Medium / Hard / Custom) and
-// the scoreboard. Everything used less often lives one click away in the
+// the scoreboard. Everything used less often is one click away in the
 // expanded panel: the four DSAT section tests, what grades each subject, and
 // the exam's settings (practice, move to another program, hidden students,
 // delete). Self-contained - saves each edit through the API, then asks the
-// parent to re-fetch.
+// parent to refresh.
 import React, { useCallback, useState } from 'react';
+import {
+  LuChevronRight,
+  LuEyeOff,
+  LuGripVertical,
+  LuTrash2,
+  LuTrophy,
+} from 'react-icons/lu';
+import { cn } from '@/lib/utils';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Switch } from '@/components/ui/switch';
+import { useConfirm } from '@/components/common/confirm';
+import DatePicker from '@/components/common/DatePicker';
 import { updateExam, deleteExam } from '../api/reportApi.js';
 import { SUBJECTS } from '../scoring.js';
 import SheetLevelPicker from './SheetLevelPicker.jsx';
@@ -16,32 +32,43 @@ import ExamScoring from './ExamScoring.jsx';
 import ScoreboardPanel from './ScoreboardPanel.jsx';
 import RosterPanel from './RosterPanel.jsx';
 import HiddenStudentsPanel from './HiddenStudentsPanel.jsx';
-import s from './examManagerStyles.js';
+import TestPicker from './TestPicker.jsx';
 
+// `short` names the module on screen; `hint` spells it out in tooltips.
 export const SECTION_DEFS = [
-  { key: '1', label: 'Section 1', hint: 'Reading & Writing · Module 1' },
-  { key: '2', label: 'Section 2', hint: 'Reading & Writing · Module 2' },
-  { key: '3', label: 'Section 3', hint: 'Math · Module 1' },
-  { key: '4', label: 'Section 4', hint: 'Math · Module 2' },
+  { key: '1', label: 'Section 1', short: 'English, module 1', hint: 'Reading & Writing · Module 1' },
+  { key: '2', label: 'Section 2', short: 'English, module 2', hint: 'Reading & Writing · Module 2' },
+  { key: '3', label: 'Section 3', short: 'Math, module 1', hint: 'Math · Module 1' },
+  { key: '4', label: 'Section 4', short: 'Math, module 2', hint: 'Math · Module 2' },
 ];
+
+// The columns every exam row - and the column header above them - share, so
+// the pickers line up down a program: handle · chevron · name · date ·
+// English · Math · scoreboard. Narrower screens move the date and pickers
+// onto lines of their own under the name (see the row's cells); phones also
+// drop the drag handle, as dragging needs a mouse.
+export const EXAM_GRID = cn(
+  'grid grid-cols-[1rem_minmax(0,1fr)_auto] items-center gap-x-3 gap-y-2',
+  'sm:grid-cols-[1rem_1rem_minmax(0,1fr)_auto_auto]',
+  'lg:grid-cols-[1rem_1rem_minmax(8rem,1fr)_8.5rem_13.5rem_13.5rem_7.5rem]'
+);
+
+const stop = (e) => e.stopPropagation();
 
 export default function ExamRow({
   exam, tests, roster, programs, onChanged, onExamsChanged, onOpenSheets, onError,
   onDragStart, onDragEnd, onDragOver, onDrop, dragging,
 }) {
+  const confirm = useConfirm();
   const assignedCount = SECTION_DEFS.filter((d) => exam.sections?.[d.key]?.testId).length;
   // Every exam starts collapsed - the list stays compact; click a row to open
   // it for editing.
   const [expanded, setExpanded] = useState(false);
   const [editingName, setEditingName] = useState(false);
   const [nameDraft, setNameDraft] = useState(exam.name);
-  const [editingDate, setEditingDate] = useState(false);
-  const [dateDraft, setDateDraft] = useState('');
   const [scoreboardOpen, setScoreboardOpen] = useState(false);
   const [hiddenOpen, setHiddenOpen] = useState(false);
   const [rosterOpen, setRosterOpen] = useState(false);
-  // { key, group } of the section chip currently showing its inline select.
-  const [sectionEditing, setSectionEditing] = useState(null);
   // Sheet choices just clicked but not yet confirmed by the server, so the
   // pickers respond instantly: { rw?: level|null, math?: level|null }.
   const [pendingDifficulty, setPendingDifficulty] = useState({});
@@ -54,23 +81,17 @@ export default function ExamRow({
 
   const grouped = Boolean(exam.programId);
   const hiddenCount = (exam.hiddenStudentIds || []).length;
-  const stop = (e) => e.stopPropagation();
+  const studentCount = (exam.studentIds || []).length;
 
-  const inGroup = useCallback((t, groupName) => {
-    if (!groupName) return true;
-    if ((t.groups || []).some((g) => g.groupName === groupName)) return true;
-    return t.groupName === groupName;
-  }, []);
-
-  async function patchExam(patch) {
+  const patchExam = useCallback(async (patch) => {
     onError?.(null);
     try {
       await updateExam(exam.examId, patch);
       await onChanged?.();
     } catch (err) {
-      onError?.(err.response?.data?.error || err.message || 'Failed to update exam');
+      onError?.(err.message || 'Failed to update exam');
     }
-  }
+  }, [exam.examId, onChanged, onError]);
 
   // Choose the scoring sheet for one subject. Only the exam list needs to be
   // re-read afterwards, which keeps clicking through a column of exams quick.
@@ -81,7 +102,7 @@ export default function ExamRow({
       await updateExam(exam.examId, { difficulty: { [subject]: level } });
       await onExamsChanged?.();
     } catch (err) {
-      onError?.(err.response?.data?.error || err.message || 'Failed to update the scoring sheet');
+      onError?.(err.message || 'Failed to update the scoring sheet');
     } finally {
       setPendingDifficulty((prev) => {
         const next = { ...prev };
@@ -91,7 +112,7 @@ export default function ExamRow({
     }
   }
 
-  // Inline name edit (no prompt) - Enter/blur saves, Esc cancels.
+  // Inline name edit - Enter/blur saves, Escape cancels.
   function commitName() {
     setEditingName(false);
     const v = nameDraft.trim();
@@ -99,45 +120,23 @@ export default function ExamRow({
     patchExam({ name: v });
   }
 
-  // Inline date edit - Enter/blur saves (an emptied field clears the date),
-  // Esc cancels.
-  function startDateEdit() {
-    setDateDraft(exam.date || exam.takenDate || '');
-    setEditingDate(true);
+  // A picked date is saved at once; clearing removes the exam's own date
+  // (the date it was taken, if known, then shows in its place).
+  function commitDate(next) {
+    if (next === (exam.date || '')) return;
+    patchExam({ date: next });
   }
 
-  function commitDate() {
-    setEditingDate(false);
-    if (dateDraft === (exam.date || '')) return;
-    patchExam({ date: dateDraft });
-  }
-
-  // Options for one section chip. A test may be reused across exams, so the
-  // only restriction is that it can't fill two sections of *this* exam.
+  // Options for one section. A test may be reused across exams, so the only
+  // restriction is that it can't fill two sections of *this* exam.
   function sectionOptions(sectionKey) {
     const usedElsewhereInExam = new Set(
       SECTION_DEFS.filter((d) => d.key !== sectionKey)
         .map((d) => exam.sections?.[d.key]?.testId)
         .filter(Boolean)
+        .map(String)
     );
-    return tests.filter((t) => !usedElsewhereInExam.has(t.testId));
-  }
-
-  // First group a test appears under (to pre-select the drill-down).
-  function testGroup(testId) {
-    if (!testId) return '';
-    const t = tests.find((x) => x.testId === testId);
-    return t?.groups?.[0]?.groupName || t?.groupName || '';
-  }
-
-  // Distinct groups that still have an assignable test for this slot.
-  function groupsForSlot(sectionKey) {
-    const set = new Set();
-    for (const t of sectionOptions(sectionKey)) {
-      for (const g of t.groups || []) if (g.groupName) set.add(g.groupName);
-      if (t.groupName) set.add(t.groupName);
-    }
-    return Array.from(set).sort();
+    return tests.filter((t) => !usedElsewhereInExam.has(String(t.testId)));
   }
 
   function setSection(sectionKey, testId) {
@@ -146,60 +145,76 @@ export default function ExamRow({
       const cur = exam.sections?.[d.key];
       sections[d.key] = cur ? { testId: cur.testId, testName: cur.testName } : null;
     }
-    const test = tests.find((t) => t.testId === testId);
+    const test = tests.find((t) => String(t.testId) === String(testId));
     sections[sectionKey] = testId ? { testId, testName: test?.testName || null } : null;
-    setSectionEditing(null);
     patchExam({ sections });
   }
 
   async function handleDelete() {
-    // eslint-disable-next-line no-alert
-    if (!window.confirm(`Delete exam "${exam.name}"? Its custom scoring sheets are deleted with it.`)) return;
+    const ok = await confirm({
+      title: `Delete “${exam.name}”?`,
+      description: 'The exam and its custom scoring sheets are deleted. Test results in ClassMarker are not affected.',
+      confirmLabel: 'Delete exam',
+      destructive: true,
+    });
+    if (!ok) return;
     onError?.(null);
     try {
       await deleteExam(exam.examId);
       await onChanged?.();
     } catch (err) {
-      onError?.(err.response?.data?.error || err.message || 'Failed to delete exam');
+      onError?.(err.message || 'Failed to delete exam');
     }
   }
 
   const togglePractice = () => patchExam({ isPractice: !exam.isPractice });
+  const shownDate = exam.date || exam.takenDate || '';
 
   return (
     <div
-      style={{
-        ...s.examRow,
-        ...(dragging ? { opacity: 0.55, boxShadow: 'var(--shadow-lg)', borderColor: 'var(--accent)', transform: 'scale(0.99)' } : null),
-      }}
+      className={cn(
+        'overflow-hidden rounded-md border bg-card transition-[box-shadow,opacity,transform,border-color] duration-150',
+        dragging && 'scale-[0.99] border-ring opacity-60 shadow-md'
+      )}
       onDragOver={onDragOver}
       onDrop={onDrop}
     >
       <div
-        className="exam-grid"
-        style={s.examHead}
+        className={cn(EXAM_GRID, 'cursor-pointer px-3 py-2 transition-colors hover:bg-muted/40', expanded && 'bg-muted/40')}
         onClick={() => setExpanded((v) => !v)}
-        role="button"
-        aria-expanded={expanded}
-        title={expanded ? 'Click to collapse' : 'Click to show sections and settings'}
       >
         <span
           draggable={Boolean(onDragStart)}
           onDragStart={onDragStart}
           onDragEnd={onDragEnd}
           onClick={stop}
-          style={{ ...s.dragHandle, cursor: !onDragStart ? 'default' : dragging ? 'grabbing' : 'grab', visibility: onDragStart ? 'visible' : 'hidden' }}
+          className={cn(
+            'hidden justify-center text-muted-foreground sm:flex',
+            onDragStart ? (dragging ? 'cursor-grabbing' : 'cursor-grab hover:text-foreground') : 'invisible'
+          )}
           title="Drag to reorder within the program"
+          aria-hidden="true"
         >
-          ⠿
+          <LuGripVertical className="size-4" />
         </span>
-        <span style={s.chevron}>{expanded ? '▾' : '▸'}</span>
 
-        <span style={s.examNameCell}>
+        <button
+          type="button"
+          aria-expanded={expanded}
+          aria-label={expanded ? `Collapse ${exam.name}` : `Show ${exam.name}’s sections and settings`}
+          className="flex rounded-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"
+          onClick={(e) => { stop(e); setExpanded((v) => !v); }}
+        >
+          <LuChevronRight className={cn('size-4 transition-transform', expanded && 'rotate-90')} />
+        </button>
+
+        <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
           {editingName ? (
-            <input
+            <Input
               autoFocus
               value={nameDraft}
+              aria-label="Exam name"
+              className="h-7 min-w-0 flex-1 font-medium"
               onClick={stop}
               onChange={(e) => setNameDraft(e.target.value)}
               onBlur={commitName}
@@ -207,71 +222,69 @@ export default function ExamRow({
                 if (e.key === 'Enter') commitName();
                 if (e.key === 'Escape') { setNameDraft(exam.name); setEditingName(false); }
               }}
-              style={{ ...s.input, flex: 1, minWidth: 0, padding: '4px 8px', fontSize: '0.88rem', fontWeight: 600 }}
             />
           ) : (
-            <span
-              style={{ ...s.examName, flex: '0 1 auto', cursor: 'text' }}
-              onClick={(e) => { stop(e); setNameDraft(exam.name); setEditingName(true); }}
+            <button
+              type="button"
+              className="min-w-0 cursor-text rounded-sm text-left text-sm font-medium break-words outline-none hover:underline hover:decoration-muted-foreground/50 hover:decoration-dotted hover:underline-offset-4 focus-visible:ring-[3px] focus-visible:ring-ring/50"
               title="Click to rename"
+              onClick={(e) => { stop(e); setNameDraft(exam.name); setEditingName(true); }}
             >
               {exam.name}
-            </span>
+            </button>
           )}
-          {exam.isPractice && <span style={s.practiceBadge} title="Practice exam - kept out of grade reports">Practice</span>}
+          {exam.isPractice && (
+            <Badge variant="warning" title="Practice exam - kept out of grade reports">Practice</Badge>
+          )}
           {assignedCount < SECTION_DEFS.length && (
-            <span style={s.count} title="Sections with a test assigned">{assignedCount}/4 sections</span>
+            <span className="text-xs text-muted-foreground tabular-nums" title="Sections with a test assigned">
+              {assignedCount}/4 sections
+            </span>
           )}
           {hiddenCount > 0 && (
-            <span
-              style={{ ...s.hiddenBadge, cursor: 'pointer' }}
-              onClick={(e) => { stop(e); setHiddenOpen((v) => !v); }}
-              title="Students whose attempts are ignored for this exam - click to edit"
-            >
-              {hiddenCount} hidden
-            </span>
+            <Badge asChild variant="destructive">
+              <button
+                type="button"
+                title="Students whose attempts are ignored for this exam - click to edit"
+                onClick={(e) => { stop(e); setHiddenOpen(true); }}
+              >
+                {hiddenCount} hidden
+              </button>
+            </Badge>
           )}
-          {/* Ungrouped (legacy) exams keep their own roster chip; grouped exams
-              inherit the program roster. */}
+          {/* Ungrouped (legacy) exams keep their own roster; grouped exams
+              use the program's. */}
           {!grouped && (
-            <span
-              style={{ ...s.rosterChip, cursor: 'pointer' }}
-              onClick={(e) => { stop(e); setRosterOpen((v) => !v); }}
-              title="Click to pick the students taking this exam"
-            >
-              {(exam.studentIds || []).length} student{(exam.studentIds || []).length === 1 ? '' : 's'}
-            </span>
+            <Badge asChild variant="outline">
+              <button
+                type="button"
+                title="Click to pick the students taking this exam"
+                onClick={(e) => { stop(e); setRosterOpen(true); }}
+              >
+                {studentCount} student{studentCount === 1 ? '' : 's'}
+              </button>
+            </Badge>
           )}
-        </span>
+        </div>
 
-        {editingDate ? (
-          <input
-            type="date"
-            autoFocus
-            value={dateDraft}
-            onClick={stop}
-            onChange={(e) => setDateDraft(e.target.value)}
-            onBlur={commitDate}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') commitDate();
-              if (e.key === 'Escape') setEditingDate(false);
-            }}
-            style={{ ...s.input, padding: '3px 6px', fontSize: '0.74rem', width: 128, justifySelf: 'start' }}
+        <div className="col-[1/-1] row-start-2 sm:col-auto sm:row-auto" onClick={stop}>
+          <DatePicker
+            value={shownDate}
+            onChange={commitDate}
+            clearable={Boolean(exam.date)}
+            placeholder="Set date"
+            size="sm"
+            className={cn('h-7 justify-start px-2 text-xs lg:w-full', !exam.date && 'text-muted-foreground')}
+            aria-label={exam.date
+              ? 'Exam date - click to change'
+              : exam.takenDate ? 'Date the exam was taken - click to confirm or change' : 'Set the exam date'}
           />
-        ) : (
-          <span
-            style={{ ...s.dateChip, cursor: 'pointer', justifySelf: 'start', ...(exam.date ? null : { opacity: 0.7 }) }}
-            onClick={(e) => { stop(e); startDateEdit(); }}
-            title={exam.date ? 'Click to change the exam date' : exam.takenDate ? 'Date the exam was taken - click to confirm or change' : 'Click to set the exam date'}
-          >
-            {exam.date || exam.takenDate || 'set date'}
-          </span>
-        )}
+        </div>
 
-        <span className="exam-grid-pickers">
+        <div className="col-[1/-1] row-start-3 flex flex-wrap items-center gap-x-5 gap-y-2 sm:col-[3/-1] sm:row-start-2 lg:contents">
           {SUBJECTS.map((subject) => (
-            <span key={subject.key} className="exam-picker">
-              <span className="exam-picker-label">{subject.label}</span>
+            <div key={subject.key} className="flex items-center gap-2" onClick={stop}>
+              <span className="w-12 text-xs font-medium text-muted-foreground lg:hidden">{subject.label}</span>
               <SheetLevelPicker
                 subjectLabel={subject.label}
                 value={subject.key in pendingDifficulty ? pendingDifficulty[subject.key] : (exam.difficulty?.[subject.key] || null)}
@@ -279,134 +292,103 @@ export default function ExamRow({
                 onChange={(level) => setDifficulty(subject.key, level)}
                 onCustom={() => setExpanded(true)}
               />
-            </span>
+            </div>
           ))}
-        </span>
+        </div>
 
-        <button
-          type="button"
-          style={{ ...s.btnGhost, justifySelf: 'end' }}
-          onClick={(e) => { stop(e); setScoreboardOpen((v) => !v); }}
-        >
-          {scoreboardOpen ? 'Close scores' : 'Scoreboard'}
-        </button>
+        <div className="justify-self-end" onClick={stop}>
+          <Button
+            variant={scoreboardOpen ? 'secondary' : 'outline'}
+            size="sm"
+            aria-pressed={scoreboardOpen}
+            aria-label={scoreboardOpen ? 'Hide the scoreboard' : 'Show the scoreboard'}
+            onClick={() => setScoreboardOpen((v) => !v)}
+          >
+            <LuTrophy data-icon="inline-start" />
+            <span className="hidden sm:inline">{scoreboardOpen ? 'Hide scores' : 'Scoreboard'}</span>
+          </Button>
+        </div>
       </div>
 
-      {/* The roster, scoreboard and hidden-students panels open regardless of
-          expand so they can be used from a collapsed row. */}
-      {!grouped && rosterOpen && (
-        <RosterPanel
-          exam={exam}
-          roster={roster}
-          onError={onError}
-          onSaved={async () => { setRosterOpen(false); await onChanged?.(); }}
-        />
-      )}
       {/* Keyed by what grades the exam, so an open scoreboard re-reads its
           scores the moment a sheet choice or the sheet itself changes. */}
       {scoreboardOpen && <ScoreboardPanel key={scoringKey} exam={exam} onError={onError} />}
 
       {expanded && (
         <>
-          <div style={s.sectionList}>
-            {SECTION_DEFS.map(({ key, label, hint }) => {
+          <div className="grid gap-2 border-t px-3 py-3 sm:grid-cols-2 xl:grid-cols-4">
+            {SECTION_DEFS.map(({ key, label, short, hint }) => {
               const assigned = exam.sections?.[key];
-              const editing = sectionEditing?.key === key;
               return (
-                <div
+                <TestPicker
                   key={key}
-                  style={{ ...s.sectionChip, cursor: 'pointer', ...(editing ? s.sectionChipEditing : null) }}
-                  onClick={() => !editing && setSectionEditing({ key, group: testGroup(assigned?.testId) })}
-                  title={`${hint} - click to change this section's test`}
+                  tests={sectionOptions(key)}
+                  value={assigned?.testId || ''}
+                  onChange={(testId) => setSection(key, testId)}
                 >
-                  <span style={s.sectionLabel}>{label}</span>
-                  {editing ? (
-                    <div
-                      style={s.sectionEditPanel}
-                      onClick={stop}
-                      onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setSectionEditing(null); }}
-                    >
-                      <select
-                        style={s.select}
-                        autoFocus
-                        value={sectionEditing.group || ''}
-                        onChange={(e) => setSectionEditing((cur) => ({ ...cur, group: e.target.value }))}
-                      >
-                        <option value="">All groups</option>
-                        {groupsForSlot(key).map((g) => (
-                          <option key={g} value={g}>{g}</option>
-                        ))}
-                      </select>
-                      <select
-                        style={s.select}
-                        value={assigned?.testId || ''}
-                        onChange={(e) => setSection(key, e.target.value)}
-                      >
-                        <option value="">- none -</option>
-                        {sectionOptions(key)
-                          .filter((t) => inGroup(t, sectionEditing.group))
-                          .map((t) => (
-                            <option key={t.testId} value={t.testId}>
-                              {t.testName} ({t.attempts} attempt{t.attempts === 1 ? '' : 's'})
-                            </option>
-                          ))}
-                      </select>
-                    </div>
-                  ) : assigned
-                    ? <span>{assigned.testName || `Test #${assigned.testId}`}</span>
-                    : <span style={s.sectionEmpty}>not assigned</span>}
-                </div>
+                  <button
+                    type="button"
+                    className="grid min-w-0 gap-0.5 rounded-md border bg-card px-3 py-2 text-left text-sm transition-colors outline-none hover:bg-muted/50 focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 data-[state=open]:border-ring data-[state=open]:ring-[3px] data-[state=open]:ring-ring/50"
+                    title={`${hint} - click to change this section's test`}
+                  >
+                    <span className="truncate text-xs text-muted-foreground">{label} · {short}</span>
+                    {assigned
+                      ? <span className="truncate font-medium">{assigned.testName || `Test #${assigned.testId}`}</span>
+                      : <span className="text-muted-foreground italic">Not assigned</span>}
+                  </button>
+                </TestPicker>
               );
             })}
           </div>
 
           <ExamScoring exam={exam} onChanged={onExamsChanged} onOpenSheets={onOpenSheets} onError={onError} />
 
-          <div style={s.examSettings} onClick={stop}>
-            <span
-              role="switch"
-              aria-checked={Boolean(exam.isPractice)}
-              tabIndex={0}
-              style={{ ...s.practiceToggle, ...(exam.isPractice ? s.practiceToggleOn : null) }}
-              onClick={togglePractice}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); togglePractice(); }
-              }}
-              title={exam.isPractice
-                ? 'Practice exam - kept out of grade reports. Click to count it as a real exam.'
-                : 'Real exam - counts in grade reports. Click to mark as practice.'}
-            >
-              <span style={{ ...s.practiceTrack, ...(exam.isPractice ? s.practiceTrackOn : null) }}>
-                <span style={{ ...s.practiceKnob, ...(exam.isPractice ? s.practiceKnobOn : null) }} />
-              </span>
-              Practice
-            </span>
-            <label style={s.settingsField}>
-              <span style={s.settingsLabel}>Program</span>
-              <select
-                style={s.moveSelect}
+          <div className="flex flex-wrap items-center gap-x-5 gap-y-3 border-t px-3 py-3">
+            <div className="flex items-center gap-2" title="Practice exams are kept out of grade reports">
+              <Switch id={`practice-${exam.examId}`} checked={Boolean(exam.isPractice)} onCheckedChange={togglePractice} />
+              <Label htmlFor={`practice-${exam.examId}`}>Practice exam</Label>
+            </div>
+            <div className="flex max-w-full min-w-0 items-center gap-2">
+              <Label htmlFor={`program-${exam.examId}`} className="text-muted-foreground">Program</Label>
+              <Select
                 value={exam.programId || ''}
-                onChange={(e) => { if (e.target.value) patchExam({ programId: e.target.value }); }}
-                title="Move this exam to another program"
+                onValueChange={(programId) => { if (programId && programId !== exam.programId) patchExam({ programId }); }}
               >
-                {!exam.programId && <option value="" disabled>Move to a program…</option>}
-                {programs.map((p) => (
-                  <option key={p.programId} value={p.programId}>{p.name}</option>
-                ))}
-              </select>
-            </label>
-            <button type="button" style={s.btnGhost} onClick={() => setHiddenOpen((v) => !v)}>
-              {hiddenOpen ? 'Close hidden students' : `Hidden students${hiddenCount ? ` (${hiddenCount})` : ''}`}
-            </button>
-            <button type="button" style={{ ...s.btnDanger, marginLeft: 'auto' }} onClick={handleDelete}>Delete exam</button>
+                <SelectTrigger id={`program-${exam.examId}`} size="sm" className="max-w-64 min-w-0" title="Move this exam to another program">
+                  {/* A long program name ends in an ellipsis rather than being clipped. */}
+                  <SelectValue placeholder="Move to a program…">
+                    <span className="min-w-0 truncate">{programs.find((p) => p.programId === exam.programId)?.name}</span>
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  {programs.map((p) => <SelectItem key={p.programId} value={p.programId}>{p.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <Button variant="outline" size="sm" onClick={() => setHiddenOpen(true)}>
+              <LuEyeOff data-icon="inline-start" />
+              Hidden students{hiddenCount ? ` (${hiddenCount})` : ''}
+            </Button>
+            <Button variant="destructive" size="sm" className="sm:ml-auto" onClick={handleDelete}>
+              <LuTrash2 data-icon="inline-start" />
+              Delete exam
+            </Button>
           </div>
         </>
       )}
 
+      {!grouped && rosterOpen && (
+        <RosterPanel
+          exam={exam}
+          roster={roster}
+          onClose={() => setRosterOpen(false)}
+          onSaved={async () => { setRosterOpen(false); await onChanged?.(); }}
+        />
+      )}
       {hiddenOpen && (
         <HiddenStudentsPanel
           exam={exam}
-          onError={onError}
+          onClose={() => setHiddenOpen(false)}
           onSaved={async () => { setHiddenOpen(false); await onChanged?.(); }}
         />
       )}
