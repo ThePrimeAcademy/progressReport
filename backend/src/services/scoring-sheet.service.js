@@ -170,14 +170,15 @@ function writeRecord(record) {
   return record;
 }
 
-// Save explicit points. `bound` defaults to whatever the sheet being replaced
-// used, so re-uploading a corrected file keeps the Lower/Upper choice.
-function saveCurve(groupId, section, { curve, bound, originalFilename, columnLabel }) {
+// A checked record for explicit points, not yet written. `bound` defaults to
+// whatever the sheet being replaced used, so re-uploading a corrected file
+// keeps the Lower/Upper choice.
+function buildRecord(groupId, section, { curve, bound, originalFilename, columnLabel }) {
   if (!groupId) throw fail('groupId is required');
   assertSection(section);
   const finalBound = bound || getCurve(groupId, section)?.bound || 'upper';
   assertBound(finalBound);
-  return writeRecord({
+  return {
     groupId: String(groupId),
     section,
     bound: finalBound,
@@ -185,7 +186,29 @@ function saveCurve(groupId, section, { curve, bound, originalFilename, columnLab
     originalFilename: originalFilename ? String(originalFilename).slice(0, 200) : null,
     columnLabel: columnLabel ? String(columnLabel).slice(0, 60) : null,
     curve: normalizeCurve(curve),
-  });
+  };
+}
+
+function saveCurve(groupId, section, options) {
+  return writeRecord(buildRecord(groupId, section, options));
+}
+
+// Save several sheets together, e.g. the Easy, Medium and Hard sheets read from
+// one file. Every sheet is checked before any is written, so one bad sheet
+// leaves them all as they were.
+// sheets: [{ groupId, section, curve, bound?, filename?, columnLabel? }]
+function saveCurves(sheets) {
+  if (!Array.isArray(sheets) || sheets.length === 0) throw fail('sheets must be a non-empty list');
+  if (sheets.length > LEVELS.length * VALID_SECTIONS.size) throw fail('Too many sheets in one save.');
+  const records = sheets.map((sheet) => buildRecord(sheet?.groupId, sheet?.section, {
+    curve: sheet?.curve,
+    bound: sheet?.bound,
+    originalFilename: sheet?.filename,
+    columnLabel: sheet?.columnLabel,
+  }));
+  const keys = new Set(records.map((record) => curvePath(record.groupId, record.section)));
+  if (keys.size !== records.length) throw fail('The same sheet is listed twice.');
+  return records.map(writeRecord);
 }
 
 // Upload a file and save it in one step, without a preview. Only works when
@@ -351,6 +374,7 @@ function gradeScaled(curveRecord, rawCorrect) {
 module.exports = {
   parseSheet,
   saveCurve,
+  saveCurves,
   saveCurveFromBase64,
   setBound,
   copyCurve,

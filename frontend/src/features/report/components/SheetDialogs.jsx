@@ -8,6 +8,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { LuArrowLeft, LuCheck, LuClipboardPaste, LuFileSpreadsheet, LuSave, LuUpload } from 'react-icons/lu';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
   Dialog,
   DialogContent,
@@ -16,15 +17,23 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { Field, FieldDescription, FieldLabel, FieldLegend, FieldSet } from '@/components/ui/field';
+import { Field, FieldContent, FieldDescription, FieldLabel, FieldLegend, FieldSet } from '@/components/ui/field';
 import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Spinner } from '@/components/ui/spinner';
 import { Textarea } from '@/components/ui/textarea';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { Notice } from '@/components/common/Notice';
-import { parseScoringSheet, saveScoringSheet, fetchScoringSheet } from '../api/reportApi.js';
-import { buildCurve, defaultColumnIndex, defaultTableIndex, formatDate, sourceDetail } from '../scoring.js';
+import { parseScoringSheet, saveScoringSheet, saveScoringSheets, fetchScoringSheet } from '../api/reportApi.js';
+import {
+  LEVEL_LABEL,
+  addedOn,
+  buildCurve,
+  defaultColumnIndex,
+  defaultTableIndex,
+  levelColumnIndex,
+  sourceDetail,
+} from '../scoring.js';
 
 // Raw → score pairs flowing down newspaper-style columns. `rows` are
 // { raw, lower, upper }; when a row is a range, both ends show and the end
@@ -98,9 +107,19 @@ function Choice({ legend, value, options, onChange, description }) {
   );
 }
 
-// target: { groupId, section }. level: the library level being filled, used
-// only to preselect a matching worksheet / column. label: e.g. "English · Easy".
-export function SheetImportDialog({ target, level = null, label, replacing = false, onClose, onSaved }) {
+const NO_SIBLINGS = [];
+
+// "Medium and Hard", "Easy, Medium and Hard".
+function andList(words) {
+  return words.length < 2 ? words.join('') : `${words.slice(0, -1).join(', ')} and ${words[words.length - 1]}`;
+}
+
+// target: { groupId, section }. level: the library level being filled, used to
+// preselect a matching worksheet / column. label: e.g. "English · Easy".
+// siblings: the subject's other library levels that have no sheet yet,
+// [{ level, groupId }]. When the file also has a column named after one of
+// them (a sheet listing Easy, Medium and Hard), saving can fill those too.
+export function SheetImportDialog({ target, level = null, label, replacing = false, siblings = NO_SIBLINGS, onClose, onSaved }) {
   const fileInput = useRef(null);
   const [tables, setTables] = useState(null); // null = choosing a source
   const [tableIndex, setTableIndex] = useState(0);
@@ -111,9 +130,17 @@ export function SheetImportDialog({ target, level = null, label, replacing = fal
   const [readingFrom, setReadingFrom] = useState(null); // 'file' | 'text' while parsing
   const [error, setError] = useState(null);
   const [dragOver, setDragOver] = useState(false);
+  const [fillSiblings, setFillSiblings] = useState(true);
 
   const table = tables?.[tableIndex] || null;
   const picked = useMemo(() => (table ? buildCurve(table, columnIndex) : null), [table, columnIndex]);
+  // The empty sibling levels this table has a column for, each with that column.
+  const fillable = useMemo(() => (table
+    ? siblings
+      .map((slot) => ({ ...slot, columnIndex: levelColumnIndex(table, slot.level) }))
+      .filter((slot) => slot.columnIndex >= 0)
+    : []), [table, siblings]);
+  const alsoSaving = fillSiblings ? fillable : [];
 
   async function read(source, name) {
     setBusy(true);
@@ -142,15 +169,23 @@ export function SheetImportDialog({ target, level = null, label, replacing = fal
   async function save() {
     setBusy(true);
     setError(null);
+    const sheet = (groupId, chosen) => ({
+      groupId,
+      section: target.section,
+      curve: chosen.curve,
+      bound: chosen.bound,
+      filename,
+      columnLabel: sourceDetail(tables, table, chosen),
+    });
     try {
-      await saveScoringSheet({
-        groupId: target.groupId,
-        section: target.section,
-        curve: picked.curve,
-        bound: picked.bound,
-        filename,
-        columnLabel: sourceDetail(tables, table, picked),
-      });
+      if (alsoSaving.length > 0) {
+        await saveScoringSheets([
+          sheet(target.groupId, picked),
+          ...alsoSaving.map((slot) => sheet(slot.groupId, buildCurve(table, slot.columnIndex))),
+        ]);
+      } else {
+        await saveScoringSheet(sheet(target.groupId, picked));
+      }
       await onSaved?.();
     } catch (err) {
       setError(err.message || 'Could not save the sheet');
@@ -278,6 +313,25 @@ export function SheetImportDialog({ target, level = null, label, replacing = fal
 
         <ScoreTable rows={picked.curve} bound={picked.bound} />
 
+        {fillable.length > 0 && (
+          <Field orientation="horizontal" className="rounded-lg border p-3">
+            <Checkbox
+              id="sheet-fill-siblings"
+              checked={fillSiblings}
+              disabled={busy}
+              onCheckedChange={(checked) => setFillSiblings(checked === true)}
+            />
+            <FieldContent>
+              <FieldLabel htmlFor="sheet-fill-siblings">
+                Also add the {andList(fillable.map((slot) => LEVEL_LABEL[slot.level]))} sheet{fillable.length === 1 ? '' : 's'} from this file
+              </FieldLabel>
+              <FieldDescription>
+                From its {andList(fillable.map((slot) => `"${table.columns[slot.columnIndex].label}"`))} column{fillable.length === 1 ? '' : 's'}. {fillable.length === 1 ? 'That level has' : 'Those levels have'} no sheet yet.
+              </FieldDescription>
+            </FieldContent>
+          </Field>
+        )}
+
         {error && <Notice variant="destructive">{error}</Notice>}
       </div>
 
@@ -288,7 +342,7 @@ export function SheetImportDialog({ target, level = null, label, replacing = fal
         </Button>
         <Button disabled={busy || picked.curve.length < 2} onClick={save}>
           {busy ? <Spinner data-icon="inline-start" /> : <LuSave data-icon="inline-start" />}
-          {busy ? 'Saving…' : 'Save sheet'}
+          {busy ? 'Saving…' : alsoSaving.length > 0 ? `Save ${alsoSaving.length + 1} sheets` : 'Save sheet'}
         </Button>
       </DialogFooter>
     </SheetDialog>
@@ -313,7 +367,7 @@ export function SheetTableDialog({ target, label, onClose }) {
     summary.originalFilename || 'Pasted cells',
     summary.columnLabel || null,
     summary.hasRange ? `using the ${summary.bound} score` : null,
-    formatDate(summary.uploadedAt) ? `added ${formatDate(summary.uploadedAt)}` : null,
+    addedOn(summary.uploadedAt),
   ].filter(Boolean).join(' · ');
 
   return (

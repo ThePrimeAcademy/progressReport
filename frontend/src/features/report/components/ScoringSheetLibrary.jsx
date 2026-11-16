@@ -19,7 +19,7 @@ import { Notice } from '@/components/common/Notice';
 import { useConfirm } from '@/components/common/confirm';
 import { copyScoringSheet, deleteScoringSheet, setScoringSheetBound } from '../api/reportApi.js';
 import { queryKeys, useExams, useSheetLibrary } from '../api/queries.js';
-import { LEVELS, LEVEL_LABEL, LEVEL_STYLE, SUBJECTS, formatDate } from '../scoring.js';
+import { LEVELS, LEVEL_LABEL, LEVEL_STYLE, SUBJECTS, addedOn } from '../scoring.js';
 import { SheetImportDialog, SheetTableDialog } from './SheetDialogs.jsx';
 
 // Sheets that could be copied into a slot of this subject: the other library
@@ -129,7 +129,7 @@ function Slot({ section, level, subject, library, exams, onImport, onView, onCha
   const meta = sheet && [
     `${sheet.points} raw scores (${sheet.rawMin} to ${sheet.rawMax})`,
     sheet.columnLabel || null,
-    formatDate(sheet.uploadedAt) ? `added ${formatDate(sheet.uploadedAt)}` : null,
+    addedOn(sheet.uploadedAt),
   ].filter(Boolean).join(' · ');
 
   return (
@@ -281,6 +281,13 @@ export default function ScoringSheetLibrary({ onChanged }) {
   }, [queryClient, onChanged]);
 
   const slotLabel = (slot) => `${SUBJECTS.find((x) => x.key === slot.section).label} · ${LEVEL_LABEL[slot.level]}`;
+  // The subject's other empty levels, which one file listing Easy, Medium and
+  // Hard scores can fill in the same save.
+  const emptySiblings = useMemo(() => (importing && library
+    ? LEVELS
+      .filter((level) => level !== importing.level && !library.sheets[importing.section][level])
+      .map((level) => ({ level, groupId: library.keys[level] }))
+    : []), [importing, library]);
 
   if (libraryQuery.isPending) return <LibrarySkeleton />;
   if (!library) {
@@ -329,6 +336,7 @@ export default function ScoringSheetLibrary({ onChanged }) {
           level={importing.level}
           label={slotLabel(importing)}
           replacing={Boolean(importing.replacing)}
+          siblings={emptySiblings}
           onClose={() => setImporting(null)}
           onSaved={async () => { setImporting(null); await reload(); }}
         />

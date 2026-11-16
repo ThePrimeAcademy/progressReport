@@ -141,6 +141,14 @@ export async function saveScoringSheet({ groupId, section, curve, bound, filenam
   return response.data.data;
 }
 
+// Save several sheets in one go, e.g. Easy, Medium and Hard read from one
+// file. The server saves all of them or, if any is invalid, none.
+// sheets: [{ groupId, section, curve, bound, filename, columnLabel }]
+export async function saveScoringSheets(sheets) {
+  const response = await apiClient.post('/scoring-sheets/batch', { sheets });
+  return response.data.data;
+}
+
 // Reuse a sheet already stored under another key - no re-upload needed.
 export async function copyScoringSheet({ fromGroupId, toGroupId, section }) {
   const response = await apiClient.post('/scoring-sheets/copy', { fromGroupId, toGroupId, section });

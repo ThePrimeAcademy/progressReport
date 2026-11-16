@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { makeXlsxBase64, fixture } = require('./helpers/env');
+const { LEVEL_SCORES, levelTablesGrid } = require('./helpers/layouts');
 const sheets = require('../src/services/scoring-sheet.service');
 
 const MATH = fixture('math-range-curve.json').curve;
@@ -40,6 +41,20 @@ test('a workbook with one tab per level returns a table per tab', async () => {
   assert.deepEqual(tables.map((t) => t.sheetName), ['Easy', 'Hard']);
   assert.equal(tables[0].rows[6].values[0], 270);
   assert.equal(tables[1].rows[6].values[0], 230);
+});
+
+test('an uploaded .xlsx with Easy, Medium and Hard tables side by side gives a column per level', async () => {
+  const fileBase64 = makeXlsxBase64({ sheets: [{ name: 'Sheet1', rows: levelTablesGrid(MATH) }] });
+  const { tables } = await sheets.parseSheet({ fileBase64 });
+  assert.equal(tables.length, 1);
+  assert.deepEqual(tables[0].columns.map((c) => c.label), ['Easy', 'Medium', 'Hard']);
+  assert.deepEqual(tables[0].rows[30], { raw: 30, values: ['Easy', 'Medium', 'Hard'].map((level) => LEVEL_SCORES[level](MATH[30])) });
+  assert.deepEqual(tables[0].warnings, []);
+  // Saving without the preview can't know which level is meant.
+  await assert.rejects(
+    sheets.saveCurveFromBase64('exam:three-tables', 'math', fileBase64, 'DSAT Math Scoring Sheet.xlsx'),
+    /3 score columns \(Easy, Medium, Hard\)/
+  );
 });
 
 test('pasted text and CSV uploads are read without a workbook', async () => {
@@ -158,4 +173,26 @@ test('every change bumps the version that invalidates cached reports', () => {
   sheets.setBound('exam:version', 'rw', 'lower');
   sheets.deleteCurve('exam:version', 'rw');
   assert.equal(sheets.getCurvesVersion(), v0 + 3);
+});
+
+test('several sheets save together, and none is saved if one is invalid', () => {
+  const easy = { groupId: sheets.libraryKey('easy'), section: 'rw', curve: RW, filename: 'rw.xlsx', columnLabel: '"Easy" column' };
+  const hard = { ...easy, groupId: sheets.libraryKey('hard'), columnLabel: '"Hard" column' };
+  const v0 = sheets.getCurvesVersion();
+  assert.throws(() => sheets.saveCurves([easy, { ...hard, curve: [] }]), /at least two/);
+  assert.throws(() => sheets.saveCurves([easy, { ...hard, section: 'science' }]), /section must be one of/);
+  assert.throws(() => sheets.saveCurves([easy, easy]), /same sheet is listed twice/);
+  assert.throws(() => sheets.saveCurves([]), /non-empty list/);
+  assert.throws(() => sheets.saveCurves(undefined), /non-empty list/);
+  assert.equal(sheets.getCurvesVersion(), v0);
+  assert.equal(sheets.listLibrary().rw.easy, null);
+
+  const saved = sheets.saveCurves([easy, hard]);
+  assert.deepEqual(saved.map((r) => [r.groupId, r.section, r.columnLabel]), [
+    ['library:easy', 'rw', '"Easy" column'],
+    ['library:hard', 'rw', '"Hard" column'],
+  ]);
+  assert.deepEqual(sheets.getCurve('library:hard', 'rw').curve, RW);
+  assert.equal(sheets.listLibrary().rw.easy.originalFilename, 'rw.xlsx');
+  assert.equal(sheets.getCurvesVersion(), v0 + 2);
 });
