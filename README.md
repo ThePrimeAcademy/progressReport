@@ -52,9 +52,9 @@ Exams created before the shared sheets existed keep their own custom sheets and 
 
 ### Adding a sheet
 
-Upload an `.xlsx` or `.csv`, or paste the cells straight out of Excel or Google Sheets. The layout does not matter: the importer finds the column counting correct answers (0, 1, 2, ...) and the score column(s) next to it. It handles a title row, merged headers, a long table split into side-by-side blocks, several worksheet tabs, and a "480-520" range written in one cell. You always see a preview of what was read before anything is saved.
+Upload an `.xlsx` or `.csv`, or paste the cells straight out of Excel or Google Sheets. The layout does not matter: the importer finds the column counting correct answers (0, 1, 2, ...) and the score column(s) next to it. It handles a title row, merged headers, a long table split into side-by-side blocks, separate Easy / Medium / Hard tables printed side by side (each with its own raw-score column, the layout of the DSAT Math Scoring Sheet template), several worksheet tabs, and a "480-520" range written in one cell. You always see a preview of what was read before anything is saved.
 
-- **Several score columns** (for example Easy / Medium / Hard in one file): pick the column to use. When a column or tab is named after the level you are filling, it is preselected.
+- **Several score columns** (for example Easy / Medium / Hard in one file, as columns or as side-by-side tables): pick the column to use. When a column or tab is named after the level you are filling, it is preselected. If the file also has columns named after the subject's other levels and those have no sheet yet, the preview offers to add them in the same save, so one upload can fill Easy, Medium and Hard.
 - **A Lower / Upper range:** both ends are kept, with a switch for which one is used.
 - **Problems in the sheet** (a skipped raw score, a score that goes down) are flagged in the preview.
 

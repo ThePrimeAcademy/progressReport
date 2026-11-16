@@ -6,6 +6,7 @@ const express = require('express');
 const {
   parseSheet,
   saveCurve,
+  saveCurves,
   saveCurveFromBase64,
   setBound,
   getCurve,
@@ -109,6 +110,18 @@ router.post('/', async (req, res, next) => {
       ? saveCurve(groupId, section, { curve, bound, originalFilename: filename, columnLabel })
       : await saveCurveFromBase64(groupId, section, fileBase64, filename, bound);
     res.json({ success: true, data: summarizeCurve(record) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/scoring-sheets/batch - save several sheets at once, e.g. the Easy,
+// Medium and Hard sheets read from one file. Nothing is saved unless every
+// sheet is valid.
+// Body: { sheets: [{ groupId, section, curve, bound?, filename?, columnLabel? }] }
+router.post('/batch', (req, res, next) => {
+  try {
+    res.json({ success: true, data: saveCurves(req.body?.sheets).map(summarizeCurve) });
   } catch (err) {
     next(err);
   }

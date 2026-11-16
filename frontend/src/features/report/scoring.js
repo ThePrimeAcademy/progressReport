@@ -37,6 +37,16 @@ export function defaultColumnIndex(table, level) {
   return Math.max(0, columns.length - 1);
 }
 
+// The one score column whose header names `level` (a sheet listing Easy,
+// Medium and Hard scores), or -1 when no column does, or several do.
+export function levelColumnIndex(table, level) {
+  const matches = [];
+  (table?.columns || []).forEach((c, i) => {
+    if (String(c.label || '').toLowerCase().includes(level)) matches.push(i);
+  });
+  return matches.length === 1 ? matches[0] : -1;
+}
+
 // Which worksheet of a parsed workbook to preselect: the tab named after the
 // level being filled, otherwise the first.
 export function defaultTableIndex(tables, level) {
@@ -95,10 +105,17 @@ export function sourceDetail(tables, table, picked) {
   return parts.join(', ') || null;
 }
 
-// "Nov 11, 2026" from an ISO timestamp, or '' when missing/invalid.
-export function formatDate(iso) {
+// "Nov 11, 2026" from an ISO timestamp, or '' when missing/invalid. The spaces
+// are non-breaking so a wrapping line never splits the date.
+function formatDate(iso) {
   if (!iso) return '';
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '';
-  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }).replace(/ /g, '\u00a0');
+}
+
+// "added Nov 11, 2026", kept on one line, or null without a valid date.
+export function addedOn(iso) {
+  const date = formatDate(iso);
+  return date ? `added\u00a0${date}` : null;
 }
